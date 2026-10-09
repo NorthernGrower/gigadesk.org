@@ -34,10 +34,13 @@ function buildPrompt(coin, timeframe, snapshot) {
 Coin: ${coin.name} (${snapshot.symbol})
 Timeframe: ${timeframe}
 Price: ${snapshot.price} USD | 24h ${snapshot.change24h}% | 7d ${snapshot.change7d}% | cap tier ${snapshot.market_cap_bucket}
-Indicators: RSI(14) ${i.rsi} | MACD histogram ${i.macd_hist} | EMA20 ${i.ema20} | EMA50 ${i.ema50} | EMA200 ${i.ema200 ?? "n/a"} | Bollinger ${i.bb_lower} to ${i.bb_upper} | ATR ${i.atr_pct}% of price | volume vs 20-bar average ${i.vol_ratio}x | trend ${i.trend}
-Structure: support ${i.support ?? "n/a"} | resistance ${i.resistance ?? "n/a"}
-Screener levels: side ${snapshot.side}, entry ${snapshot.entry}, target ${snapshot.target}, stop ${snapshot.stop}, move required ${snapshot.required_move_pct}%, risk/reward ${snapshot.risk_reward}
-Mechanical score ${snapshot.score}/100. Reasons: ${(snapshot.reasons || []).join("; ")}
+Indicators: RSI(14) ${i.rsi} | MACD histogram ${i.macd_hist} | EMA20 ${i.ema20} | EMA50 ${i.ema50} | EMA200 ${i.ema200 ?? "n/a"} | Bollinger ${i.bb_lower} to ${i.bb_upper} | ATR ${i.atr_pct}% of price | volume vs 20-bar average ${i.vol_ratio}x
+Trend tools: ADX(14) ${i.adx} with +DI ${i.plus_di} / -DI ${i.minus_di} | trend ${i.trend} | stochastic %K ${i.stoch_k} (%D ${i.stoch_d}) | higher timeframe (4x) ${i.htf_trend} | swing structure ${i.structure}
+Flow tools: on-balance volume 10-bar change ${i.obv_change_pct}% | RSI divergence ${i.rsi_divergence ?? "none"} | VWAP ${i.vwap ?? "n/a"} (price ${i.vwap_dist_pct ?? "n/a"}% from it) | Bollinger width percentile ${i.bb_width_percentile}%
+Structure: swing high ${i.swing_high} | swing low ${i.swing_low} | nearest support ${i.support ?? "n/a"} | nearest resistance ${i.resistance ?? "n/a"} | room to the level ahead ${snapshot.room_pct}%
+Last candle: ${snapshot.pattern} (${snapshot.pattern_bias})
+Screener levels: side ${snapshot.side}, entry ${snapshot.entry}, target ${snapshot.target}, stop ${snapshot.stop}, move required ${snapshot.required_move_pct}%, risk/reward ${snapshot.risk_reward}, stop distance ${snapshot.stop_pct}%
+Mechanical score ${snapshot.score}/100 — quality ${snapshot.quality}, ${snapshot.confluence} independent confirmations. Desk scores: trend ${snapshot.categories?.trend}, momentum ${snapshot.categories?.momentum}, volume ${snapshot.categories?.volume}, location ${snapshot.categories?.location}, risk ${snapshot.categories?.volatility}. Reasons: ${(snapshot.reasons || []).join("; ")}
 
 Rules: judge whether the setup is worth taking and in which direction, refine the entry, target and stop if the numbers above are off, state what would invalidate it, and be explicit about the main risks. Never promise a return and never invent data beyond what is given. Keep thesis under 90 words and risks under 60 words.`;
 }
