@@ -99,7 +99,8 @@ export async function runBot(light = false) {
   return unwrap(await base44.functions.invoke('runBot', { light }));
 }
 
-export async function tradeAction(action, tradeId) {
+/** `tradeId` is optional: the `close_all` action works without one. */
+export async function tradeAction(action, tradeId = '') {
   return unwrap(await base44.functions.invoke('tradeAction', { action, trade_id: tradeId }));
 }
 

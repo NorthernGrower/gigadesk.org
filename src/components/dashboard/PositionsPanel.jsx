@@ -2,10 +2,19 @@ import React from 'react';
 import { ArrowDownRight, ArrowUpRight, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import CoinAvatar from '@/components/common/CoinAvatar';
+import CloseAllButton from '@/components/dashboard/CloseAllButton';
 import { EmptyState } from '@/components/common/States';
 import { fmtPct, fmtPrice, fmtUsd } from '@/lib/format';
 
-export default function PositionsPanel({ positions = [], onClose, closingId, title = 'Open positions', hint }) {
+export default function PositionsPanel({
+  positions = [],
+  onClose,
+  onCloseAll,
+  closingId,
+  closingAll = false,
+  title = 'Open positions',
+  hint,
+}) {
   return (
     <div className="surface p-4">
       <div className="flex items-center justify-between gap-3">
@@ -13,7 +22,12 @@ export default function PositionsPanel({ positions = [], onClose, closingId, tit
           <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
           {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
         </div>
-        <span className="num text-xs text-muted-foreground">{positions.length}</span>
+        <div className="flex items-center gap-2">
+          {onCloseAll && positions.length > 0 ? (
+            <CloseAllButton count={positions.length} busy={closingAll} onConfirm={onCloseAll} />
+          ) : null}
+          <span className="num text-xs text-muted-foreground">{positions.length}</span>
+        </div>
       </div>
 
       {positions.length === 0 ? (
@@ -61,14 +75,15 @@ export default function PositionsPanel({ positions = [], onClose, closingId, tit
                     </div>
                     {onClose ? (
                       <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1.5 px-2 text-[11px] hover:border-destructive/60 hover:text-destructive"
                         onClick={() => onClose(p)}
-                        disabled={closingId === p.id}
-                        title="Close position"
+                        disabled={closingId === p.id || closingAll}
+                        title={`Close ${p.symbol} at the live price`}
                       >
-                        {closingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                        {closingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                        Close
                       </Button>
                     ) : null}
                   </div>

@@ -9,15 +9,18 @@ import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import StatCard from '@/components/common/StatCard';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
 import { emitBotTick, requestBotRun, runBot, tradeAction } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [bot, setBot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [closingId, setClosingId] = useState(null);
+  const [closingAll, setClosingAll] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -68,6 +71,24 @@ export default function Dashboard() {
       setError(err.message);
     } finally {
       setClosingId(null);
+    }
+  };
+
+  const closeAll = async () => {
+    setClosingAll(true);
+    try {
+      const result = await tradeAction('close_all');
+      const fresh = await runBot(true);
+      setBot(fresh);
+      emitBotTick(fresh);
+      toast({
+        title: result.closed ? `Closed ${result.closed} position${result.closed === 1 ? '' : 's'}` : 'Nothing to close',
+        description: result.closed ? `${fmtUsd(result.pnl_usd)} booked into your journal` : undefined,
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClosingAll(false);
     }
   };
 
@@ -128,7 +149,9 @@ export default function Dashboard() {
           <PositionsPanel
             positions={bot?.positions || []}
             onClose={closePosition}
+            onCloseAll={closeAll}
             closingId={closingId}
+            closingAll={closingAll}
             hint="Live profit and loss, marked to market every cycle."
           />
         </div>

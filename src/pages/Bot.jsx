@@ -7,6 +7,7 @@ import ProposedTrades from '@/components/bot/ProposedTrades';
 import RiskSettings from '@/components/bot/RiskSettings';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
+import { fmtUsd } from '@/lib/format';
 import { emitBotTick, ensureBotConfig, pageItems, runBot, tradeAction } from '@/lib/market';
 
 export default function Bot() {
@@ -18,6 +19,7 @@ export default function Bot() {
   const [running, setRunning] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [closingId, setClosingId] = useState(null);
+  const [closingAll, setClosingAll] = useState(false);
   const [error, setError] = useState(null);
 
   const loadProposed = async () => {
@@ -114,6 +116,22 @@ export default function Bot() {
     }
   };
 
+  const closeAll = async () => {
+    setClosingAll(true);
+    try {
+      const result = await tradeAction('close_all');
+      toast({
+        title: result.closed ? `Closed ${result.closed} position${result.closed === 1 ? '' : 's'}` : 'Nothing to close',
+        description: result.closed ? `${fmtUsd(result.pnl_usd)} booked into your journal` : undefined,
+      });
+      await cycle(true);
+    } catch (err) {
+      toast({ title: 'Could not close every position', description: err.message, variant: 'destructive' });
+    } finally {
+      setClosingAll(false);
+    }
+  };
+
   if (loading && !bot) return <LoadingBlock label="Loading your bot rules and positions" />;
 
   return (
@@ -146,7 +164,9 @@ export default function Bot() {
           <PositionsPanel
             positions={bot?.positions || []}
             onClose={closePosition}
+            onCloseAll={closeAll}
             closingId={closingId}
+            closingAll={closingAll}
             hint="Marked to market on every cycle."
           />
           <AlertsFeed limit={12} />
