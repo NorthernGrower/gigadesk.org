@@ -1,0 +1,117 @@
+{
+  "name": "BotConfig",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "off",
+        "approve",
+        "auto"
+      ],
+      "default": "approve",
+      "description": "off = signals only, approve = bot proposes and you confirm, auto = bot opens and closes on its own"
+    },
+    "starting_balance": {
+      "type": "number",
+      "default": 10000
+    },
+    "cash_balance": {
+      "type": "number",
+      "default": 10000
+    },
+    "risk_per_trade_pct": {
+      "type": "number",
+      "default": 4
+    },
+    "max_open_positions": {
+      "type": "number",
+      "default": 8
+    },
+    "default_stop_pct": {
+      "type": "number",
+      "default": 2.5
+    },
+    "target_pct": {
+      "type": "number",
+      "default": 2
+    },
+    "daily_target_pct": {
+      "type": "number",
+      "default": 2
+    },
+    "trailing_stop": {
+      "type": "boolean",
+      "default": true
+    },
+    "trailing_trigger_pct": {
+      "type": "number",
+      "default": 1
+    },
+    "trailing_distance_pct": {
+      "type": "number",
+      "default": 1.5
+    },
+    "allow_shorts": {
+      "type": "boolean",
+      "default": true
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": [
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ],
+      "default": "1h"
+    },
+    "market_cap_scope": {
+      "type": "string",
+      "enum": [
+        "all",
+        "large",
+        "mid",
+        "small"
+      ],
+      "default": "all"
+    },
+    "min_score": {
+      "type": "number",
+      "default": 62
+    },
+    "require_daily_target": {
+      "type": "boolean",
+      "default": true
+    },
+    "cooldown_minutes": {
+      "type": "number",
+      "default": 120
+    },
+    "auto_run": {
+      "type": "boolean",
+      "default": true
+    },
+    "last_run_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

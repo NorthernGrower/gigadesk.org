@@ -1,0 +1,120 @@
+{
+  "name": "Trade",
+  "type": "object",
+  "properties": {
+    "symbol": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "image": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "long",
+        "short"
+      ],
+      "default": "long"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "real"
+      ],
+      "default": "paper"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "open",
+        "closed",
+        "rejected"
+      ],
+      "default": "open"
+    },
+    "entry_price": {
+      "type": "number"
+    },
+    "exit_price": {
+      "type": "number"
+    },
+    "quantity": {
+      "type": "number"
+    },
+    "size_usd": {
+      "type": "number"
+    },
+    "stop_price": {
+      "type": "number"
+    },
+    "target_price": {
+      "type": "number"
+    },
+    "peak_price": {
+      "type": "number"
+    },
+    "pnl_usd": {
+      "type": "number"
+    },
+    "pnl_pct": {
+      "type": "number"
+    },
+    "fees_usd": {
+      "type": "number"
+    },
+    "score": {
+      "type": "number"
+    },
+    "exit_reason": {
+      "type": "string",
+      "enum": [
+        "target",
+        "stop",
+        "trailing",
+        "manual",
+        "flipped",
+        "time"
+      ]
+    },
+    "opened_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "closed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "signal_id": {
+      "type": "string"
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "symbol",
+    "side"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

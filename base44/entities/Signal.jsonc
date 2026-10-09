@@ -1,0 +1,143 @@
+{
+  "name": "Signal",
+  "type": "object",
+  "properties": {
+    "symbol": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "coingecko_id": {
+      "type": "string"
+    },
+    "image": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "long",
+        "short"
+      ],
+      "default": "long"
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": [
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    "price": {
+      "type": "number"
+    },
+    "score": {
+      "type": "number"
+    },
+    "grade": {
+      "type": "string",
+      "enum": [
+        "A+",
+        "A",
+        "B",
+        "C",
+        "D"
+      ]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "strong_long",
+        "long",
+        "watch",
+        "short",
+        "strong_short",
+        "avoid"
+      ]
+    },
+    "confidence": {
+      "type": "number"
+    },
+    "market_cap_bucket": {
+      "type": "string",
+      "enum": [
+        "large",
+        "mid",
+        "small",
+        "micro"
+      ]
+    },
+    "market_cap": {
+      "type": "number"
+    },
+    "entry": {
+      "type": "number"
+    },
+    "target": {
+      "type": "number"
+    },
+    "stop": {
+      "type": "number"
+    },
+    "required_move_pct": {
+      "type": "number"
+    },
+    "risk_reward": {
+      "type": "number"
+    },
+    "meets_daily_target": {
+      "type": "boolean"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risks": {
+      "type": "string"
+    },
+    "indicators": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "new",
+        "taken",
+        "expired"
+      ],
+      "default": "new"
+    },
+    "detected_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "symbol",
+    "score"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
