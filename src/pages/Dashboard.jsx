@@ -7,6 +7,7 @@ import BestWorstPositions from '@/components/dashboard/BestWorstPositions';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
+import SmartMoneyPanel from '@/components/dashboard/SmartMoneyPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
 import StatCard from '@/components/common/StatCard';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
@@ -245,6 +246,8 @@ export default function Dashboard() {
                 : 'Live profit and loss, marked to market every cycle.'
             }
           />
+
+          <SmartMoneyPanel />
         </div>
 
         <div className="space-y-4">

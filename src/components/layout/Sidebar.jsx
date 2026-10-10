@@ -9,13 +9,11 @@ import {
   Settings as SettingsIcon,
   Star,
   TrendingUp,
-  Users,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/', label: 'Desk', icon: LayoutDashboard, end: true },
   { to: '/screener', label: 'Screener', icon: Radar },
-  { to: '/smart', label: 'Smart money', icon: Users },
   { to: '/bot', label: 'Bot', icon: BotIcon },
   { to: '/exchanges', label: 'Exchanges', icon: KeyRound },
   { to: '/journal', label: 'Journal', icon: BookOpen },
