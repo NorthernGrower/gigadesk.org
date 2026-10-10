@@ -99,9 +99,9 @@ export default async function (req) {
           if (side === "long" && trail > stop) stop = trail;
           if (side === "short" && trail < stop) stop = trail;
         }
-        if (peak !== prevPeak) updates.peak_price = round(peak, 6);
+        if (peak !== prevPeak) updates.peak_price = round(peak, 8);
       }
-      if (stop !== Number(t.stop_price)) updates.stop_price = round(stop, 6);
+      if (stop !== Number(t.stop_price)) updates.stop_price = round(stop, 8);
 
       const hitTarget = target
         ? side === "long"
@@ -158,7 +158,7 @@ export default async function (req) {
         await base44.entities.Trade.update(t.id, {
           ...updates,
           status: "closed",
-          exit_price: round(exitPrice, 6),
+          exit_price: round(exitPrice, 8),
           pnl_usd: round(pnl),
           pnl_pct: round(pnlPct),
           closed_at: new Date().toISOString(),
@@ -169,7 +169,7 @@ export default async function (req) {
           id: t.id,
           symbol: t.symbol,
           side,
-          exit_price: round(exitPrice, 6),
+          exit_price: round(exitPrice, 8),
           pnl_usd: round(pnl),
           pnl_pct: round(pnlPct),
           exit_reason: reason,
@@ -185,7 +185,7 @@ export default async function (req) {
                 : reason === "time"
                   ? "Stagnant trade cut after sitting still too long"
                   : "Stop hit"
-          } at ${round(exitPrice, 6)}. P&L ${round(pnl)} USD.`,
+          } at ${round(exitPrice, 8)}. P&L ${round(pnl)} USD.`,
           kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
           severity: pnl >= 0 ? "success" : "danger",
           trade_id: t.id,
@@ -209,8 +209,8 @@ export default async function (req) {
           side,
           mode: t.mode || "paper",
           entry_price: entry,
-          current_price: round(price, 6),
-          stop_price: round(stop, 6),
+          current_price: round(price, 8),
+          stop_price: round(stop, 8),
           target_price: target,
           size_usd: size,
           pnl_usd: round(unreal),
@@ -364,7 +364,7 @@ export default async function (req) {
           side: r.side,
           mode: real ? "real" : "paper",
           status: config.mode === "auto" ? "open" : "proposed",
-          entry_price: round(real ? real.avg_price || r.entry : r.entry, 6),
+          entry_price: round(real ? real.avg_price || r.entry : r.entry, 8),
           quantity: round(real ? real.filled_qty || realSizeUsd / r.entry : qty, 8),
           size_usd: round(real ? realSizeUsd : sizeUsd),
           stop_price: r.stop,
@@ -463,7 +463,7 @@ export default async function (req) {
         side,
         mode: "real",
         entry_price: entry,
-        current_price: round(price, 6),
+        current_price: round(price, 8),
         stop_price: t.stop_price,
         target_price: t.target_price,
         size_usd: round(size),

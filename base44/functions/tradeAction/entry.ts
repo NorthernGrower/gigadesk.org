@@ -13,7 +13,7 @@ function closingValues(trade, price) {
   return {
     update: {
       status: "closed",
-      exit_price: round(price, 6),
+      exit_price: round(price, 8),
       pnl_usd: round(pnl),
       pnl_pct: round(pnlPct),
       closed_at: new Date().toISOString(),
@@ -168,7 +168,7 @@ export default async function (req) {
         ...(real
           ? {
               mode: "real",
-              entry_price: round(real.avg_price || Number(trade.entry_price) || 0, 6),
+              entry_price: round(real.avg_price || Number(trade.entry_price) || 0, 8),
               quantity: round(real.filled_qty || realSize / (Number(trade.entry_price) || 1), 8),
               size_usd: round(realSize),
               exchange: live.conn.exchange,
