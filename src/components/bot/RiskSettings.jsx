@@ -42,6 +42,7 @@ function Toggle({ label, hint, checked, onChange }) {
 export default function RiskSettings({ config, onSaved }) {
   const { toast } = useToast();
   const [form, setForm] = useState({
+    trading_style: config?.trading_style || 'mild',
     starting_balance: config?.starting_balance ?? 10000,
     risk_per_trade_pct: config?.risk_per_trade_pct ?? 4,
     max_open_positions: config?.max_open_positions ?? 8,
@@ -83,6 +84,7 @@ export default function RiskSettings({ config, onSaved }) {
     setSaving(true);
     try {
       await base44.entities.BotConfig.update(config.id, {
+        trading_style: form.trading_style,
         starting_balance: roundTo(form.starting_balance, 2),
         risk_per_trade_pct: roundTo(form.risk_per_trade_pct, 2),
         max_open_positions: Math.max(1, Math.round(Number(form.max_open_positions) || 1)),
@@ -137,6 +139,38 @@ export default function RiskSettings({ config, onSaved }) {
           Reset paper balance
         </Button>
       </div>
+
+      <Field
+        label="Trading style"
+        hint={
+          form.trading_style === 'timid'
+            ? 'Waits for stronger setups (score +6) and risks 25% less per trade.'
+            : form.trading_style === 'aggressive'
+              ? 'Takes more setups (score -5), risks 40% more per trade, and cuts any trade sitting still for 12 hours to move on faster.'
+              : 'Trades exactly by the rules below.'
+        }
+      >
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { value: 'timid', label: 'Timid' },
+            { value: 'mild', label: 'Mild' },
+            { value: 'aggressive', label: 'Aggressive' },
+          ].map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => set('trading_style')(option.value)}
+              className={`h-9 rounded-md border text-xs font-medium transition-colors ${
+                form.trading_style === option.value
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-border/60 bg-transparent text-muted-foreground hover:bg-secondary/40'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </Field>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Starting balance" hint="Your paper bankroll in USD.">

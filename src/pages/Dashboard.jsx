@@ -162,6 +162,11 @@ export default function Dashboard() {
             </div>
           )}
 
+          <EquityPanel
+            startingBalance={Number(config?.starting_balance) || 10000}
+            dailyTargetPct={Number(config?.daily_target_pct) || 2}
+          />
+
           <PositionsPanel
             positions={bot?.positions || []}
             onClose={closePosition}
@@ -178,10 +183,6 @@ export default function Dashboard() {
             medianChange24h={bot?.median_change_24h}
             universe={bot?.universe}
             updatedAt={bot?.updated_at}
-          />
-          <EquityPanel
-            startingBalance={Number(config?.starting_balance) || 10000}
-            dailyTargetPct={Number(config?.daily_target_pct) || 2}
           />
           <AlertsFeed limit={8} />
         </div>

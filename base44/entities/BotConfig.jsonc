@@ -12,6 +12,16 @@
       "default": "approve",
       "description": "off = signals only, approve = bot proposes and you confirm, auto = bot opens and closes on its own"
     },
+    "trading_style": {
+      "type": "string",
+      "enum": [
+        "timid",
+        "mild",
+        "aggressive"
+      ],
+      "default": "mild",
+      "description": "timid = pickier setups and smaller risk, mild = your rules as set, aggressive = lower score bar, bigger risk, stagnant trades cut early"
+    },
     "starting_balance": {
       "type": "number",
       "default": 10000

@@ -27,7 +27,12 @@ const DEFAULT_CONFIG = {
   real_connection_id: "",
   real_sizing_mode: "paper",
   fixed_order_usd: 100,
+  trading_style: "mild",
 };
+
+// How long an aggressive-style trade may sit going nowhere before the bot
+// cuts it and moves on to fresher setups.
+const STAGNANT_HOURS = 12;
 
 export default async function (req) {
   try {
@@ -90,9 +95,18 @@ export default async function (req) {
           : price <= target
         : false;
       const hitStop = side === "long" ? price <= stop : price >= stop;
+      // aggressive style: a trade that has sat going nowhere for STAGNANT_HOURS
+      // is cut so the capital moves on to fresher setups
+      const openedMs = t.opened_at ? Date.parse(t.opened_at) : 0;
+      const stagnant =
+        (config.trading_style || "mild") === "aggressive" &&
+        openedMs > 0 &&
+        Date.now() - openedMs > STAGNANT_HOURS * 3600000 &&
+        Math.abs(gainPct) < 1;
+      const exit = hitTarget || hitStop || stagnant;
 
-      if (hitTarget || hitStop) {
-        let exitPrice = hitTarget ? target : stop;
+      if (exit) {
+        let exitPrice = stagnant ? price : hitTarget ? target : stop;
         // close a bot-placed real position with a real sell order; if the
         // exchange refuses, the position stays open and the user is alerted
         if (t.mode === "real" && live.conn) {
@@ -119,7 +133,13 @@ export default async function (req) {
         const size = Number(t.size_usd) || 0;
         const pnl = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
         const pnlPct = size ? (pnl / size) * 100 : 0;
-        const reason = hitTarget ? "target" : updates.stop_price ? "trailing" : "stop";
+        const reason = stagnant
+          ? "time"
+          : hitTarget
+            ? "target"
+            : updates.stop_price
+              ? "trailing"
+              : "stop";
 
         await base44.entities.Trade.update(t.id, {
           ...updates,
@@ -148,9 +168,11 @@ export default async function (req) {
               ? "Target reached"
               : reason === "trailing"
                 ? "Trailing stop hit"
-                : "Stop hit"
+                : reason === "time"
+                  ? "Stagnant trade cut after sitting still too long"
+                  : "Stop hit"
           } at ${round(exitPrice, 6)}. P&L ${round(pnl)} USD.`,
-          kind: reason === "target" ? "target_hit" : "stop_hit",
+          kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
           severity: pnl >= 0 ? "success" : "danger",
           trade_id: t.id,
         });
@@ -214,10 +236,21 @@ export default async function (req) {
         ...pending.map((t) => t.symbol),
       ]);
 
-      const minScore = Number(config.min_score) || 62;
+      // trading style bends the rules without touching what the user saved:
+      // timid waits for stronger setups with less at stake, aggressive
+      // accepts more setups and stakes more to reach the daily goal faster
+      const style = config.trading_style || "mild";
+      const minScore = Math.max(
+        40,
+        (Number(config.min_score) || 62) + (style === "timid" ? 6 : style === "aggressive" ? -5 : 0),
+      );
       const allowShorts = config.allow_shorts !== false;
       const requireTarget = config.require_daily_target !== false;
-      const riskPct = Number(config.risk_per_trade_pct) || 4;
+      const riskPct = Math.min(
+        25,
+        (Number(config.risk_per_trade_pct) || 4) *
+          (style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1),
+      );
       const slots = maxOpen - openCount;
 
       // self-teaching: past results per pattern (side x cap tier) nudge scores
