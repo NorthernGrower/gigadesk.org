@@ -68,6 +68,7 @@ export default async function (req) {
     let cash = Number(config.cash_balance) || 0;
     const closed = [];
     const positions = [];
+    const pendingMarks = [];
 
     // ---- manage the positions already open
     for (const t of openTrades) {
@@ -191,7 +192,9 @@ export default async function (req) {
         // remember the call: its pattern now carries this result into future scans
         await recordLesson(base44, t, pnlPct, pnl, reason);
       } else {
-        if (Object.keys(updates).length) await base44.entities.Trade.update(t.id, updates);
+        // mark-to-market writes are batched after the loop: one bulk write
+        // instead of one per position keeps us under the entity rate limit
+        if (Object.keys(updates).length) pendingMarks.push({ id: t.id, ...updates });
         const qty = Number(t.quantity) || 0;
         const size = Number(t.size_usd) || 0;
         const unreal = side === "long" ? (price - entry) * qty : (entry - price) * qty;
@@ -215,6 +218,9 @@ export default async function (req) {
         });
       }
     }
+
+    if (pendingMarks.length)
+      await base44.entities.Trade.bulkUpdate(pendingMarks.slice(0, 500));
 
     // ---- look for new entries
     const openCount = openTrades.length - closed.length;
