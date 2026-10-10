@@ -6,6 +6,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Radar,
+  Settings as SettingsIcon,
   Star,
   TrendingUp,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ const NAV = [
   { to: '/exchanges', label: 'Exchanges', icon: KeyRound },
   { to: '/journal', label: 'Journal', icon: BookOpen },
   { to: '/watchlist', label: 'Watchlist', icon: Star },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 function Brand() {
