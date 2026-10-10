@@ -7,6 +7,10 @@
       "format": "date",
       "description": "UTC day this candle covers; one record per day"
     },
+    "owner": {
+      "type": "string",
+      "description": "The user's id whose paper equity this candle tracks"
+    },
     "open": {
       "type": "number",
       "description": "Equity when the day started"
@@ -34,21 +38,17 @@
     "day"
   ],
   "rls": {
-    "read": {},
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
     "create": {
-      "user_condition": {
-        "role": "admin"
-      }
+      "created_by_id": "{{user.id}}"
     },
     "update": {
-      "user_condition": {
-        "role": "admin"
-      }
+      "created_by_id": "{{user.id}}"
     },
     "delete": {
-      "user_condition": {
-        "role": "admin"
-      }
+      "created_by_id": "{{user.id}}"
     }
   }
 }

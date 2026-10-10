@@ -132,8 +132,9 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
         // candles the bot saves once per day; when none exist yet the same
         // history is rebuilt by folding the closed trades day by day
         const todayKey = new Date().toISOString().slice(0, 10);
+        const me = await base44.auth.me();
         const candlePage = await base44.entities.EquityCandle.filter(
-          {},
+          { owner: me?.id },
           { sort: 'day', limit: 1000 },
         );
         const saved = (candlePage.items || []).map((c) => ({

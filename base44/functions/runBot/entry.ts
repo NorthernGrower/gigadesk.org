@@ -533,16 +533,18 @@ export default async function (req) {
       (a, t) => a + (Number(t.pnl_usd) || 0),
       0,
     );
+    // candles are per-user: one app user's equity chart must not overwrite
+    // another's, so every write carries the owner and keys on owner + day
     const prevCandles = asArray(
-      await base44.asServiceRole.entities.EquityCandle.filter(
-        { day: { $lt: todayKey } },
+      await base44.entities.EquityCandle.filter(
+        { owner: user.id, day: { $lt: todayKey } },
         { sort: "-day", limit: 1 },
       ),
     );
     const prevClose = prevCandles.length ? Number(prevCandles[0].close) : null;
     const existingCandle = asArray(
-      await base44.asServiceRole.entities.EquityCandle.filter(
-        { day: todayKey },
+      await base44.entities.EquityCandle.filter(
+        { owner: user.id, day: todayKey },
         { limit: 1 },
       ),
     )[0];
@@ -553,9 +555,10 @@ export default async function (req) {
         : round(startBalance + realizedTotal - paperRealizedToday);
     const highBase = existingCandle ? Number(existingCandle.high) || candleOpen : candleOpen;
     const lowBase = existingCandle ? Number(existingCandle.low) || candleOpen : candleOpen;
-    await base44.asServiceRole.entities.EquityCandle.upsert(
+    await base44.entities.EquityCandle.upsert(
       [
         {
+          owner: user.id,
           day: todayKey,
           open: round(candleOpen),
           high: round(Math.max(highBase, candleOpen, equity)),
@@ -565,7 +568,7 @@ export default async function (req) {
           trades: paperTodays.length,
         },
       ],
-      { key: "day" },
+      { key: ["owner", "day"] },
     );
 
     return Response.json({
