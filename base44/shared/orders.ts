@@ -2,6 +2,7 @@
 // module must never be imported from the frontend. Every request is bounded by
 // a 10s timeout and refusals are returned as values, never thrown.
 import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64 } from "./exchanges.ts";
+import { decryptSecret } from "./crypto.ts";
 import { round } from "./market.ts";
 
 export const QUOTE_ASSET = { binance_us: "USD", binance: "USDT", bybit: "USDT", kucoin: "USDT", kraken: "USDT" };
@@ -44,8 +45,8 @@ export async function resolveLiveConnection(base44, config) {
       label: stored.label || stored.exchange,
       testnet: Boolean(stored.testnet),
       api_key: stored.api_key,
-      api_secret: stored.api_secret,
-      passphrase: stored.passphrase || "",
+      api_secret: await decryptSecret(stored.api_secret),
+      passphrase: await decryptSecret(stored.passphrase || ""),
     },
     reason: null,
   };

@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { readAccount } from '../../shared/exchanges.ts';
+import { decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
   "exchange",
@@ -31,8 +32,8 @@ export default async function(req) {
       exchange: conn.exchange,
       testnet: Boolean(conn.testnet),
       api_key: conn.api_key,
-      api_secret: conn.api_secret,
-      passphrase: conn.passphrase || '',
+      api_secret: await decryptSecret(conn.api_secret),
+      passphrase: await decryptSecret(conn.passphrase || ''),
     });
 
     const patch = {
