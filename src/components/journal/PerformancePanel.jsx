@@ -23,7 +23,8 @@ function Block({ title, hint, data, loading }) {
       </div>
     );
   }
-  const winRate = data.trades ? (data.wins / data.trades) * 100 : 0;
+  const decided = data.trades - (data.zeros || 0);
+  const winRate = decided ? (data.wins / decided) * 100 : 0;
   return (
     <div className="surface space-y-3 p-4">
       <div className="flex items-baseline justify-between">
@@ -35,7 +36,12 @@ function Block({ title, hint, data, loading }) {
       <p className="text-[11px] text-muted-foreground">{hint}</p>
       <div className="grid grid-cols-3 gap-3 border-t border-border/60 pt-3">
         <Metric label="Closed" value={data.trades} />
-        <Metric label="Win rate" value={`${winRate.toFixed(0)}%`} tone={winRate >= 50 ? 'up' : 'neutral'} />
+        <Metric
+          label="Win rate"
+          value={`${winRate.toFixed(0)}%`}
+          tone={winRate >= 50 ? 'up' : 'neutral'}
+          hint={data.zeros ? `${data.zeros} break-even excluded` : undefined}
+        />
         <Metric
           label="Avg per trade"
           value={fmtUsd(data.trades ? data.net / data.trades : 0)}
@@ -59,23 +65,26 @@ export default function PerformancePanel({ base = 10000 }) {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const [paperAgg, realAgg, paperWins, realWins] = await Promise.all([
+      const [paperAgg, realAgg, paperWins, realWins, paperZeros, realZeros] = await Promise.all([
         base44.entities.Trade.aggregate({ query: { status: 'closed', mode: 'paper' }, sum: ['pnl_usd'] }),
         base44.entities.Trade.aggregate({ query: { status: 'closed', mode: 'real' }, sum: ['pnl_usd'] }),
         base44.entities.Trade.count({ status: 'closed', mode: 'paper', pnl_usd: { $gt: 0 } }),
         base44.entities.Trade.count({ status: 'closed', mode: 'real', pnl_usd: { $gt: 0 } }),
+        base44.entities.Trade.count({ status: 'closed', mode: 'paper', pnl_usd: 0 }),
+        base44.entities.Trade.count({ status: 'closed', mode: 'real', pnl_usd: 0 }),
       ]);
       if (cancelled) return;
-      const read = (agg, wins) => ({
+      const read = (agg, wins, zeros) => ({
         net: Number(agg?.rows?.[0]?.sum_pnl_usd) || 0,
         trades: Number(agg?.rows?.[0]?.count) || 0,
         wins: Number(wins) || 0,
+        zeros: Number(zeros) || 0,
         base,
       });
       setState({
         loading: false,
-        paper: read(paperAgg, paperWins),
-        real: read(realAgg, realWins),
+        paper: read(paperAgg, paperWins, paperZeros),
+        real: read(realAgg, realWins, realZeros),
       });
     };
     load();

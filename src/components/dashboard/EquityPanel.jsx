@@ -203,7 +203,8 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
             trades: trades.length,
             wins: wins.length,
             losses: losses.length,
-            winRate: trades.length ? (wins.length / trades.length) * 100 : 0,
+            winRate: wins.length + losses.length ? (wins.length / (wins.length + losses.length)) * 100 : 0,
+            breakevens: trades.length - wins.length - losses.length,
             profitFactor: grossLoss ? grossProfit / Math.abs(grossLoss) : null,
             avgWin: wins.length ? grossProfit / wins.length : 0,
             avgLoss: losses.length ? grossLoss / losses.length : 0,
@@ -304,7 +305,11 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
           </p>
 
           <div className="mt-2 grid grid-cols-2 gap-4 border-t border-border/60 pt-3 sm:grid-cols-4">
-            <Stat label="Trades closed" value={stats.trades} hint={`${stats.wins}W · ${stats.losses}L`} />
+            <Stat
+              label="Trades closed"
+              value={stats.trades}
+              hint={stats.breakevens ? `${stats.wins}W · ${stats.losses}L · ${stats.breakevens} flat` : `${stats.wins}W · ${stats.losses}L`}
+            />
             <Stat label="Win rate" value={`${stats.winRate.toFixed(0)}%`} tone={stats.winRate >= 50 ? 'up' : 'neutral'} />
             <Stat label="Avg win" value={fmtUsd(stats.avgWin)} tone="up" />
             <Stat
