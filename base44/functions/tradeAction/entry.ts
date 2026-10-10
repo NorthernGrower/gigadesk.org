@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
+import { recordLesson } from "../../shared/learn.ts";
 
 /** Exit maths shared by the single close and the close-everything action. */
 function closingValues(trade, price) {
@@ -100,6 +101,7 @@ export default async function (req) {
         if ((openTrade.mode || "paper") === "paper") cashDelta += closed.size + closed.pnl;
         pnlTotal += closed.pnl;
         await base44.entities.Alert.create(closed.alert);
+        await recordLesson(base44, openTrade, closed.pnlPct, closed.pnl, closed.update.exit_reason);
       }
 
       if (config && cashDelta) {
@@ -216,6 +218,7 @@ export default async function (req) {
         });
       }
       await base44.entities.Alert.create(closed.alert);
+      await recordLesson(base44, trade, closed.pnlPct, closed.pnl, closed.update.exit_reason);
 
       return Response.json({
         ok: true,

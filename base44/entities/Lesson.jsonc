@@ -1,0 +1,53 @@
+{
+  "name": "Lesson",
+  "type": "object",
+  "properties": {
+    "pattern": {
+      "type": "string",
+      "description": "Side and cap tier the bot was trading, e.g. long/small"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "long",
+        "short"
+      ]
+    },
+    "score": {
+      "type": "number"
+    },
+    "win": {
+      "type": "number",
+      "description": "1 when the call closed at or above break-even, 0 otherwise"
+    },
+    "pnl_pct": {
+      "type": "number"
+    },
+    "pnl_usd": {
+      "type": "number"
+    },
+    "exit_reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "pattern"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

@@ -5,6 +5,7 @@ import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import BotControls from '@/components/bot/BotControls';
 import ProposedTrades from '@/components/bot/ProposedTrades';
 import RiskSettings from '@/components/bot/RiskSettings';
+import LearnedPanel from '@/components/bot/LearnedPanel';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
@@ -191,6 +192,7 @@ export default function Bot() {
           <AlertsFeed limit={12} />
         </div>
         <div className="space-y-4">
+          <LearnedPanel />
           <RiskSettings config={config} onSaved={() => cycle(true)} />
         </div>
       </div>

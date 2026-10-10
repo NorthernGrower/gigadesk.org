@@ -68,7 +68,12 @@ export async function scanBoard({
 } = {}) {
   const safeScope = SCOPES.has(scope) ? scope : "all";
   const { coins, source, medianChange24h } = await loadUniverse();
-  const scoped = coins.filter((c) => inScope(c, safeScope));
+  // coins with no market-cap data (0) are out of consideration whenever the
+  // feed carries caps at all
+  const hasCaps = coins.some((c) => (c.market_cap || 0) > 0);
+  const scoped = coins.filter(
+    (c) => inScope(c, safeScope) && (!hasCaps || (c.market_cap || 0) > 0),
+  );
   const candidates = pickCandidates(scoped, count, extraSymbols);
 
   const rows = [];
@@ -92,6 +97,9 @@ export async function scanBoard({
     rows,
     universeCount: coins.length,
     scannedCount: rows.length,
+    capsApplied: hasCaps,
+    cappedCoins: coins.filter((c) => (c.market_cap || 0) > 0).length,
+    capsDebug: source.capsDebug,
     medianChange24h: round(medianChange24h),
     source,
     updatedAt: new Date().toISOString(),

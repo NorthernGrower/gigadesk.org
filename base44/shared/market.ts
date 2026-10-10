@@ -60,10 +60,45 @@ function tierFor(index) {
   return "micro";
 }
 
+/** Symbol -> market cap map from CoinGecko's free markets feed (top 500, 15 min cache). */
+async function loadCaps() {
+  const cached = cacheGet("caps");
+  if (cached) return cached;
+  try {
+    const pages = await Promise.all(
+      [1, 2].map((p) =>
+        fetchJson(
+          `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${p}`,
+          12000,
+        ).catch((err) => {
+          console.log(`caps page failed: ${err && err.message}`);
+          return null;
+        }),
+      ),
+    );
+    const caps = new Map();
+    for (const page of pages) {
+      if (!Array.isArray(page)) continue;
+      for (const c of page) {
+        const sym = String(c.symbol || "").toUpperCase();
+        if (sym && !caps.has(sym)) caps.set(sym, Number(c.market_cap) || 0);
+      }
+    }
+    if (!caps.size) {
+      console.log(`caps feed empty (pages: ${JSON.stringify(pages.map((p) => (Array.isArray(p) ? p.length : String(p))))})`);
+      return null;
+    }
+    return cacheSet("caps", caps, 15 * 60 * 1000);
+  } catch (err) {
+    console.log(`caps fetch failed: ${err && err.message}`);
+    return null;
+  }
+}
+
 /** Whole-market snapshot: every tradable market on the exchange, ranked by traded volume. */
 export async function fetchMarkets() {
   const cached = cacheGet("markets");
-  if (cached) return cached;
+  if (cached) return { ...cached, capsDebug: -2 };
 
   const rows = await fetchJson(`${BASE}/ticker/24hr`, 20000);
   if (!Array.isArray(rows) || !rows.length) {
@@ -95,6 +130,14 @@ export async function fetchMarkets() {
     .filter((c) => c.price > 0 && !isStable(c.symbol))
     .sort((a, b) => b.volume24h - a.volume24h);
 
+  // Real market caps (best effort): coins the cap feed has no data for stay at
+  // 0 and are skipped when the bot picks candidates.
+  const caps = await loadCaps();
+  console.log(`caps loaded: ${caps ? caps.size : "none"}`);
+  if (caps && caps.size) {
+    for (const c of coins) c.market_cap = caps.get(c.symbol) || 0;
+  }
+
   coins.forEach((c, i) => {
     c.bucket = tierFor(i);
     c.rank = i + 1;
@@ -103,7 +146,11 @@ export async function fetchMarkets() {
   if (!coins.length) {
     throw new Error("The market feed is unavailable right now - try again shortly.");
   }
-  return cacheSet("markets", { coins, source: "binance_us" }, 60000);
+  return cacheSet(
+    "markets",
+    { coins, source: "binance_us", capsDebug: caps && caps.size ? caps.size : -1 },
+    60000,
+  );
 }
 
 /** OHLCV candles. Returns null when a coin has no tradable pair. */

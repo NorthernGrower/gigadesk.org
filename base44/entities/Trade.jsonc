@@ -70,6 +70,10 @@
     "score": {
       "type": "number"
     },
+    "pattern": {
+      "type": "string",
+      "description": "The side and cap tier the bot traded, e.g. long/small; drives its self-learning"
+    },
     "exchange": {
       "type": "string",
       "enum": [

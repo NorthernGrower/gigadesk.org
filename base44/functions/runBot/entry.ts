@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
+import { loadLessons, recordLesson } from "../../shared/learn.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -153,6 +154,8 @@ export default async function (req) {
           severity: pnl >= 0 ? "success" : "danger",
           trade_id: t.id,
         });
+        // remember the call: its pattern now carries this result into future scans
+        await recordLesson(base44, t, pnlPct, pnl, reason);
       } else {
         if (Object.keys(updates).length) await base44.entities.Trade.update(t.id, updates);
         const qty = Number(t.quantity) || 0;
@@ -217,7 +220,15 @@ export default async function (req) {
       const riskPct = Number(config.risk_per_trade_pct) || 4;
       const slots = maxOpen - openCount;
 
+      // self-teaching: past results per pattern (side x cap tier) nudge scores
+      const lessons = await loadLessons(base44);
+      const lessonMap = new Map(lessons.map((l) => [l.pattern, l]));
+
       const candidates = board.rows
+        .map((r) => {
+          const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
+          return adj ? { ...r, score: r.score + adj } : r;
+        })
         .filter(
           (r) =>
             !blocked.has(r.symbol) &&
@@ -286,6 +297,7 @@ export default async function (req) {
           target_price: r.target,
           peak_price: r.entry,
           score: r.score,
+          pattern: `${r.side}/${r.market_cap_bucket}`,
           exchange: real ? live.conn.exchange : undefined,
           exchange_order_id: real ? real.order_id : undefined,
           rationale: (r.reasons || []).join(" • "),
