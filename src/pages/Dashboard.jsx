@@ -6,6 +6,7 @@ import BestBuyCard from '@/components/dashboard/BestBuyCard';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
+import TodayProgress from '@/components/dashboard/TodayProgress';
 import StatCard from '@/components/common/StatCard';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
@@ -200,6 +201,15 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      <TodayProgress
+        realizedToday={bot?.realized_today || 0}
+        dailyGoal={bot?.daily_goal || 0}
+        goalHit={bot?.goal_hit}
+        openCount={bot?.open_count}
+        scanned={bot?.scanned}
+        startingBalance={Number(config?.starting_balance) || 10000}
+      />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="space-y-4">
