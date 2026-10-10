@@ -129,52 +129,40 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
         const trades = closed.items || [];
         if (cancelled) return;
 
-        // fold each closed trade into its day to build daily open / high / low / close
+        // candles the bot saves once per day; when none exist yet the same
+        // history is rebuilt by folding the closed trades day by day
         const todayKey = new Date().toISOString().slice(0, 10);
-        const byDay = new Map();
-        let running = Number(startingBalance) || 0;
-        for (const t of trades) {
-          const key = String(t.closed_at || '').slice(0, 10);
-          if (!key) continue;
-          const pnl = Number(t.pnl_usd) || 0;
-          let day = byDay.get(key);
-          if (!day) {
-            day = { key, open: running, high: running, low: running, close: running, pnl: 0 };
-            byDay.set(key, day);
-          }
-          running += pnl;
-          day.close = running;
-          day.high = Math.max(day.high, running);
-          day.low = Math.min(day.low, running);
-          day.pnl += pnl;
-        }
-
-        const points = [...byDay.values()].map((d) => ({
-          day: d.key,
-          label: d.key === todayKey ? 'Today' : format(parseISO(d.key), 'MMM d'),
-          open: d.open,
-          close: d.close,
-          high: d.high,
-          low: d.low,
-          equity: d.close,
-          pnl: d.pnl,
+        const candlePage = await base44.entities.EquityCandle.filter(
+          {},
+          { sort: 'day', limit: 1000 },
+        );
+        const saved = (candlePage.items || []).map((c) => ({
+          day: c.day,
+          label: c.day === todayKey ? 'Today' : format(parseISO(c.day), 'MMM d'),
+          open: Number(c.open) || 0,
+          high: Number(c.high) || 0,
+          low: Number(c.low) || 0,
+          close: Number(c.close) || 0,
+          equity: Number(c.close) || 0,
+          pnl: Number(c.realized) || 0,
           live: false,
         }));
 
-        // today's live candle: the open is where the day started, the close is
-        // where the whole position stands right now (cash + exposure + P&L)
+        let points;
         const live = Number(liveEquity);
-        if (Number.isFinite(live) && live > 0) {
-          const last = points[points.length - 1];
-          if (last && last.day === todayKey) {
-            last.close = live;
-            last.equity = live;
-            last.high = Math.max(last.high, live);
-            last.low = Math.min(last.low, live);
-            last.live = true;
-          } else {
-            const open = last ? last.close : Number(startingBalance) || 0;
-            points.push({
+        if (saved.length) {
+          const last = saved[saved.length - 1];
+          if (last.day === todayKey) {
+            if (Number.isFinite(live) && live > 0) {
+              last.close = live;
+              last.equity = live;
+              last.high = Math.max(last.high, live);
+              last.low = Math.min(last.low, live);
+              last.live = true;
+            }
+          } else if (Number.isFinite(live) && live > 0) {
+            const open = last.close;
+            saved.push({
               day: todayKey,
               label: 'Today',
               open,
@@ -185,6 +173,64 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
               pnl: 0,
               live: true,
             });
+          }
+          points = saved;
+        } else {
+          // fold each closed trade into its day to build daily open / high / low / close
+          const byDay = new Map();
+          let running = Number(startingBalance) || 0;
+          for (const t of trades) {
+            const key = String(t.closed_at || '').slice(0, 10);
+            if (!key) continue;
+            const pnl = Number(t.pnl_usd) || 0;
+            let day = byDay.get(key);
+            if (!day) {
+              day = { key, open: running, high: running, low: running, close: running, pnl: 0 };
+              byDay.set(key, day);
+            }
+            running += pnl;
+            day.close = running;
+            day.high = Math.max(day.high, running);
+            day.low = Math.min(day.low, running);
+            day.pnl += pnl;
+          }
+
+          points = [...byDay.values()].map((d) => ({
+            day: d.key,
+            label: d.key === todayKey ? 'Today' : format(parseISO(d.key), 'MMM d'),
+            open: d.open,
+            close: d.close,
+            high: d.high,
+            low: d.low,
+            equity: d.close,
+            pnl: d.pnl,
+            live: false,
+          }));
+
+          // today's live candle: the open is where the day started, the close is
+          // where the whole position stands right now (cash + exposure + P&L)
+          if (Number.isFinite(live) && live > 0) {
+            const last = points[points.length - 1];
+            if (last && last.day === todayKey) {
+              last.close = live;
+              last.equity = live;
+              last.high = Math.max(last.high, live);
+              last.low = Math.min(last.low, live);
+              last.live = true;
+            } else {
+              const open = last ? last.close : Number(startingBalance) || 0;
+              points.push({
+                day: todayKey,
+                label: 'Today',
+                open,
+                close: live,
+                high: Math.max(open, live),
+                low: Math.min(open, live),
+                equity: live,
+                pnl: 0,
+                live: true,
+              });
+            }
           }
         }
 

@@ -514,7 +514,11 @@ export default async function (req) {
     const realizedTotal = realizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0;
     const deployedTotal = deployedAgg?.rows?.[0]?.sum_size_usd ?? 0;
     const anchoredCash = startBalance + realizedTotal - deployedTotal;
-    const equity = anchoredCash + exposure + unrealized;
+    // equity ties directly to the money: starting balance plus everything
+    // booked plus what the open positions are worth now. Mixing the in-loop
+    // exposure with the aggregate understated equity whenever a position had
+    // no live price (its size was subtracted but never added back).
+    const equity = startBalance + realizedTotal + unrealized;
 
     await base44.entities.BotConfig.update(config.id, {
       cash_balance: round(anchoredCash),
