@@ -49,7 +49,13 @@ export default async function (req) {
     const body = await req.json().catch(() => ({}));
     const light = body.light === true;
 
-    let config = asArray(await base44.entities.BotConfig.filter({}, { limit: 1 }))[0];
+    // one set of rules only: keep the freshest config and remove stray older
+    // ones, so every cycle and screen agrees on a single balance
+    const configs = asArray(
+      await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 10 }),
+    );
+    for (const extra of configs.slice(1)) await base44.entities.BotConfig.delete(extra.id);
+    let config = configs[0];
     if (!config) config = await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 
     const { coins } = await fetchMarkets();

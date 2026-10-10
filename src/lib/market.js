@@ -86,7 +86,9 @@ function unwrap(res) {
 }
 
 export async function ensureBotConfig() {
-  const existing = pageItems(await base44.entities.BotConfig.filter({}, { limit: 1 }));
+  const existing = pageItems(
+    await base44.entities.BotConfig.filter({}, { sort: '-updated_date', limit: 1 }),
+  );
   if (existing[0]) return existing[0];
   return await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 }

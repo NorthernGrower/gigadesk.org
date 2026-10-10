@@ -123,7 +123,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
     const load = async () => {
       try {
         const closed = await base44.entities.Trade.filter(
-          { status: 'closed' },
+          { status: 'closed', mode: 'paper' },
           { sort: 'closed_at', limit: 1000, fields: ['pnl_usd', 'closed_at'] },
         );
         const trades = closed.items || [];

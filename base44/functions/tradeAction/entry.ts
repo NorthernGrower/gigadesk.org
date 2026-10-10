@@ -43,7 +43,9 @@ export default async function (req) {
     const action = String(body.action || "");
     const tradeId = String(body.trade_id || "");
 
-    const config = asArray(await base44.entities.BotConfig.filter({}, { limit: 1 }))[0];
+    const config = asArray(
+      await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
+    )[0];
     const cash = Number(config?.cash_balance) || 0;
 
     if (action === "close_all") {
