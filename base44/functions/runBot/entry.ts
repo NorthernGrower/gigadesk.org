@@ -472,10 +472,23 @@ export default async function (req) {
 
     const exposure = positions.reduce((a, p) => a + p.size_usd, 0);
     const unrealized = positions.reduce((a, p) => a + p.pnl_usd, 0);
-    const equity = cash + exposure + unrealized;
+
+    // anchor the paper cash to the trades themselves: the original balance
+    // plus everything booked minus what is deployed. Trusting the running
+    // cash figure alone let it drift (overlapping cycles, balance resets
+    // with positions open) and the desk quietly traded on money it didn't
+    // have; anchored, equity always ties to booked profit exactly.
+    const [realizedAgg, deployedAgg] = await Promise.all([
+      base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper" }, sum: "pnl_usd" }),
+      base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper" }, sum: "size_usd" }),
+    ]);
+    const realizedTotal = realizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0;
+    const deployedTotal = deployedAgg?.rows?.[0]?.sum_size_usd ?? 0;
+    const anchoredCash = startBalance + realizedTotal - deployedTotal;
+    const equity = anchoredCash + exposure + unrealized;
 
     await base44.entities.BotConfig.update(config.id, {
-      cash_balance: round(cash),
+      cash_balance: round(anchoredCash),
       last_run_at: new Date().toISOString(),
     });
 
@@ -491,7 +504,7 @@ export default async function (req) {
       summary: board.summary,
       median_change_24h: board.medianChange24h,
       source: board.source,
-      cash: round(cash),
+      cash: round(anchoredCash),
       exposure: round(exposure),
       unrealized: round(unrealized),
       equity: round(equity),
