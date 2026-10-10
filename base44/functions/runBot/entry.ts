@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { fetchMarkets, asArray, round } from "../../shared/market.ts";
+import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/market.ts";
+import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount } from "../../shared/exchanges.ts";
@@ -59,6 +60,17 @@ export default async function (req) {
     let config = configs[0];
     if (!config) config = await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 
+    // single-flight: a cycle that started moments ago is still scanning, and
+    // two overlapping cycles read the same empty state and opened the same
+    // position twice. A fresh start timestamp makes later cycles stagger.
+    const startedAt = config.last_cycle_started_at
+      ? Date.parse(config.last_cycle_started_at)
+      : 0;
+    const cycleInFlight = startedAt > 0 && Date.now() - startedAt < 45000;
+    await base44.entities.BotConfig.update(config.id, {
+      last_cycle_started_at: new Date().toISOString(),
+    });
+
     const { coins } = await fetchMarkets();
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
@@ -70,6 +82,72 @@ export default async function (req) {
     const closed = [];
     const positions = [];
     const pendingMarks = [];
+    const sentinel = [];
+
+    /**
+     * Shared close path for bot-managed positions: sends the real sell order
+     * when the position is a bot-placed real one, books the result, alerts
+     * and remembers the lesson. Returns false when the exchange refused.
+     */
+    async function closeOut(t, side, exitPrice, reason, extraUpdates = {}, alertFor) {
+      if (t.mode === "real" && live.conn) {
+        const sell = await placeMarketOrder(live.conn, {
+          symbol: t.symbol,
+          side: "sell",
+          quantity: Number(t.quantity) || 0,
+        });
+        if (!sell.ok) {
+          await base44.entities.Alert.create({
+            symbol: t.symbol,
+            title: `Could not close ${t.symbol} on ${live.conn.label}`,
+            message: sell.message,
+            kind: "order_failed",
+            severity: "danger",
+            trade_id: t.id,
+          });
+          if (Object.keys(extraUpdates).length)
+            await base44.entities.Trade.update(t.id, extraUpdates);
+          return false;
+        }
+        if (sell.avg_price) exitPrice = sell.avg_price;
+      }
+      const entry = Number(t.entry_price) || 0;
+      const qty = Number(t.quantity) || 0;
+      const size = Number(t.size_usd) || 0;
+      const pnl = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
+      const pnlPct = size ? (pnl / size) * 100 : 0;
+      await base44.entities.Trade.update(t.id, {
+        ...extraUpdates,
+        status: "closed",
+        exit_price: round(exitPrice, 8),
+        pnl_usd: round(pnl),
+        pnl_pct: round(pnlPct),
+        closed_at: new Date().toISOString(),
+        exit_reason: reason,
+      });
+      if ((t.mode || "paper") === "paper") cash += size + pnl;
+      closed.push({
+        id: t.id,
+        symbol: t.symbol,
+        side,
+        exit_price: round(exitPrice, 8),
+        pnl_usd: round(pnl),
+        pnl_pct: round(pnlPct),
+        exit_reason: reason,
+      });
+      const meta = alertFor ? alertFor(pnl, pnlPct) : {};
+      await base44.entities.Alert.create({
+        symbol: t.symbol,
+        title: `${t.symbol} closed ${pnl >= 0 ? "in profit" : "at a loss"} (${round(pnlPct)}%)`,
+        message: meta.message || "",
+        kind: meta.kind || "bot_close",
+        severity: pnl >= 0 ? "success" : "danger",
+        trade_id: t.id,
+      });
+      // remember the call: its pattern now carries this result into future scans
+      await recordLesson(base44, t, pnlPct, pnl, reason);
+      return true;
+    }
 
     // ---- manage the positions already open
     for (const t of openTrades) {
@@ -120,33 +198,7 @@ export default async function (req) {
       const exit = hitTarget || hitStop || stagnant;
 
       if (exit) {
-        let exitPrice = stagnant ? price : hitTarget ? target : stop;
-        // close a bot-placed real position with a real sell order; if the
-        // exchange refuses, the position stays open and the user is alerted
-        if (t.mode === "real" && live.conn) {
-          const sell = await placeMarketOrder(live.conn, {
-            symbol: t.symbol,
-            side: "sell",
-            quantity: Number(t.quantity) || 0,
-          });
-          if (!sell.ok) {
-            await base44.entities.Alert.create({
-              symbol: t.symbol,
-              title: `Could not close ${t.symbol} on ${live.conn.label}`,
-              message: sell.message,
-              kind: "order_failed",
-              severity: "danger",
-              trade_id: t.id,
-            });
-            if (Object.keys(updates).length) await base44.entities.Trade.update(t.id, updates);
-            continue;
-          }
-          if (sell.avg_price) exitPrice = sell.avg_price;
-        }
-        const qty = Number(t.quantity) || 0;
-        const size = Number(t.size_usd) || 0;
-        const pnl = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
-        const pnlPct = size ? (pnl / size) * 100 : 0;
+        const exitPrice = stagnant ? price : hitTarget ? target : stop;
         const reason = stagnant
           ? "time"
           : hitTarget
@@ -154,29 +206,8 @@ export default async function (req) {
             : updates.stop_price
               ? "trailing"
               : "stop";
-
-        await base44.entities.Trade.update(t.id, {
-          ...updates,
-          status: "closed",
-          exit_price: round(exitPrice, 8),
-          pnl_usd: round(pnl),
-          pnl_pct: round(pnlPct),
-          closed_at: new Date().toISOString(),
-          exit_reason: reason,
-        });
-        if ((t.mode || "paper") === "paper") cash += size + pnl;
-        closed.push({
-          id: t.id,
-          symbol: t.symbol,
-          side,
-          exit_price: round(exitPrice, 8),
-          pnl_usd: round(pnl),
-          pnl_pct: round(pnlPct),
-          exit_reason: reason,
-        });
-        await base44.entities.Alert.create({
-          symbol: t.symbol,
-          title: `${t.symbol} closed ${pnl >= 0 ? "in profit" : "at a loss"} (${round(pnlPct)}%)`,
+        const ok = await closeOut(t, side, exitPrice, reason, updates, (pnl, pnlPct) => ({
+          kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
           message: `${
             reason === "target"
               ? "Target reached"
@@ -186,13 +217,11 @@ export default async function (req) {
                   ? "Stagnant trade cut after sitting still too long"
                   : "Stop hit"
           } at ${round(exitPrice, 8)}. P&L ${round(pnl)} USD.`,
-          kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
-          severity: pnl >= 0 ? "success" : "danger",
-          trade_id: t.id,
-        });
-        // remember the call: its pattern now carries this result into future scans
-        await recordLesson(base44, t, pnlPct, pnl, reason);
+        }));
+        if (!ok) continue;
       } else {
+        // a surviving position the sentiment pass below re-reads
+        sentinel.push(t);
         // mark-to-market writes are batched after the loop: one bulk write
         // instead of one per position keeps us under the entity rate limit
         if (Object.keys(updates).length) pendingMarks.push({ id: t.id, ...updates });
@@ -223,6 +252,57 @@ export default async function (req) {
     if (pendingMarks.length)
       await base44.entities.Trade.bulkUpdate(pendingMarks.slice(0, 500));
 
+    // ---- sentiment watch: re-read every surviving position's chart so a
+    // market turn is caught between stops. When the same engine that picked
+    // the trade now favors the other side with conviction, the position is
+    // closed (reason "flipped") and the capital is free for the next scan.
+    const sentimentReads = new Map();
+    if (!light && sentinel.length) {
+      const moves = coins
+        .map((c) => c.change24h)
+        .filter((v) => Number.isFinite(v))
+        .sort((a, b) => a - b);
+      const medianChange24h = moves.length ? moves[Math.floor(moves.length / 2)] : 0;
+      const tf = config.timeframe || "1h";
+      for (const group of chunk([...new Set(sentinel.map((t) => t.symbol))], 6)) {
+        const settled = await Promise.allSettled(
+          group.map((s) => fetchCandles(s, tf, 300)),
+        );
+        settled.forEach((res, i) => {
+          if (res.status !== "fulfilled" || !res.value) return;
+          const coin = priceMap.get(group[i]);
+          if (!coin) return;
+          const row = analyzeCoin(coin, res.value, {
+            medianChange24h,
+            dailyTargetPct: Number(config.daily_target_pct) || 2,
+            barsPerDay: { "15m": 96, "1h": 24, "4h": 6, "1d": 1 }[tf] || 24,
+          });
+          if (row) sentimentReads.set(group[i], row);
+        });
+      }
+    }
+    for (const t of sentinel) {
+      const row = sentimentReads.get(t.symbol);
+      if (!row) continue;
+      const side = t.side === "short" ? "short" : "long";
+      const flipped =
+        side === "long"
+          ? row.side === "short" && row.score >= 65
+          : row.side === "long" && row.score >= 65;
+      if (!flipped) continue;
+      const flipPrice = Number(row.price) || priceMap.get(t.symbol)?.price || 0;
+      if (!flipPrice) continue;
+      const trailing = pendingMarks.find((m) => m.id === t.id);
+      const ok = await closeOut(t, side, flipPrice, "flipped", trailing || {}, (pnl, pnlPct) => ({
+        kind: "bot_close",
+        message: `Sentiment flipped on the ${config.timeframe || "1h"} chart: the read now favors ${row.side} (score ${row.score}). Closed at ${round(flipPrice, 8)}. P&L ${round(pnl)} USD.`,
+      }));
+      if (ok) {
+        const idx = pendingMarks.findIndex((m) => m.id === t.id);
+        if (idx >= 0) pendingMarks.splice(idx, 1);
+      }
+    }
+
     // ---- look for new entries
     const openCount = openTrades.length - closed.length;
     const maxOpen = Math.max(1, Number(config.max_open_positions) || 8);
@@ -230,7 +310,7 @@ export default async function (req) {
     const proposed = [];
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
 
-    if (!light && config.mode !== "off" && openCount < maxOpen) {
+    if (!light && config.mode !== "off" && openCount < maxOpen && !cycleInFlight) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
       board = await scanBoard({
         timeframe: config.timeframe || "1h",
@@ -599,6 +679,10 @@ export default async function (req) {
         unrealized: round(liveUnrealized),
         realized_today: round(liveRealized),
         positions: livePositions,
+      },
+      sentiment: {
+        checked: sentimentReads.size,
+        flips: closed.filter((c) => c.exit_reason === "flipped").length,
       },
       open_count: positions.length,
       config,
