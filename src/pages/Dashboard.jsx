@@ -165,6 +165,7 @@ export default function Dashboard() {
           <EquityPanel
             startingBalance={Number(config?.starting_balance) || 10000}
             dailyTargetPct={Number(config?.daily_target_pct) || 2}
+            liveEquity={bot?.equity}
           />
 
           <PositionsPanel
