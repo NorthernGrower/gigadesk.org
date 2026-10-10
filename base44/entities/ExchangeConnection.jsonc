@@ -1,0 +1,83 @@
+{
+  "name": "ExchangeConnection",
+  "type": "object",
+  "properties": {
+    "exchange": {
+      "type": "string",
+      "enum": [
+        "binance_us",
+        "binance",
+        "bybit",
+        "kucoin",
+        "kraken"
+      ]
+    },
+    "label": {
+      "type": "string"
+    },
+    "api_key": {
+      "type": "string"
+    },
+    "api_secret": {
+      "type": "string"
+    },
+    "passphrase": {
+      "type": "string"
+    },
+    "key_hint": {
+      "type": "string"
+    },
+    "testnet": {
+      "type": "boolean",
+      "default": false
+    },
+    "allow_trading": {
+      "type": "boolean",
+      "default": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "connected",
+        "error"
+      ],
+      "default": "error"
+    },
+    "status_message": {
+      "type": "string"
+    },
+    "can_trade": {
+      "type": "boolean"
+    },
+    "last_checked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "balances": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": [
+    "exchange",
+    "api_key",
+    "api_secret"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

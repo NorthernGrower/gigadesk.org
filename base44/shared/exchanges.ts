@@ -1,0 +1,231 @@
+// Signed account reads for the supported exchanges. Server-side only: this
+// module must never be imported from the frontend. Every outbound request is
+// bounded by a 10s timeout and errors are returned, never thrown.
+
+const enc = new TextEncoder();
+
+const toHex = (buf) =>
+  Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+
+const toBase64 = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+};
+
+const b64ToBytes = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+
+async function hmac(secret, msg, hash) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash }, false, ["sign"]);
+  return crypto.subtle.sign("HMAC", key, enc.encode(msg));
+}
+
+const hmacHex = async (secret, msg, hash = "SHA-256") => toHex(await hmac(secret, msg, hash));
+const hmacB64 = async (secret, msg, hash = "SHA-256") => toBase64(await hmac(secret, msg, hash));
+
+const sha256Hex = async (msg) => toHex(await crypto.subtle.digest("SHA-256", enc.encode(msg)));
+
+async function callJson(url, init = {}) {
+  try {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(10000) });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      // non-json body
+    }
+    return { ok: res.ok, status: res.status, data, text: text.slice(0, 200) };
+  } catch (e) {
+    return { ok: false, status: 0, data: null, text: (e && e.message) || "network error" };
+  }
+}
+
+export const EXCHANGES = {
+  binance_us: { name: "Binance US", needsPassphrase: false, testnet: false },
+  binance: { name: "Binance", needsPassphrase: false, testnet: true },
+  bybit: { name: "Bybit", needsPassphrase: false, testnet: true },
+  kucoin: { name: "KuCoin", needsPassphrase: true, testnet: true },
+  kraken: { name: "Kraken", needsPassphrase: false, testnet: false },
+};
+
+export async function readAccount(cfg) {
+  if (cfg.exchange === "bybit") return bybitAccount(cfg);
+  if (cfg.exchange === "kucoin") return kucoinAccount(cfg);
+  if (cfg.exchange === "kraken") return krakenAccount(cfg);
+  return binanceAccount(cfg);
+}
+
+const sortBalances = (list) =>
+  list.filter((b) => b.total > 0).sort((a, b) => b.total - a.total);
+
+// ---- Binance / Binance US (HMAC-SHA256 over the query string) ----
+async function binanceAccount(cfg) {
+  const base = cfg.testnet
+    ? "https://testnet.binance.vision"
+    : cfg.exchange === "binance_us"
+      ? "https://api.binance.us"
+      : "https://api.binance.com";
+  const qs = `timestamp=${Date.now()}&recvWindow=10000`;
+  const signature = await hmacHex(cfg.api_secret, qs);
+  const res = await callJson(`${base}/api/v3/account?${qs}&signature=${signature}`, {
+    headers: { "X-MBX-APIKEY": cfg.api_key },
+  });
+  const data = res.data || {};
+  if (Array.isArray(data.balances)) {
+    return {
+      ok: true,
+      canTrade: data.canTrade === true,
+      message: "Key verified with a live account read",
+      balances: sortBalances(
+        data.balances.map((b) => ({
+          asset: b.asset,
+          total: (Number(b.free) || 0) + (Number(b.locked) || 0),
+        })),
+      ),
+    };
+  }
+  const code = data.code;
+  const message =
+    code === -2014 || code === -2015
+      ? `The exchange rejected this key (${data.msg || "invalid key, wrong permissions, or IP restrictions"})`
+      : (data.msg && `${base} said: ${data.msg}`) || res.text || "no response from the exchange";
+  return { ok: false, canTrade: null, message, balances: [] };
+}
+
+// ---- Bybit v5 (HMAC-SHA256 over timestamp + key + recvWindow + query) ----
+async function bybitAccount(cfg) {
+  const base = cfg.testnet ? "https://api-testnet.bybit.com" : "https://api.bybit.com";
+  const attempt = async (accountType) => {
+    const ts = String(Date.now());
+    const recv = "10000";
+    const query = `accountType=${accountType}`;
+    const sign = await hmacHex(ts + cfg.api_key + recv + query, cfg.api_secret);
+    return callJson(`${base}/v5/account/wallet-balance?${query}`, {
+      headers: {
+        "X-BAPI-API-KEY": cfg.api_key,
+        "X-BAPI-TIMESTAMP": ts,
+        "X-BAPI-RECV-WINDOW": recv,
+        "X-BAPI-SIGN": sign,
+      },
+    });
+  };
+  let res = await attempt("UNIFIED");
+  const firstCode = (res.data || {}).retCode;
+  if (firstCode !== 0) {
+    const retry = await attempt("SPOT");
+    if ((retry.data || {}).retCode === 0) res = retry;
+  }
+  const data = res.data || {};
+  const list = ((data.result || {}).list || [])[0];
+  if (data.retCode === 0 && list) {
+    return {
+      ok: true,
+      canTrade: null,
+      message: "Key verified with a live account read",
+      balances: sortBalances(
+        (list.coin || []).map((c) => ({ asset: c.coin, total: Number(c.walletBalance) || 0 })),
+      ),
+    };
+  }
+  return {
+    ok: false,
+    canTrade: null,
+    message: `Bybit error: ${data.retMsg || res.text || "no response from the exchange"}`,
+    balances: [],
+  };
+}
+
+// ---- KuCoin (HMAC-SHA256 base64 signatures + encrypted passphrase) ----
+async function kucoinAccount(cfg) {
+  const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+  const endpoint = "/api/v1/accounts";
+  const ts = String(Date.now());
+  const sign = await hmacB64(cfg.api_secret, ts + "GET" + endpoint);
+  const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
+  const res = await callJson(base + endpoint, {
+    headers: {
+      "KC-API-KEY": cfg.api_key,
+      "KC-API-SIGN": sign,
+      "KC-API-TIMESTAMP": ts,
+      "KC-API-PASSPHRASE": pass,
+      "KC-API-KEY-VERSION": "2",
+    },
+  });
+  const data = res.data || {};
+  if (data.code === "200000" && Array.isArray(data.data)) {
+    return {
+      ok: true,
+      canTrade: null,
+      message: "Key verified with a live account read",
+      balances: sortBalances(
+        data.data.map((a) => ({ asset: a.currency, total: Number(a.total) || 0 })),
+      ),
+    };
+  }
+  return {
+    ok: false,
+    canTrade: null,
+    message: `KuCoin error: ${data.msg || data.code || res.text || "no response from the exchange"}`,
+    balances: [],
+  };
+}
+
+// ---- Kraken (HMAC-SHA512 over path + sha256(nonce + body)) ----
+const KRAKEN_ASSETS = {
+  XXBT: "BTC",
+  XBT: "BTC",
+  XETH: "ETH",
+  XXDG: "DOGE",
+  XDG: "DOGE",
+  ZUSD: "USD",
+  ZEUR: "EUR",
+  XXRP: "XRP",
+  XLTC: "LTC",
+  XXLM: "XLM",
+  XZEC: "ZEC",
+  SOL: "SOL",
+};
+
+const krakenAsset = (a) => KRAKEN_ASSETS[a] || a;
+
+async function krakenAccount(cfg) {
+  const path = "/0/private/Balance";
+  const nonce = String(Date.now() * 1000);
+  const body = `nonce=${nonce}`;
+  const inner = await sha256Hex(nonce + body);
+  const key = await crypto.subtle.importKey("raw", b64ToBytes(cfg.api_secret), { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  const sign = toBase64(await crypto.subtle.sign("HMAC", key, enc.encode(path + inner)));
+  const res = await callJson(`https://api.kraken.com${path}`, {
+    method: "POST",
+    headers: {
+      "API-Key": cfg.api_key,
+      "API-Sign": sign,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const data = res.data || {};
+  const failed = Array.isArray(data.error) ? data.error : [];
+  if (res.data && data.result && failed.length === 0) {
+    return {
+      ok: true,
+      canTrade: null,
+      message: "Key verified with a live account read",
+      balances: sortBalances(
+        Object.entries(data.result)
+          .filter(([asset]) => !asset.startsWith(".") && !asset.includes(".HOLD"))
+          .map(([asset, amount]) => ({ asset: krakenAsset(asset), total: Number(amount) || 0 })),
+      ),
+    };
+  }
+  return {
+    ok: false,
+    canTrade: null,
+    message: `Kraken error: ${failed[0] || res.text || "no response from the exchange"}`,
+    balances: [],
+  };
+}

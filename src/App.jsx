@@ -18,6 +18,7 @@ import CoinDetail from '@/pages/CoinDetail';
 import BotPage from '@/pages/Bot';
 import Journal from '@/pages/Journal';
 import Watchlist from '@/pages/Watchlist';
+import Exchanges from '@/pages/Exchanges';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -57,6 +58,7 @@ const AuthenticatedApp = () => {
           <Route path="/bot" element={<BotPage />} />
           <Route path="/journal" element={<Journal />} />
           <Route path="/watchlist" element={<Watchlist />} />
+          <Route path="/exchanges" element={<Exchanges />} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />

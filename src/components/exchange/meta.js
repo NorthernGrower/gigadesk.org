@@ -1,0 +1,34 @@
+export const EXCHANGE_META = {
+  binance_us: {
+    name: 'Binance US',
+    testnet: false,
+    needsPassphrase: false,
+    note: 'US-regulated venue on the same API surface as Binance — the market feed this desk already runs on.',
+  },
+  binance: {
+    name: 'Binance',
+    testnet: true,
+    needsPassphrase: false,
+    note: 'Global venue with a spot testnet for safe dry runs. Key access can be region-blocked.',
+  },
+  bybit: {
+    name: 'Bybit',
+    testnet: true,
+    needsPassphrase: false,
+    note: 'Large derivatives venue; unified account API with a testnet.',
+  },
+  kucoin: {
+    name: 'KuCoin',
+    testnet: true,
+    needsPassphrase: true,
+    note: 'Needs the API passphrase in addition to the key and secret.',
+  },
+  kraken: {
+    name: 'Kraken',
+    testnet: false,
+    needsPassphrase: false,
+    note: 'Long-standing US-friendly venue with HMAC-SHA512 signing.',
+  },
+};
+
+export const EXCHANGE_ORDER = ['binance_us', 'binance', 'bybit', 'kucoin', 'kraken'];
