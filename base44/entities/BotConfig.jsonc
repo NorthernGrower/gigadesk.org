@@ -92,6 +92,28 @@
       "type": "boolean",
       "default": true
     },
+    "real_orders_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "When on, qualifying longs are sent to the chosen exchange as market orders"
+    },
+    "real_connection_id": {
+      "type": "string",
+      "description": "The ExchangeConnection real orders are sent to"
+    },
+    "real_sizing_mode": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "fixed"
+      ],
+      "default": "paper",
+      "description": "paper = spend what the paper sizing computed, fixed = always spend fixed_order_usd"
+    },
+    "fixed_order_usd": {
+      "type": "number",
+      "default": 100
+    },
     "last_run_at": {
       "type": "string",
       "format": "date-time"

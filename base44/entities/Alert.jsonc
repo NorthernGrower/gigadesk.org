@@ -19,7 +19,8 @@
         "stop_hit",
         "bot_open",
         "bot_close",
-        "daily_goal"
+        "daily_goal",
+        "order_failed"
       ],
       "default": "new_setup"
     },

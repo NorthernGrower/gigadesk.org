@@ -2,12 +2,12 @@
 // module must never be imported from the frontend. Every outbound request is
 // bounded by a 10s timeout and errors are returned, never thrown.
 
-const enc = new TextEncoder();
+export const enc = new TextEncoder();
 
 const toHex = (buf) =>
   Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 
-const toBase64 = (buf) => {
+export const toBase64 = (buf) => {
   const bytes = new Uint8Array(buf);
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
@@ -16,19 +16,19 @@ const toBase64 = (buf) => {
   return btoa(bin);
 };
 
-const b64ToBytes = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+export const b64ToBytes = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
 
 async function hmac(secret, msg, hash) {
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash }, false, ["sign"]);
   return crypto.subtle.sign("HMAC", key, enc.encode(msg));
 }
 
-const hmacHex = async (secret, msg, hash = "SHA-256") => toHex(await hmac(secret, msg, hash));
-const hmacB64 = async (secret, msg, hash = "SHA-256") => toBase64(await hmac(secret, msg, hash));
+export const hmacHex = async (secret, msg, hash = "SHA-256") => toHex(await hmac(secret, msg, hash));
+export const hmacB64 = async (secret, msg, hash = "SHA-256") => toBase64(await hmac(secret, msg, hash));
 
-const sha256Hex = async (msg) => toHex(await crypto.subtle.digest("SHA-256", enc.encode(msg)));
+export const sha256Hex = async (msg) => toHex(await crypto.subtle.digest("SHA-256", enc.encode(msg)));
 
-async function callJson(url, init = {}) {
+export async function callJson(url, init = {}) {
   try {
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(10000) });
     const text = await res.text();

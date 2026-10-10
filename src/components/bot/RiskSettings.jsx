@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,15 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
-import { TIMEFRAMES, TIERS, roundTo } from '@/lib/market';
+import { TIMEFRAMES, TIERS, pageItems, roundTo } from '@/lib/market';
+
+const EXCHANGE_LABELS = {
+  binance_us: 'Binance US',
+  binance: 'Binance',
+  bybit: 'Bybit',
+  kucoin: 'KuCoin',
+  kraken: 'Kraken',
+};
 
 function Field({ label, hint, children }) {
   return (
@@ -48,8 +56,25 @@ export default function RiskSettings({ config, onSaved }) {
     auto_run: config?.auto_run ?? true,
     timeframe: config?.timeframe || '1h',
     market_cap_scope: config?.market_cap_scope || 'all',
+    real_orders_enabled: config?.real_orders_enabled ?? false,
+    real_connection_id: config?.real_connection_id || '',
+    real_sizing_mode: config?.real_sizing_mode || 'paper',
+    fixed_order_usd: config?.fixed_order_usd ?? 100,
   });
   const [saving, setSaving] = useState(false);
+  const [connections, setConnections] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    base44.entities.ExchangeConnection.filter({ status: 'connected' }, { limit: 20 })
+      .then((res) => {
+        if (alive) setConnections(pageItems(res));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const set = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }));
   const setNum = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
@@ -73,6 +98,10 @@ export default function RiskSettings({ config, onSaved }) {
         auto_run: form.auto_run,
         timeframe: form.timeframe,
         market_cap_scope: form.market_cap_scope,
+        real_orders_enabled: form.real_orders_enabled,
+        real_connection_id: form.real_connection_id || '',
+        real_sizing_mode: form.real_sizing_mode,
+        fixed_order_usd: roundTo(form.fixed_order_usd, 2),
       });
       toast({ title: 'Risk rules saved', description: 'The bot picks them up on its next cycle.' });
       if (onSaved) onSaved();
@@ -193,6 +222,54 @@ export default function RiskSettings({ config, onSaved }) {
           <Field label="Trail distance %">
             <Input className="num" inputMode="decimal" value={form.trailing_distance_pct} onChange={setNum('trailing_distance_pct')} />
           </Field>
+        </div>
+      ) : null}
+
+      <Toggle
+        label="Real orders"
+        hint="When on, qualifying longs are sent as market orders to the chosen exchange — Auto opens them and approved proposals fire them. Shorts stay paper."
+        checked={form.real_orders_enabled}
+        onChange={set('real_orders_enabled')}
+      />
+
+      {form.real_orders_enabled ? (
+        <div className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
+          <Field label="Exchange account" hint="Verified connections with trading enabled appear here.">
+            <Select value={form.real_connection_id || undefined} onValueChange={set('real_connection_id')}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose an account" />
+              </SelectTrigger>
+              <SelectContent>
+                {connections.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.label || EXCHANGE_LABELS[c.exchange] || c.exchange}
+                    {c.testnet ? ' (testnet)' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Order sizing" hint="What each real order spends.">
+              <Select value={form.real_sizing_mode} onValueChange={set('real_sizing_mode')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paper">Match paper sizing</SelectItem>
+                  <SelectItem value="fixed">Fixed amount</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {form.real_sizing_mode === 'fixed' ? (
+              <Field label="Fixed order ($)" hint="Spent on every real order.">
+                <Input className="num" inputMode="decimal" value={form.fixed_order_usd} onChange={setNum('fixed_order_usd')} />
+              </Field>
+            ) : null}
+          </div>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Market orders only. Real fills are tracked separately from the paper balance, and the bot closes a real position by selling the same amount on the same account.
+          </p>
         </div>
       ) : null}
 

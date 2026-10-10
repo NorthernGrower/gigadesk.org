@@ -61,6 +61,10 @@ export const DEFAULT_CONFIG = {
   require_daily_target: true,
   cooldown_minutes: 120,
   auto_run: true,
+  real_orders_enabled: false,
+  real_connection_id: '',
+  real_sizing_mode: 'paper',
+  fixed_order_usd: 100,
 };
 
 export function roundTo(n, d = 2) {

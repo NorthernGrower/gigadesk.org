@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
+import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 
 /** Exit maths shared by the single close and the close-everything action. */
 function closingValues(trade, price) {
@@ -57,10 +58,44 @@ export default async function (req) {
         return Response.json({ error: "No live prices for your open positions right now" }, { status: 502 });
       }
 
+      const live = await resolveLiveConnection(base44, config);
       let cashDelta = 0;
       let pnlTotal = 0;
       for (const openTrade of closeable) {
-        const closed = closingValues(openTrade, priceOf(openTrade.symbol));
+        let closePrice = priceOf(openTrade.symbol);
+        // a bot-placed real position is closed with a real sell order; a
+        // refused order leaves it open and raises an alert
+        if (openTrade.mode === "real" && openTrade.exchange_order_id) {
+          if (!live.conn) {
+            await base44.entities.Alert.create({
+              symbol: openTrade.symbol,
+              title: `Could not close ${openTrade.symbol} on the exchange`,
+              message: live.reason,
+              kind: "order_failed",
+              severity: "danger",
+              trade_id: openTrade.id,
+            });
+            continue;
+          }
+          const sell = await placeMarketOrder(live.conn, {
+            symbol: openTrade.symbol,
+            side: "sell",
+            quantity: Number(openTrade.quantity) || 0,
+          });
+          if (!sell.ok) {
+            await base44.entities.Alert.create({
+              symbol: openTrade.symbol,
+              title: `Could not close ${openTrade.symbol} on ${live.conn.label}`,
+              message: sell.message,
+              kind: "order_failed",
+              severity: "danger",
+              trade_id: openTrade.id,
+            });
+            continue;
+          }
+          if (sell.avg_price) closePrice = sell.avg_price;
+        }
+        const closed = closingValues(openTrade, closePrice);
         await base44.entities.Trade.update(openTrade.id, closed.update);
         if ((openTrade.mode || "paper") === "paper") cashDelta += closed.size + closed.pnl;
         pnlTotal += closed.pnl;
@@ -99,16 +134,49 @@ export default async function (req) {
       if (size <= 0) {
         return Response.json({ error: "Not enough balance to open this position" }, { status: 400 });
       }
+
+      // real orders: confirming a long with real orders on fires a market buy
+      // on the chosen exchange; a refused order keeps the proposal standing
+      let real = null;
+      let realSize = 0;
+      const live = await resolveLiveConnection(base44, config);
+      if (live.conn && trade.side === "long") {
+        realSize =
+          config.real_sizing_mode === "fixed"
+            ? Number(config.fixed_order_usd) || 100
+            : size;
+        real =
+          realSize >= 10
+            ? await placeMarketOrder(live.conn, {
+                symbol: trade.symbol,
+                side: "buy",
+                usd: round(realSize, 2),
+                price: Number(trade.entry_price) || 0,
+              })
+            : { ok: false, message: "The real order size is below the $10 minimum" };
+        if (!real.ok) {
+          return Response.json({ error: `The exchange refused the order: ${real.message}` }, { status: 502 });
+        }
+      }
+
       await base44.entities.Trade.update(tradeId, {
         status: "open",
-        size_usd: round(size),
-        quantity: round(qty, 8),
+        ...(real
+          ? {
+              mode: "real",
+              entry_price: round(real.avg_price || Number(trade.entry_price) || 0, 6),
+              quantity: round(real.filled_qty || realSize / (Number(trade.entry_price) || 1), 8),
+              size_usd: round(realSize),
+              exchange: live.conn.exchange,
+              exchange_order_id: real.order_id,
+            }
+          : { size_usd: round(size), quantity: round(qty, 8) }),
         opened_at: new Date().toISOString(),
       });
-      if (isPaper && config) {
+      if (!real && isPaper && config) {
         await base44.entities.BotConfig.update(config.id, { cash_balance: round(cash - size) });
       }
-      return Response.json({ ok: true, status: "open", cash: round(isPaper ? cash - size : cash) });
+      return Response.json({ ok: true, status: "open", cash: round(!real && isPaper ? cash - size : cash) });
     }
 
     if (action === "reject") {
@@ -125,7 +193,22 @@ export default async function (req) {
       if (!price) {
         return Response.json({ error: "No live price for this coin right now" }, { status: 502 });
       }
-      const closed = closingValues(trade, price);
+      let closePrice = price;
+      // closing a bot-placed real position sends a real sell order first
+      if (trade.mode === "real" && trade.exchange_order_id) {
+        const live = await resolveLiveConnection(base44, config);
+        if (!live.conn) return Response.json({ error: live.reason }, { status: 409 });
+        const sell = await placeMarketOrder(live.conn, {
+          symbol: trade.symbol,
+          side: "sell",
+          quantity: Number(trade.quantity) || 0,
+        });
+        if (!sell.ok) {
+          return Response.json({ error: `The exchange refused the close: ${sell.message}` }, { status: 502 });
+        }
+        if (sell.avg_price) closePrice = sell.avg_price;
+      }
+      const closed = closingValues(trade, closePrice);
       await base44.entities.Trade.update(tradeId, closed.update);
       if (isPaper && config) {
         await base44.entities.BotConfig.update(config.id, {

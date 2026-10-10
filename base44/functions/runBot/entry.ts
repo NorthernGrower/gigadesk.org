@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { scanBoard } from "../../shared/scan.ts";
+import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -21,6 +22,10 @@ const DEFAULT_CONFIG = {
   require_daily_target: true,
   cooldown_minutes: 120,
   auto_run: true,
+  real_orders_enabled: false,
+  real_connection_id: "",
+  real_sizing_mode: "paper",
+  fixed_order_usd: 100,
 };
 
 export default async function (req) {
@@ -39,14 +44,18 @@ export default async function (req) {
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
     const openTrades = asArray(
-      await base44.entities.Trade.filter({ status: "open", mode: "paper" }, { limit: 50 }),
+      await base44.entities.Trade.filter({ status: "open" }, { limit: 50 }),
     );
+    const live = await resolveLiveConnection(base44, config);
     let cash = Number(config.cash_balance) || 0;
     const closed = [];
     const positions = [];
 
     // ---- manage the positions already open
     for (const t of openTrades) {
+      // a real fill the user logged by hand is theirs to manage — the bot only
+      // touches its own real positions (those carry an exchange order id)
+      if ((t.mode || "paper") === "real" && !t.exchange_order_id) continue;
       const price = priceMap.get(t.symbol)?.price ?? null;
       if (!price) continue;
       const side = t.side === "short" ? "short" : "long";
@@ -82,7 +91,29 @@ export default async function (req) {
       const hitStop = side === "long" ? price <= stop : price >= stop;
 
       if (hitTarget || hitStop) {
-        const exitPrice = hitTarget ? target : stop;
+        let exitPrice = hitTarget ? target : stop;
+        // close a bot-placed real position with a real sell order; if the
+        // exchange refuses, the position stays open and the user is alerted
+        if (t.mode === "real" && live.conn) {
+          const sell = await placeMarketOrder(live.conn, {
+            symbol: t.symbol,
+            side: "sell",
+            quantity: Number(t.quantity) || 0,
+          });
+          if (!sell.ok) {
+            await base44.entities.Alert.create({
+              symbol: t.symbol,
+              title: `Could not close ${t.symbol} on ${live.conn.label}`,
+              message: sell.message,
+              kind: "order_failed",
+              severity: "danger",
+              trade_id: t.id,
+            });
+            if (Object.keys(updates).length) await base44.entities.Trade.update(t.id, updates);
+            continue;
+          }
+          if (sell.avg_price) exitPrice = sell.avg_price;
+        }
         const qty = Number(t.quantity) || 0;
         const size = Number(t.size_usd) || 0;
         const pnl = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
@@ -98,7 +129,7 @@ export default async function (req) {
           closed_at: new Date().toISOString(),
           exit_reason: reason,
         });
-        cash += size + pnl;
+        if ((t.mode || "paper") === "paper") cash += size + pnl;
         closed.push({
           id: t.id,
           symbol: t.symbol,
@@ -135,6 +166,7 @@ export default async function (req) {
           name: t.name,
           image: t.image,
           side,
+          mode: t.mode || "paper",
           entry_price: entry,
           current_price: round(price, 6),
           stop_price: round(stop, 6),
@@ -209,37 +241,71 @@ export default async function (req) {
         }
         if (sizeUsd < 10) continue;
 
+        // real orders: when enabled, a qualifying long is sent to the chosen
+        // exchange as a market buy; shorts stay paper and a refused order is
+        // alerted rather than silently paper-traded
+        let real = null;
+        let realSizeUsd = 0;
+        if (live.conn && r.side === "long") {
+          realSizeUsd =
+            config.real_sizing_mode === "fixed"
+              ? Math.min(Number(config.fixed_order_usd) || 100, cap)
+              : sizeUsd;
+          real =
+            realSizeUsd >= 10
+              ? await placeMarketOrder(live.conn, {
+                  symbol: r.symbol,
+                  side: "buy",
+                  usd: round(realSizeUsd, 2),
+                  price: r.entry,
+                })
+              : { ok: false, message: "The real order size is below the $10 minimum" };
+          if (!real.ok) {
+            await base44.entities.Alert.create({
+              symbol: r.symbol,
+              title: `Real order failed on ${r.symbol}`,
+              message: `${live.conn.label} said: ${real.message}`,
+              kind: "order_failed",
+              severity: "danger",
+            });
+            continue;
+          }
+        }
+
         const created = await base44.entities.Trade.create({
           symbol: r.symbol,
           name: r.name,
           image: r.image,
           side: r.side,
-          mode: "paper",
+          mode: real ? "real" : "paper",
           status: config.mode === "auto" ? "open" : "proposed",
-          entry_price: r.entry,
-          quantity: round(qty, 8),
-          size_usd: round(sizeUsd),
+          entry_price: round(real ? real.avg_price || r.entry : r.entry, 6),
+          quantity: round(real ? real.filled_qty || realSizeUsd / r.entry : qty, 8),
+          size_usd: round(real ? realSizeUsd : sizeUsd),
           stop_price: r.stop,
           target_price: r.target,
           peak_price: r.entry,
           score: r.score,
+          exchange: real ? live.conn.exchange : undefined,
+          exchange_order_id: real ? real.order_id : undefined,
           rationale: (r.reasons || []).join(" • "),
           opened_at: new Date().toISOString(),
         });
 
         if (config.mode === "auto") {
-          cash -= sizeUsd;
+          if (!real) cash -= sizeUsd;
           opened.push({
             id: created.id,
             symbol: r.symbol,
             side: r.side,
             entry: r.entry,
-            size_usd: round(sizeUsd),
+            size_usd: round(real ? realSizeUsd : sizeUsd),
+            mode: real ? "real" : "paper",
           });
           await base44.entities.Alert.create({
             symbol: r.symbol,
             title: `Bot opened a ${r.side} on ${r.symbol}`,
-            message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}.`,
+            message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}.${real ? ` Real order placed on ${live.conn.label}.` : ""}`,
             kind: "bot_open",
             severity: "info",
             trade_id: created.id,

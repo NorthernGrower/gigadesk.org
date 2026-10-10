@@ -70,6 +70,21 @@
     "score": {
       "type": "number"
     },
+    "exchange": {
+      "type": "string",
+      "enum": [
+        "binance_us",
+        "binance",
+        "bybit",
+        "kucoin",
+        "kraken"
+      ],
+      "description": "Which exchange a bot-placed real order went to"
+    },
+    "exchange_order_id": {
+      "type": "string",
+      "description": "The exchange's order id; marks a real position the bot placed and manages"
+    },
     "exit_reason": {
       "type": "string",
       "enum": [
