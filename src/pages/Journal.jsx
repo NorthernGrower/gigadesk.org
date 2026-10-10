@@ -12,6 +12,7 @@ import { ensureBotConfig } from '@/lib/market';
 export default function Journal() {
   const [mode, setMode] = useState('all');
   const [status, setStatus] = useState('all');
+  const [result, setResult] = useState('all');
   const [trades, setTrades] = useState([]);
   const [cursor, setCursor] = useState(null);
   const [hasMore, setHasMore] = useState(false);
@@ -23,6 +24,7 @@ export default function Journal() {
   const load = async (options = {}) => {
     const nextMode = options.mode ?? mode;
     const nextStatus = options.status ?? status;
+    const nextResult = options.result ?? result;
     const reset = options.reset !== false;
     if (reset) setLoading(true);
     else setLoadingMore(true);
@@ -31,6 +33,9 @@ export default function Journal() {
     const query = {};
     if (nextMode !== 'all') query.mode = nextMode;
     if (nextStatus !== 'all') query.status = nextStatus;
+    if (nextResult === 'win') query.pnl_usd = { $gt: 0 };
+    else if (nextResult === 'loss') query.pnl_usd = { $lt: 0 };
+    else if (nextResult === 'flat') query.pnl_usd = 0;
 
     try {
       const page = await base44.entities.Trade.filter(query, {
@@ -112,6 +117,23 @@ export default function Journal() {
                 <SelectItem value="open">Open</SelectItem>
                 <SelectItem value="closed">Closed</SelectItem>
                 <SelectItem value="proposed">Awaiting approval</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={result}
+              onValueChange={(value) => {
+                setResult(value);
+                load({ result: value, reset: true });
+              }}
+            >
+              <SelectTrigger className="h-9 w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any result</SelectItem>
+                <SelectItem value="win">Winners</SelectItem>
+                <SelectItem value="loss">Losers</SelectItem>
+                <SelectItem value="flat">Break-even</SelectItem>
               </SelectContent>
             </Select>
             <span className="num text-[11px] text-muted-foreground">{trades.length} shown</span>
