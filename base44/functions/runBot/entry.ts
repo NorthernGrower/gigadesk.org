@@ -63,7 +63,7 @@ export default async function (req) {
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
     const openTrades = asArray(
-      await base44.entities.Trade.filter({ status: "open" }, { limit: 50 }),
+      await base44.entities.Trade.filter({ status: "open" }, { limit: 200 }),
     );
     const live = await resolveLiveConnection(base44, config);
     let cash = Number(config.cash_balance) || 0;
@@ -520,6 +520,49 @@ export default async function (req) {
       cash_balance: round(anchoredCash),
       last_run_at: new Date().toISOString(),
     });
+
+    // ---- save today's equity candle so the chart keeps its history even as
+    // old trades age out of the journal
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const paperTodays = todays.filter((t) => (t.mode || "paper") === "paper");
+    const paperRealizedToday = paperTodays.reduce(
+      (a, t) => a + (Number(t.pnl_usd) || 0),
+      0,
+    );
+    const prevCandles = asArray(
+      await base44.asServiceRole.entities.EquityCandle.filter(
+        { day: { $lt: todayKey } },
+        { sort: "-day", limit: 1 },
+      ),
+    );
+    const prevClose = prevCandles.length ? Number(prevCandles[0].close) : null;
+    const existingCandle = asArray(
+      await base44.asServiceRole.entities.EquityCandle.filter(
+        { day: todayKey },
+        { limit: 1 },
+      ),
+    )[0];
+    const candleOpen = existingCandle
+      ? Number(existingCandle.open)
+      : prevClose != null
+        ? prevClose
+        : round(startBalance + realizedTotal - paperRealizedToday);
+    const highBase = existingCandle ? Number(existingCandle.high) || candleOpen : candleOpen;
+    const lowBase = existingCandle ? Number(existingCandle.low) || candleOpen : candleOpen;
+    await base44.asServiceRole.entities.EquityCandle.upsert(
+      [
+        {
+          day: todayKey,
+          open: round(candleOpen),
+          high: round(Math.max(highBase, candleOpen, equity)),
+          low: round(Math.min(lowBase, candleOpen, equity)),
+          close: round(equity),
+          realized: round(paperRealizedToday),
+          trades: paperTodays.length,
+        },
+      ],
+      { key: "day" },
+    );
 
     return Response.json({
       mode: config.mode,

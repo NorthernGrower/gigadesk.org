@@ -1,0 +1,54 @@
+{
+  "name": "EquityCandle",
+  "type": "object",
+  "properties": {
+    "day": {
+      "type": "string",
+      "format": "date",
+      "description": "UTC day this candle covers; one record per day"
+    },
+    "open": {
+      "type": "number",
+      "description": "Equity when the day started"
+    },
+    "high": {
+      "type": "number"
+    },
+    "low": {
+      "type": "number"
+    },
+    "close": {
+      "type": "number",
+      "description": "Equity at the most recent bot cycle"
+    },
+    "realized": {
+      "type": "number",
+      "description": "Paper profit and loss booked that day"
+    },
+    "trades": {
+      "type": "number",
+      "description": "Paper trades closed that day"
+    }
+  },
+  "required": [
+    "day"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
