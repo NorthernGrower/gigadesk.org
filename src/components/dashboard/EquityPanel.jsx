@@ -264,7 +264,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
             </span>
           </div>
 
-          <div className="mt-3 h-52">
+          <div className="mt-3 h-52 w-full min-w-0 overflow-hidden">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={points} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
                 <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.3} vertical={false} />

@@ -214,7 +214,7 @@ export default function Dashboard() {
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {top ? (
             <BestBuyCard
               row={top}
@@ -250,7 +250,7 @@ export default function Dashboard() {
           <SmartMoneyPanel />
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <MarketPulse
             summary={bot?.summary}
             medianChange24h={bot?.median_change_24h}
