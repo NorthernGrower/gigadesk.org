@@ -61,7 +61,7 @@ export default function Settings() {
           <h2 className="font-heading text-sm font-semibold">Exchange API keys</h2>
           <p className="text-sm text-muted-foreground">Each user manages their own venue connections — verified with a live account read before they are stored.</p>
           <div className="mt-4">
-            <ConnectionsManager />
+            <ConnectionsManager showSafety />
           </div>
         </div>
       </div>

@@ -66,7 +66,7 @@ export default function BotStatusPill({ config, running }) {
         if (!ready.length) {
           toast({
             title: 'Live trading needs a verified exchange',
-            description: 'Connect an exchange on the Exchanges page and enable trading first.',
+            description: 'Connect an exchange in Settings and enable trading first.',
             variant: 'destructive',
           });
           return;

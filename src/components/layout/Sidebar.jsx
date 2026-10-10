@@ -3,7 +3,6 @@ import { NavLink } from 'react-router-dom';
 import {
   BookOpen,
   Bot as BotIcon,
-  KeyRound,
   LayoutDashboard,
   Radar,
   Settings as SettingsIcon,
@@ -15,7 +14,6 @@ const NAV = [
   { to: '/', label: 'Desk', icon: LayoutDashboard, end: true },
   { to: '/screener', label: 'Screener', icon: Radar },
   { to: '/bot', label: 'Bot', icon: BotIcon },
-  { to: '/exchanges', label: 'Exchanges', icon: KeyRound },
   { to: '/journal', label: 'Journal', icon: BookOpen },
   { to: '/watchlist', label: 'Watchlist', icon: Star },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
