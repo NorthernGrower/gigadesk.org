@@ -31,9 +31,14 @@ const DEFAULT_CONFIG = {
   trading_style: "mild",
 };
 
-// How long an aggressive-style trade may sit going nowhere before the bot
-// cuts it and moves on to fresher setups.
-const STAGNANT_HOURS = 12;
+// An aggressive-style trade that has gone nowhere for a quarter of the scan
+// timeframe is cut so the capital moves on to fresher setups.
+const TIMEFRAME_MS = {
+  "15m": 15 * 60000,
+  "1h": 60 * 60000,
+  "4h": 4 * 60 * 60000,
+  "1d": 24 * 60 * 60000,
+};
 
 export default async function (req) {
   try {
@@ -102,7 +107,7 @@ export default async function (req) {
       const stagnant =
         (config.trading_style || "mild") === "aggressive" &&
         openedMs > 0 &&
-        Date.now() - openedMs > STAGNANT_HOURS * 3600000 &&
+        Date.now() - openedMs > (TIMEFRAME_MS[config.timeframe || "1h"] || TIMEFRAME_MS["1h"]) / 4 &&
         Math.abs(gainPct) < 1;
       const exit = hitTarget || hitStop || stagnant;
 
