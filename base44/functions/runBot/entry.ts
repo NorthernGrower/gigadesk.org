@@ -74,9 +74,25 @@ export default async function (req) {
     const { coins } = await fetchMarkets();
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
-    const openTrades = asArray(
-      await base44.entities.Trade.filter({ status: "open" }, { limit: 200 }),
-    );
+    // entity reads cap each page, so a plain read silently missed open trades
+    // once the desk held more than a page — the exact window that let already
+    // open symbols be traded again. Page through until every match is in.
+    async function readAll(query, sort = "-created_date") {
+      const out = [];
+      let cursor;
+      do {
+        const page = await base44.entities.Trade.filter(query, {
+          sort,
+          limit: 200,
+          ...(cursor ? { cursor } : {}),
+        });
+        out.push(...asArray(page));
+        cursor = page && page.next_cursor;
+      } while (cursor);
+      return out;
+    }
+
+    const openTrades = await readAll({ status: "open" });
     const live = await resolveLiveConnection(base44, config);
     let cash = Number(config.cash_balance) || 0;
     const closed = [];
@@ -323,12 +339,8 @@ export default async function (req) {
       const since = new Date(
         Date.now() - (Number(config.cooldown_minutes) || 120) * 60000,
       ).toISOString();
-      const recent = asArray(
-        await base44.entities.Trade.filter({ closed_at: { $gte: since } }, { limit: 100 }),
-      );
-      const pending = asArray(
-        await base44.entities.Trade.filter({ status: "proposed" }, { limit: 50 }),
-      );
+      const recent = await readAll({ closed_at: { $gte: since } });
+      const pending = await readAll({ status: "proposed" });
       const blocked = new Set([
         ...openTrades.map((t) => t.symbol),
         ...recent.map((t) => t.symbol),
@@ -393,6 +405,13 @@ export default async function (req) {
         .slice(0, slots);
 
       for (const r of candidates) {
+        // final guard: even if a paged read missed it, never open a second
+        // position in a symbol that already has one open
+        const alreadyOpen = await base44.entities.Trade.count({
+          status: "open",
+          symbol: r.symbol,
+        });
+        if (alreadyOpen) continue;
         const stopDist = Math.abs(r.entry - r.stop);
         if (!(stopDist > 0)) continue;
         const riskUsd = (cash * riskPct) / 100;
@@ -494,12 +513,10 @@ export default async function (req) {
     // ---- daily goal check
     const dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
-    const todays = asArray(
-      await base44.entities.Trade.filter(
-        { status: "closed", closed_at: { $gte: dayStart.toISOString() } },
-        { limit: 200 },
-      ),
-    );
+    const todays = await readAll({
+      status: "closed",
+      closed_at: { $gte: dayStart.toISOString() },
+    });
     const realizedToday = todays.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
     const startBalance = Number(config.starting_balance) || 10000;
     const goal = (startBalance * (Number(config.daily_target_pct) || 2)) / 100;
@@ -523,9 +540,7 @@ export default async function (req) {
     }
 
     // ---- live (exchange) stats: every real trade, bot-placed or hand-logged
-    const realOpen = asArray(
-      await base44.entities.Trade.filter({ status: "open", mode: "real" }, { limit: 50 }),
-    );
+    const realOpen = await readAll({ status: "open", mode: "real" });
     const livePositions = realOpen.map((t) => {
       const side = t.side === "short" ? "short" : "long";
       const entry = Number(t.entry_price) || 0;
@@ -554,12 +569,11 @@ export default async function (req) {
     });
     const liveExposure = livePositions.reduce((a, p) => a + p.size_usd, 0);
     const liveUnrealized = livePositions.reduce((a, p) => a + p.pnl_usd, 0);
-    const realClosedToday = asArray(
-      await base44.entities.Trade.filter(
-        { status: "closed", mode: "real", closed_at: { $gte: dayStart.toISOString() } },
-        { limit: 200 },
-      ),
-    );
+    const realClosedToday = await readAll({
+      status: "closed",
+      mode: "real",
+      closed_at: { $gte: dayStart.toISOString() },
+    });
     const liveRealized = realClosedToday.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
 
     // the exchange's own quote-currency balance, refreshed on full cycles only
