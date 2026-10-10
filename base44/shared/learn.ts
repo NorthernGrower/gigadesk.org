@@ -30,9 +30,10 @@ export async function loadLessons(base44) {
     });
 }
 
-/** Remembers one closed call so future scans can weight the pattern. */
+/** Remembers one closed call so future scans can weight the pattern.
+ *  Break-even calls carry no signal, so they are left out of the memory. */
 export async function recordLesson(base44, trade, pnlPct, pnlUsd, exitReason) {
-  if (!trade.pattern) return null;
+  if (!trade.pattern || (Number(pnlUsd) || 0) === 0) return null;
   return base44.entities.Lesson.create({
     pattern: trade.pattern,
     symbol: trade.symbol,
