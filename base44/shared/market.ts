@@ -60,39 +60,76 @@ function tierFor(index) {
   return "micro";
 }
 
-/** Symbol -> market cap map from CoinGecko's free markets feed (top 500, 15 min cache). */
+/**
+ * Symbol -> market cap map from free feeds (15 min cache). The scan runtime is
+ * blocked by some providers, so sources are tried in order until one answers.
+ */
 async function loadCaps() {
   const cached = cacheGet("caps");
   if (cached) return cached;
-  try {
-    const pages = await Promise.all(
-      [1, 2].map((p) =>
-        fetchJson(
-          `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${p}`,
-          12000,
-        ).catch((err) => {
-          console.log(`caps page failed: ${err && err.message}`);
-          return null;
-        }),
-      ),
-    );
-    const caps = new Map();
-    for (const page of pages) {
-      if (!Array.isArray(page)) continue;
-      for (const c of page) {
-        const sym = String(c.symbol || "").toUpperCase();
-        if (sym && !caps.has(sym)) caps.set(sym, Number(c.market_cap) || 0);
+
+  const sources = [
+    {
+      name: "coingecko",
+      pages: [
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1",
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=2",
+      ],
+      headers: {
+        accept: "application/json",
+        "user-agent":
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      },
+      list: (res) => (Array.isArray(res) ? res : []),
+      capOf: (c) => Number(c.market_cap) || 0,
+    },
+    {
+      name: "coincap",
+      pages: ["https://api.coincap.io/v2/assets?limit=2000"],
+      headers: { accept: "application/json" },
+      list: (res) => (Array.isArray(res && res.data) ? res.data : []),
+      capOf: (c) => Number(c.marketCapUsd) || 0,
+    },
+    {
+      name: "coinpaprika",
+      pages: ["https://api.coinpaprika.com/v1/tickers"],
+      headers: { accept: "application/json" },
+      list: (res) => (Array.isArray(res) ? res : []),
+      capOf: (c) => Number((((c || {}).quotes || {}).USD || {}).market_cap) || 0,
+    },
+  ];
+
+  for (const src of sources) {
+    try {
+      const lists = await Promise.all(
+        src.pages.map((url) =>
+          fetch(url, { headers: src.headers, signal: AbortSignal.timeout(20000) })
+            .then((res) => {
+              if (!res.ok) throw new Error(`responded ${res.status}`);
+              return res.json();
+            })
+            .catch((err) => {
+              console.log(`caps ${src.name} page failed: ${err && err.message}`);
+              return null;
+            }),
+        ),
+      );
+      const caps = new Map();
+      for (const res of lists) {
+        for (const c of src.list(res)) {
+          const sym = String((c || {}).symbol || "").toUpperCase();
+          if (sym && !caps.has(sym)) caps.set(sym, src.capOf(c));
+        }
       }
+      if (caps.size) {
+        console.log(`caps loaded from ${src.name}: ${caps.size} symbols`);
+        return cacheSet("caps", caps, 15 * 60 * 1000);
+      }
+    } catch (err) {
+      console.log(`caps ${src.name} failed: ${err && err.message}`);
     }
-    if (!caps.size) {
-      console.log(`caps feed empty (pages: ${JSON.stringify(pages.map((p) => (Array.isArray(p) ? p.length : String(p))))})`);
-      return null;
-    }
-    return cacheSet("caps", caps, 15 * 60 * 1000);
-  } catch (err) {
-    console.log(`caps fetch failed: ${err && err.message}`);
-    return null;
   }
+  return null;
 }
 
 /** Whole-market snapshot: every tradable market on the exchange, ranked by traded volume. */
