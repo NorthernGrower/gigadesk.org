@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers, Radar, Wallet } from 'lucide-react';
+import { Layers, Wallet } from 'lucide-react';
 import AlertsFeed from '@/components/dashboard/AlertsFeed';
 import BestBuyCard from '@/components/dashboard/BestBuyCard';
+import BestWorstPositions from '@/components/dashboard/BestWorstPositions';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
@@ -221,16 +222,9 @@ export default function Dashboard() {
               onAnalyze={() => navigate(`/coin/${top.symbol}?ai=1`)}
             />
           ) : (
-            <div className="surface p-6">
-              <p className="font-heading text-base font-medium">No qualifying setup right now</p>
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                Nothing in the scanned market clears your score and target bars at the moment. Lower the minimum score
-                in the bot rules, or rescan in a few minutes.
-              </p>
-              <Button className="mt-4" size="sm" onClick={requestBotRun}>
-                <Radar className="mr-2 h-3.5 w-3.5" /> Rescan the market
-              </Button>
-            </div>
+            <BestWorstPositions
+              positions={deskMode === 'live' ? bot?.live?.positions || [] : bot?.positions || []}
+            />
           )}
 
           <EquityPanel
