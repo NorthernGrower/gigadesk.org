@@ -1,0 +1,67 @@
+{
+  "name": "SmartTrader",
+  "type": "object",
+  "properties": {
+    "wallet": {
+      "type": "string",
+      "description": "Trader wallet address on the leaderboard"
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name the trader set, when present"
+    },
+    "rank": {
+      "type": "number"
+    },
+    "window": {
+      "type": "string",
+      "enum": [
+        "day",
+        "week",
+        "month",
+        "allTime"
+      ],
+      "description": "Performance window the rank was computed on"
+    },
+    "roi_pct": {
+      "type": "number"
+    },
+    "pnl_usd": {
+      "type": "number"
+    },
+    "account_value_usd": {
+      "type": "number"
+    },
+    "volume_usd": {
+      "type": "number"
+    },
+    "open_positions": {
+      "type": "number"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "wallet"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

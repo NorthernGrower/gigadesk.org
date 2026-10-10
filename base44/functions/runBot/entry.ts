@@ -4,6 +4,7 @@ import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
+import { loadSmartBias } from "../../shared/smartmoney.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -275,10 +276,32 @@ export default async function (req) {
       const lessons = await loadLessons(base44);
       const lessonMap = new Map(lessons.map((l) => [l.pattern, l]));
 
+      // smart money: where the top on-chain traders are positioned nudges
+      // scores the same way — aligned with their flow, capped at +-5 points
+      const smartBias = await loadSmartBias(base44);
+
       const candidates = board.rows
         .map((r) => {
           const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
-          return adj ? { ...r, score: r.score + adj } : r;
+          let smartAdj = 0;
+          let smartNote = null;
+          const smart = smartBias.get(r.symbol);
+          if (smart) {
+            const total = (smart.long_usd || 0) + (smart.short_usd || 0);
+            if (total > 0) {
+              const longShare = (smart.long_usd || 0) / total;
+              smartAdj = Math.max(-5, Math.min(5, Math.round((longShare - 0.5) * 20)));
+              if (r.side !== "long") smartAdj = -smartAdj;
+              if (Math.abs(smartAdj) >= 2) {
+                const sharePct = Math.round(Math.max(longShare, 1 - longShare) * 100);
+                const dir = longShare >= 0.5 ? "long" : "short";
+                smartNote = `Smart money net ${dir}: ${sharePct}% of top-trader open size`;
+              }
+            }
+          }
+          const scoreAdj = adj + smartAdj;
+          const reasons = smartNote && (r.reasons || []).length ? [...r.reasons, smartNote] : r.reasons;
+          return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
         })
         .filter(
           (r) =>

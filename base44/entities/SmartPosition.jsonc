@@ -1,0 +1,61 @@
+{
+  "name": "SmartPosition",
+  "type": "object",
+  "properties": {
+    "wallet": {
+      "type": "string",
+      "description": "Trader wallet holding this position"
+    },
+    "trader_rank": {
+      "type": "number"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "long",
+        "short"
+      ]
+    },
+    "size_usd": {
+      "type": "number"
+    },
+    "entry_price": {
+      "type": "number"
+    },
+    "leverage": {
+      "type": "number"
+    },
+    "unrealized_pnl_usd": {
+      "type": "number"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "wallet",
+    "symbol"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

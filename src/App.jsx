@@ -14,6 +14,7 @@ import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import Dashboard from '@/pages/Dashboard';
 import Screener from '@/pages/Screener';
+import SmartMoney from '@/pages/SmartMoney';
 import CoinDetail from '@/pages/CoinDetail';
 import BotPage from '@/pages/Bot';
 import Journal from '@/pages/Journal';
@@ -56,6 +57,7 @@ const AuthenticatedApp = () => {
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/screener" element={<Screener />} />
+          <Route path="/smart" element={<SmartMoney />} />
           <Route path="/coin/:symbol" element={<CoinDetail />} />
           <Route path="/bot" element={<BotPage />} />
           <Route path="/journal" element={<Journal />} />
