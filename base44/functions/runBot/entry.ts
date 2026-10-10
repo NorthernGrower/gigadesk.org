@@ -1,7 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { scanBoard } from "../../shared/scan.ts";
-import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
+import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
+import { readAccount } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 
 const DEFAULT_CONFIG = {
@@ -401,6 +402,63 @@ export default async function (req) {
       }
     }
 
+    // ---- live (exchange) stats: every real trade, bot-placed or hand-logged
+    const realOpen = asArray(
+      await base44.entities.Trade.filter({ status: "open", mode: "real" }, { limit: 50 }),
+    );
+    const livePositions = realOpen.map((t) => {
+      const side = t.side === "short" ? "short" : "long";
+      const entry = Number(t.entry_price) || 0;
+      const price = priceMap.get(t.symbol)?.price ?? entry;
+      const qty = Number(t.quantity) || 0;
+      const size = Number(t.size_usd) || 0;
+      const unreal = entry && price ? (side === "long" ? (price - entry) * qty : (entry - price) * qty) : 0;
+      const goal = Number(t.target_price) ? Math.abs(Number(t.target_price) - entry) : 0;
+      const travelled = side === "long" ? price - entry : entry - price;
+      return {
+        id: t.id,
+        symbol: t.symbol,
+        name: t.name,
+        image: t.image,
+        side,
+        mode: "real",
+        entry_price: entry,
+        current_price: round(price, 6),
+        stop_price: t.stop_price,
+        target_price: t.target_price,
+        size_usd: round(size),
+        pnl_usd: round(unreal),
+        pnl_pct: size ? round((unreal / size) * 100) : 0,
+        progress_pct: goal ? round(Math.max(0, Math.min(100, (travelled / goal) * 100))) : 0,
+      };
+    });
+    const liveExposure = livePositions.reduce((a, p) => a + p.size_usd, 0);
+    const liveUnrealized = livePositions.reduce((a, p) => a + p.pnl_usd, 0);
+    const realClosedToday = asArray(
+      await base44.entities.Trade.filter(
+        { status: "closed", mode: "real", closed_at: { $gte: dayStart.toISOString() } },
+        { limit: 200 },
+      ),
+    );
+    const liveRealized = realClosedToday.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
+
+    // the exchange's own quote-currency balance, refreshed on full cycles only
+    let exchangeBalance = null;
+    if (live.conn && !light) {
+      const acct = await readAccount({
+        exchange: live.conn.exchange,
+        testnet: live.conn.testnet,
+        api_key: live.conn.api_key,
+        api_secret: live.conn.api_secret,
+        passphrase: live.conn.passphrase || "",
+      });
+      if (acct.ok) {
+        const quote = QUOTE_ASSET[live.conn.exchange] || "USDT";
+        const row = (acct.balances || []).find((b) => b.asset === quote);
+        exchangeBalance = row ? round(Number(row.total) || 0, 2) : 0;
+      }
+    }
+
     const exposure = positions.reduce((a, p) => a + p.size_usd, 0);
     const unrealized = positions.reduce((a, p) => a + p.pnl_usd, 0);
     const equity = cash + exposure + unrealized;
@@ -429,6 +487,16 @@ export default async function (req) {
       realized_today: round(realizedToday),
       daily_goal: round(goal),
       goal_hit: goalHit,
+      live: {
+        enabled: config.real_orders_enabled === true,
+        connection: live.conn ? { label: live.conn.label, exchange: live.conn.exchange } : null,
+        balance_usd: exchangeBalance,
+        open_count: livePositions.length,
+        exposure: round(liveExposure),
+        unrealized: round(liveUnrealized),
+        realized_today: round(liveRealized),
+        positions: livePositions,
+      },
       open_count: positions.length,
       config,
       updated_at: new Date().toISOString(),

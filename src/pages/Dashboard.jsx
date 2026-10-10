@@ -22,6 +22,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [closingId, setClosingId] = useState(null);
   const [closingAll, setClosingAll] = useState(false);
+  const [deskMode, setDeskMode] = useState('paper');
 
   useEffect(() => {
     let alive = true;
@@ -118,26 +119,86 @@ export default function Dashboard() {
     <div className="space-y-4">
       {error ? <ErrorNotice message={error} onRetry={requestBotRun} /> : null}
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1 rounded-xl border border-border/70 bg-secondary/40 p-0.5">
+          {[
+            { value: 'paper', label: 'Paper' },
+            { value: 'live', label: 'Live' },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setDeskMode(opt.value)}
+              className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${
+                deskMode === opt.value
+                  ? opt.value === 'live'
+                    ? 'bg-amber-400/15 text-amber-300 ring-1 ring-amber-400/30'
+                    : 'bg-primary/15 text-primary ring-1 ring-primary/30'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {deskMode === 'live' && !bot?.live?.enabled ? (
+          <span className="text-[11px] text-muted-foreground">
+            Live orders are off — flip the Paper/Live switch in the header to route the bot to your exchange.
+          </span>
+        ) : null}
+      </div>
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Equity" value={fmtUsd(bot?.equity || 0)} sub={`${fmtUsd(bot?.cash || 0)} free cash`} icon={Wallet} />
-        <StatCard
-          label="Today realised"
-          value={fmtUsd(bot?.realized_today || 0)}
-          sub={`${goalPct.toFixed(0)}% of your ${fmtUsd(bot?.daily_goal || 0)} target`}
-          tone={(bot?.realized_today || 0) >= 0 ? 'up' : 'down'}
-        />
-        <StatCard
-          label="Open positions"
-          value={bot?.open_count ?? 0}
-          sub={`${fmtUsd(bot?.exposure || 0)} deployed`}
-          icon={Layers}
-        />
-        <StatCard
-          label="Unrealised"
-          value={fmtUsd(bot?.unrealized || 0)}
-          sub={`${bot?.scanned || 0} coins scanned`}
-          tone={(bot?.unrealized || 0) >= 0 ? 'up' : 'down'}
-        />
+        {deskMode === 'live' ? (
+          <>
+            <StatCard
+              label="Exchange balance"
+              value={bot?.live?.balance_usd != null ? fmtUsd(bot.live.balance_usd) : '—'}
+              sub={bot?.live?.connection ? bot.live.connection.label : 'Verified exchange needed to refresh'}
+              icon={Wallet}
+            />
+            <StatCard
+              label="Today realised"
+              value={fmtUsd(bot?.live?.realized_today || 0)}
+              sub="closed real trades today"
+              tone={(bot?.live?.realized_today || 0) >= 0 ? 'up' : 'down'}
+            />
+            <StatCard
+              label="Open positions"
+              value={bot?.live?.open_count ?? 0}
+              sub={`${fmtUsd(bot?.live?.exposure || 0)} deployed`}
+              icon={Layers}
+            />
+            <StatCard
+              label="Unrealised"
+              value={fmtUsd(bot?.live?.unrealized || 0)}
+              sub="marked to market every cycle"
+              tone={(bot?.live?.unrealized || 0) >= 0 ? 'up' : 'down'}
+            />
+          </>
+        ) : (
+          <>
+            <StatCard label="Equity" value={fmtUsd(bot?.equity || 0)} sub={`${fmtUsd(bot?.cash || 0)} free cash`} icon={Wallet} />
+            <StatCard
+              label="Today realised"
+              value={fmtUsd(bot?.realized_today || 0)}
+              sub={`${goalPct.toFixed(0)}% of your ${fmtUsd(bot?.daily_goal || 0)} target`}
+              tone={(bot?.realized_today || 0) >= 0 ? 'up' : 'down'}
+            />
+            <StatCard
+              label="Open positions"
+              value={bot?.open_count ?? 0}
+              sub={`${fmtUsd(bot?.exposure || 0)} deployed`}
+              icon={Layers}
+            />
+            <StatCard
+              label="Unrealised"
+              value={fmtUsd(bot?.unrealized || 0)}
+              sub={`${bot?.scanned || 0} coins scanned`}
+              tone={(bot?.unrealized || 0) >= 0 ? 'up' : 'down'}
+            />
+          </>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
@@ -169,12 +230,16 @@ export default function Dashboard() {
           />
 
           <PositionsPanel
-            positions={bot?.positions || []}
+            positions={deskMode === 'live' ? bot?.live?.positions || [] : bot?.positions || []}
             onClose={closePosition}
             onCloseAll={closeAll}
             closingId={closingId}
             closingAll={closingAll}
-            hint="Live profit and loss, marked to market every cycle."
+            hint={
+              deskMode === 'live'
+                ? 'Your real positions on the exchange, marked to market every cycle.'
+                : 'Live profit and loss, marked to market every cycle.'
+            }
           />
         </div>
 

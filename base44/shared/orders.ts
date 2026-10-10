@@ -4,7 +4,7 @@
 import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64 } from "./exchanges.ts";
 import { round } from "./market.ts";
 
-const QUOTE_ASSET = { binance_us: "USD", binance: "USDT", bybit: "USDT", kucoin: "USDT", kraken: "USDT" };
+export const QUOTE_ASSET = { binance_us: "USD", binance: "USDT", bybit: "USDT", kucoin: "USDT", kraken: "USDT" };
 
 const trunc = (n, d) => {
   const f = 10 ** d;

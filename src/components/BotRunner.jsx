@@ -15,7 +15,8 @@ export default function BotRunner() {
 
     const cycle = async (light) => {
       try {
-        const config = configRef.current || (await ensureBotConfig());
+        // re-read the rules each cycle so header toggles (auto, live) apply right away
+        const config = await ensureBotConfig();
         configRef.current = config;
         if (!alive) return;
         if (!light && (!config.auto_run || config.mode === 'off')) return;

@@ -18,7 +18,10 @@ export default function Layout() {
         if (alive) setConfig(cfg);
       })
       .catch(() => {});
-    const onTick = () => setRunning(false);
+    const onTick = (event) => {
+      setRunning(false);
+      if (event.detail?.config) setConfig(event.detail.config);
+    };
     const onManual = () => setRunning(true);
     window.addEventListener('bot:tick', onTick);
     window.addEventListener('bot:run', onManual);
