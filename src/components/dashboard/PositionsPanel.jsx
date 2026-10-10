@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowDownRight, ArrowUpRight, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import CoinAvatar from '@/components/common/CoinAvatar';
@@ -15,6 +16,8 @@ export default function PositionsPanel({
   title = 'Open positions',
   hint,
 }) {
+  const navigate = useNavigate();
+
   return (
     <div className="surface p-4">
       <div className="flex items-center justify-between gap-3">
@@ -43,7 +46,12 @@ export default function PositionsPanel({
             const isShort = p.side === 'short';
             const Icon = isShort ? ArrowDownRight : ArrowUpRight;
             return (
-              <div key={p.id || p.symbol} className="rounded-xl border border-border/60 bg-secondary/20 p-3">
+              <div
+                key={p.id || p.symbol}
+                className={`rounded-xl border border-border/60 bg-secondary/20 p-3 ${p.id ? 'cursor-pointer transition-colors hover:border-primary/40' : ''}`}
+                onClick={p.id ? () => navigate(`/trade/${p.id}`) : undefined}
+                title={p.id ? 'Open the call card' : undefined}
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2.5">
                     <CoinAvatar symbol={p.symbol} />
@@ -78,7 +86,7 @@ export default function PositionsPanel({
                         size="sm"
                         variant="outline"
                         className="h-7 gap-1.5 px-2 text-[11px] hover:border-destructive/60 hover:text-destructive"
-                        onClick={() => onClose(p)}
+                        onClick={(e) => { e.stopPropagation(); onClose(p); }}
                         disabled={closingId === p.id || closingAll}
                         title={`Close ${p.symbol} at the live price`}
                       >

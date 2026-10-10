@@ -10,6 +10,7 @@ import StatCard from '@/components/common/StatCard';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
+import { onTradesChange } from '@/lib/live';
 import { emitBotTick, requestBotRun, runBot, tradeAction } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 
@@ -54,9 +55,24 @@ export default function Dashboard() {
 
     load();
     window.addEventListener('bot:tick', onTick);
+
+    // live stats: a changed trade refreshes the desk (a cooldown keeps the
+    // bot's own mark-to-market writes from fanning out into more runs)
+    let lastLiveRefresh = 0;
+    const stopLive = onTradesChange(() => {
+      if (Date.now() - lastLiveRefresh < 15000) return;
+      lastLiveRefresh = Date.now();
+      runBot(true)
+        .then((data) => {
+          if (alive) setBot(data);
+        })
+        .catch(() => {});
+    });
+
     return () => {
       alive = false;
       window.removeEventListener('bot:tick', onTick);
+      stopLive();
     };
   }, []);
 

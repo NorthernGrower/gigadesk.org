@@ -8,6 +8,7 @@ import RiskSettings from '@/components/bot/RiskSettings';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
+import { onTradesChange } from '@/lib/live';
 import { emitBotTick, ensureBotConfig, pageItems, runBot, tradeAction } from '@/lib/market';
 
 export default function Bot() {
@@ -66,9 +67,27 @@ export default function Bot() {
       setRunning(false);
     };
     window.addEventListener('bot:tick', onTick);
+
+    // live updates: a changed trade refreshes positions and proposals
+    // (a cooldown keeps the bot's own mark-to-market writes from fanning out)
+    let lastLiveRefresh = 0;
+    const stopLive = onTradesChange(() => {
+      if (Date.now() - lastLiveRefresh < 15000) return;
+      lastLiveRefresh = Date.now();
+      runBot(true)
+        .then((data) => {
+          if (!alive) return;
+          setBot(data);
+          if (data.config) setConfig(data.config);
+          loadProposed();
+        })
+        .catch(() => {});
+    });
+
     return () => {
       alive = false;
       window.removeEventListener('bot:tick', onTick);
+      stopLive();
     };
   }, []);
 

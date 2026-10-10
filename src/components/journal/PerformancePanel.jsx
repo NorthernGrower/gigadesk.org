@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { fmtPct, fmtUsd } from '@/lib/format';
+import { onTradesChange } from '@/lib/live';
 
 function Metric({ label, value, tone = 'neutral', hint }) {
   const tones = { up: 'text-primary', down: 'text-destructive', neutral: 'text-foreground' };
@@ -79,9 +80,11 @@ export default function PerformancePanel({ base = 10000 }) {
     };
     load();
     window.addEventListener('bot:tick', load);
+    const stopLive = onTradesChange(load);
     return () => {
       cancelled = true;
       window.removeEventListener('bot:tick', load);
+      stopLive();
     };
   }, [base]);
 

@@ -6,6 +6,7 @@ import TradeTable from '@/components/journal/TradeTable';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { onTradesChange } from '@/lib/live';
 import { ensureBotConfig } from '@/lib/market';
 
 export default function Journal() {
@@ -64,6 +65,12 @@ export default function Journal() {
       alive = false;
     };
   }, []);
+
+  const loadRef = React.useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  });
+  useEffect(() => onTradesChange(() => loadRef.current({ reset: true })), []);
 
   return (
     <div className="space-y-4">

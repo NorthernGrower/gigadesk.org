@@ -20,6 +20,7 @@ import Journal from '@/pages/Journal';
 import Watchlist from '@/pages/Watchlist';
 import Exchanges from '@/pages/Exchanges';
 import Settings from '@/pages/Settings';
+import TradeCallCard from '@/pages/TradeCallCard';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -61,6 +62,7 @@ const AuthenticatedApp = () => {
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/exchanges" element={<Exchanges />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/trade/:id" element={<TradeCallCard />} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />

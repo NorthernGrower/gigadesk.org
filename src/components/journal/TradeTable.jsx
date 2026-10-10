@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Check, Loader2, Trash2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ const STATUS_TONES = {
 
 export default function TradeTable({ trades = [], onChanged, showMode = true }) {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [closingId, setClosingId] = useState(null);
   const [exitPrice, setExitPrice] = useState('');
   const [busyId, setBusyId] = useState(null);
@@ -82,7 +84,12 @@ export default function TradeTable({ trades = [], onChanged, showMode = true }) 
         const open = trade.status === 'open';
         const isClosing = closingId === trade.id;
         return (
-          <div key={trade.id} className="surface p-3">
+          <div
+            key={trade.id}
+            className="surface cursor-pointer p-3 transition-colors hover:border-primary/40"
+            onClick={() => navigate(`/trade/${trade.id}`)}
+            title="Open the call card"
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2.5">
                 <CoinAvatar symbol={trade.symbol} />
@@ -130,7 +137,7 @@ export default function TradeTable({ trades = [], onChanged, showMode = true }) 
                 )}
 
                 {open && trade.mode === 'real' && !isClosing ? (
-                  <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setClosingId(trade.id)}>
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={(e) => { e.stopPropagation(); setClosingId(trade.id); }}>
                     Close
                   </Button>
                 ) : null}
@@ -139,7 +146,7 @@ export default function TradeTable({ trades = [], onChanged, showMode = true }) 
                   size="icon"
                   variant="ghost"
                   className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  onClick={() => remove(trade)}
+                  onClick={(e) => { e.stopPropagation(); remove(trade); }}
                   disabled={busyId === trade.id}
                   title="Remove this entry"
                 >
@@ -149,7 +156,7 @@ export default function TradeTable({ trades = [], onChanged, showMode = true }) 
             </div>
 
             {isClosing ? (
-              <div className="mt-2.5 flex items-end gap-2 border-t border-border/60 pt-2.5">
+              <div className="mt-2.5 flex items-end gap-2 border-t border-border/60 pt-2.5" onClick={(e) => e.stopPropagation()}>
                 <Input
                   className="num h-8 max-w-[160px]"
                   inputMode="decimal"
