@@ -67,7 +67,7 @@ export default function RiskSettings({ config, onSaved }) {
 
   useEffect(() => {
     let alive = true;
-    base44.entities.ExchangeConnection.filter({ status: 'connected' }, { limit: 20 })
+    base44.entities.ExchangeConnection.filter({ status: 'connected', allow_trading: true }, { limit: 20, fields: ['id', 'exchange', 'label', 'testnet'] })
       .then((res) => {
         if (alive) setConnections(pageItems(res));
       })
