@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Zap } from 'lucide-react';
+import { Loader2, SlidersHorizontal, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -55,6 +55,14 @@ export default function BotControls({ config, stats, onModeChange, onToggleAutoR
           <Button onClick={onRunNow} disabled={running}>
             {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
             Run a cycle
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => document.getElementById('risk-rules')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            title="Bot risk rules"
+          >
+            <SlidersHorizontal className="mr-2 h-4 w-4" />
+            Rules
           </Button>
         </div>
       </div>

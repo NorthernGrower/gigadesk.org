@@ -193,7 +193,9 @@ export default function Bot() {
         </div>
         <div className="space-y-4">
           <LearnedPanel />
-          <RiskSettings config={config} onSaved={() => cycle(true)} />
+          <div id="risk-rules">
+            <RiskSettings config={config} onSaved={() => cycle(true)} />
+          </div>
         </div>
       </div>
     </div>
