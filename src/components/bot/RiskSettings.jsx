@@ -278,8 +278,21 @@ export default function RiskSettings({ config, onSaved }) {
 
       {form.trailing_stop ? (
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Trail after %">
-            <Input className="num" inputMode="decimal" value={form.trailing_trigger_pct} onChange={setNum('trailing_trigger_pct')} />
+          <Field label="Arm trailing stop at" hint="The gain a trade must reach before the trail locks in.">
+            <Select value={String(form.trailing_trigger_pct)} onValueChange={(v) => set('trailing_trigger_pct')(Number(v))}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from(new Set([1, 1.5, 2, 3, 5, 7, 10, Number(form.trailing_trigger_pct)]))
+                  .sort((a, b) => a - b)
+                  .map((pct) => (
+                    <SelectItem key={pct} value={String(pct)}>
+                      {pct}% gain
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
           </Field>
           <Field label="Trail distance %">
             <Input className="num" inputMode="decimal" value={form.trailing_distance_pct} onChange={setNum('trailing_distance_pct')} />
