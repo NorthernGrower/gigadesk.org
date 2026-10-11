@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 
 const NAV = [
-  { to: '/', label: 'Desk', icon: LayoutDashboard, end: true },
+  { to: '/dashboard', label: 'Desk', icon: LayoutDashboard },
   { to: '/screener', label: 'Screener', icon: Radar },
   { to: '/bot', label: 'Bot', icon: BotIcon },
   { to: '/journal', label: 'Journal', icon: BookOpen },
@@ -27,7 +27,7 @@ function Brand() {
       </span>
       <span className="leading-tight">
         <span className="block font-heading text-sm font-semibold tracking-tight">
-          Alpha<span className="text-primary">Desk</span>
+          Giga<span className="text-primary">Desk</span>
         </span>
         <span className="block text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           market desk

@@ -46,7 +46,7 @@ export default function Layout() {
               <Activity className="h-3.5 w-3.5 text-primary" />
             </span>
             <span className="font-heading text-sm font-semibold">
-              Alpha<span className="text-primary">Desk</span>
+              Giga<span className="text-primary">Desk</span>
             </span>
           </div>
           <p className="hidden text-[11px] uppercase tracking-[0.16em] text-muted-foreground md:block">
@@ -60,7 +60,7 @@ export default function Layout() {
         </main>
 
         <footer className="mx-auto max-w-[1500px] px-4 pb-24 text-[11px] leading-relaxed text-muted-foreground md:px-6 md:pb-8">
-          AlphaDesk analyses live prices and trades your strategies on paper. Nothing here is financial advice, and no
+          GigaDesk analyses live prices and trades your strategies on paper. Nothing here is financial advice, and no
           performance is guaranteed — markets can lose money as easily as they make it.
         </footer>
       </div>
