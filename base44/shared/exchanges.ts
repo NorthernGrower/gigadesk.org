@@ -1,6 +1,7 @@
 // Signed account reads for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every outbound request is
 // bounded by a 10s timeout and errors are returned, never thrown.
+import { cacheGet, cacheSet } from "./market.ts";
 
 export const enc = new TextEncoder();
 
@@ -61,6 +62,80 @@ export async function readAccount(cfg) {
 
 const sortBalances = (list) =>
   list.filter((b) => b.total > 0).sort((a, b) => b.total - a.total);
+
+/**
+ * The base assets with an active spot pair on one exchange, for keeping the
+ * bot's scan inside what the connected account can actually trade (10 min
+ * cache). Returns null when the listing feed is unavailable — the caller then
+ * scans the default universe rather than scanning nothing.
+ */
+export async function fetchListedSymbols(cfg) {
+  try {
+    const key = `listed:${cfg.exchange}:${cfg.testnet ? "testnet" : "live"}`;
+    const cached = cacheGet(key);
+    if (cached) return cached;
+
+    let set = null;
+    if (cfg.exchange === "binance" || cfg.exchange === "binance_us") {
+      const base = cfg.testnet
+        ? "https://testnet.binance.vision"
+        : cfg.exchange === "binance_us"
+          ? "https://api.binance.us"
+          : "https://api.binance.com";
+      const res = await callJson(`${base}/api/v3/exchangeInfo`);
+      const rows = ((res.data || {}).symbols) || [];
+      // the bot's data feed and order pairs quote in USDT (USD on Binance US)
+      const quotes = cfg.exchange === "binance_us" ? ["USD", "USDT"] : ["USDT"];
+      set = new Set(
+        rows
+          .filter((s) => s.status === "TRADING" && quotes.includes(s.quoteAsset))
+          .map((s) => String(s.baseAsset || "").toUpperCase())
+          .filter(Boolean),
+      );
+    } else if (cfg.exchange === "bybit") {
+      const base = cfg.testnet ? "https://api-testnet.bybit.com" : "https://api.bybit.com";
+      set = new Set();
+      let cursor = "";
+      for (let page = 0; page < 5; page++) {
+        const res = await callJson(
+          `${base}/v5/market/instruments-info?category=spot&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        );
+        const result = (res.data || {}).result || {};
+        for (const s of result.list || []) {
+          if (s.status === "Trading" && String(s.symbol || "").endsWith("USDT"))
+            set.add(String(s.symbol).slice(0, -4).toUpperCase());
+        }
+        cursor = result.nextPageCursor || "";
+        if (!cursor) break;
+      }
+    } else if (cfg.exchange === "kucoin") {
+      const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+      const res = await callJson(`${base}/api/v1/market/allTickers`);
+      const tickers = ((res.data || {}).ticker) || [];
+      set = new Set(
+        tickers
+          .map((t) => String(t.symbol || ""))
+          .filter((s) => s.endsWith("-USDT"))
+          .map((s) => s.split("-")[0].toUpperCase())
+          .filter(Boolean),
+      );
+    } else if (cfg.exchange === "kraken") {
+      const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
+      const pairs = Object.values(((res.data || {}).result) || {});
+      set = new Set(
+        pairs
+          .filter((p) => p && p.quote === "USDT")
+          .map((p) => krakenAsset(p.base).toUpperCase())
+          .filter(Boolean),
+      );
+    }
+    if (set && set.size) return cacheSet(key, set, 10 * 60 * 1000);
+    return set;
+  } catch (err) {
+    console.log(`listed symbols for ${cfg.exchange} failed: ${err && err.message}`);
+    return null;
+  }
+}
 
 // ---- Binance / Binance US (HMAC-SHA256 over the query string) ----
 async function binanceAccount(cfg) {

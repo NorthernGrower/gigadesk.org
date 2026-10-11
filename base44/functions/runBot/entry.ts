@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
@@ -335,12 +335,16 @@ export default async function (req) {
 
     if (!light && config.mode !== "off" && openCount < maxOpen && !cycleInFlight) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
+      // when real orders are on, only scan coins the connected exchange
+      // actually lists — anything else could never be bought there
+      const listed = live.conn ? await fetchListedSymbols(live.conn) : null;
       board = await scanBoard({
         timeframe: config.timeframe || "1h",
         scope: config.market_cap_scope || "all",
         count: 60,
         dailyTargetPct: Number(config.daily_target_pct) || 2,
         extraSymbols: watch.map((w) => w.symbol),
+        ...(listed ? { onlySymbols: listed } : {}),
       });
 
       const since = new Date(

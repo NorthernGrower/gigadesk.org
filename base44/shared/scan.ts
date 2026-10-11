@@ -65,6 +65,7 @@ export async function scanBoard({
   count = 60,
   dailyTargetPct = 2,
   extraSymbols = [],
+  onlySymbols = null,
 } = {}) {
   const safeScope = SCOPES.has(scope) ? scope : "all";
   const { coins, source, medianChange24h } = await loadUniverse();
@@ -72,7 +73,10 @@ export async function scanBoard({
   // feed carries caps at all
   const hasCaps = coins.some((c) => (c.market_cap || 0) > 0);
   const scoped = coins.filter(
-    (c) => inScope(c, safeScope) && (!hasCaps || (c.market_cap || 0) > 0),
+    (c) =>
+      inScope(c, safeScope) &&
+      (!hasCaps || (c.market_cap || 0) > 0) &&
+      (!onlySymbols || onlySymbols.has(c.symbol)),
   );
   const candidates = pickCandidates(scoped, count, extraSymbols);
 
