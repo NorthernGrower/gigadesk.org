@@ -97,7 +97,8 @@
         "trailing",
         "manual",
         "flipped",
-        "time"
+        "time",
+        "weakened"
       ]
     },
     "opened_at": {

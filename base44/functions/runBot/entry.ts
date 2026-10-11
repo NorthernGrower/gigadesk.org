@@ -216,7 +216,10 @@ export default async function (req) {
         (config.trading_style || "mild") === "aggressive" &&
         openedMs > 0 &&
         Date.now() - openedMs > (TIMEFRAME_MS[config.timeframe || "1h"] || TIMEFRAME_MS["1h"]) / 4 &&
-        Math.abs(gainPct) < 1;
+        // time must never close a position just because it is winning or
+        // flat: only underwater stalls are cut here, the trailing stop and
+        // the target own the profitable side of time
+        gainPct < 0;
       const exit = hitTarget || hitStop || stagnant;
 
       if (exit) {
@@ -312,13 +315,27 @@ export default async function (req) {
         side === "long"
           ? row.side === "short" && row.score >= 65
           : row.side === "long" && row.score >= 65;
-      if (!flipped) continue;
-      const flipPrice = Number(row.price) || priceMap.get(t.symbol)?.price || 0;
+      // thesis decay: an underwater trade whose fresh read barely still
+      // supports its own side is closed instead of drifting down to the stop
+      const ownScore = side === "long" ? row.long_score : row.short_score;
+      const livePrice = Number(priceMap.get(t.symbol)?.price) || 0;
+      const entryPrice = Number(t.entry_price) || 0;
+      const weakened =
+        entryPrice && livePrice
+          ? (side === "long" ? livePrice < entryPrice : livePrice > entryPrice) &&
+            ownScore != null &&
+            ownScore < 45
+          : false;
+      if (!flipped && !weakened) continue;
+      const flipPrice = Number(row.price) || livePrice || 0;
       if (!flipPrice) continue;
+      const reason = flipped ? "flipped" : "weakened";
       const trailing = pendingMarks.find((m) => m.id === t.id);
-      const ok = await closeOut(t, side, flipPrice, "flipped", trailing || {}, (pnl, pnlPct) => ({
+      const ok = await closeOut(t, side, flipPrice, reason, trailing || {}, (pnl, pnlPct) => ({
         kind: "bot_close",
-        message: `Sentiment flipped on the ${config.timeframe || "1h"} chart: the read now favors ${row.side} (score ${row.score}). Closed at ${round(flipPrice, 8)}. P&L ${round(pnl)} USD.`,
+        message: flipped
+          ? `Sentiment flipped on the ${config.timeframe || "1h"} chart: the read now favors ${row.side} (score ${row.score}). Closed at ${round(flipPrice, 8)}. P&L ${round(pnl)} USD.`
+          : `Thesis weakened on the ${config.timeframe || "1h"} chart: the ${side} read fell to ${ownScore} while the trade is underwater. Closed at ${round(flipPrice, 8)}. P&L ${round(pnl)} USD.`,
       }));
       if (ok) {
         const idx = pendingMarks.findIndex((m) => m.id === t.id);
@@ -332,6 +349,7 @@ export default async function (req) {
     const opened = [];
     const proposed = [];
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
+    let scanLog = null;
 
     if (!light && config.mode !== "off" && openCount < maxOpen && !cycleInFlight) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
@@ -347,14 +365,24 @@ export default async function (req) {
         ...(listed ? { onlySymbols: listed } : {}),
       });
 
-      const since = new Date(
-        Date.now() - (Number(config.cooldown_minutes) || 120) * 60000,
-      ).toISOString();
+      const cooldownMs = (Number(config.cooldown_minutes) || 120) * 60000;
+      // churn floor: a trade the stagnant rule just cut cannot be re-entered
+      // for at least 30 minutes, however tight the configured cooldown is —
+      // cutting a stale trade and instantly re-opening it was the loop
+      // behind most of the desk's dead round-trips
+      const reentryMs = 30 * 60000;
+      const since = new Date(Date.now() - Math.max(cooldownMs, reentryMs)).toISOString();
       const recent = await readAll({ closed_at: { $gte: since } });
       const pending = await readAll({ status: "proposed" });
       const blocked = new Set([
         ...openTrades.map((t) => t.symbol),
-        ...recent.map((t) => t.symbol),
+        ...recent
+          .filter((t) => {
+            const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
+            const window = t.exit_reason === "time" ? reentryMs : cooldownMs;
+            return Date.now() - closedMs < window;
+          })
+          .map((t) => t.symbol),
         ...pending.map((t) => t.symbol),
       ]);
 
@@ -362,8 +390,10 @@ export default async function (req) {
       // timid waits for stronger setups with less at stake, aggressive
       // accepts more setups and stakes more to reach the daily goal faster
       const style = config.trading_style || "mild";
+      // the engine's own verdict scale calls anything under 58 "avoid", so
+      // the bar can never drop into grades the engine itself would not take
       const minScore = Math.max(
-        40,
+        58,
         (Number(config.min_score) || 62) + (style === "timid" ? 6 : style === "aggressive" ? -5 : 0),
       );
       const allowShorts = config.allow_shorts !== false;
@@ -383,7 +413,7 @@ export default async function (req) {
       // scores the same way — aligned with their flow, capped at +-5 points
       const smartBias = await loadSmartBias(base44);
 
-      const candidates = board.rows
+      const tradable = board.rows
         .map((r) => {
           const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
           let smartAdj = 0;
@@ -409,11 +439,17 @@ export default async function (req) {
         .filter(
           (r) =>
             !blocked.has(r.symbol) &&
-            r.score >= minScore &&
             (allowShorts || r.side === "long") &&
             (!requireTarget || r.meets_daily_target),
-        )
-        .slice(0, slots);
+        );
+      const candidates = tradable.filter((r) => r.score >= minScore).slice(0, slots);
+      // why the desk traded or skipped: one line per cycle in the response
+      scanLog = {
+        scanned: board.scannedCount,
+        blocked: board.rows.length - tradable.length,
+        below_score: tradable.filter((r) => r.score < minScore).length,
+        taken: candidates.length,
+      };
 
       for (const r of candidates) {
         // final guard: even if a paged read missed it, never open a second
@@ -691,6 +727,7 @@ export default async function (req) {
       positions,
       top: (board.rows || []).slice(0, 12),
       scanned: board.scannedCount,
+      scan_log: scanLog,
       universe: board.universeCount,
       summary: board.summary,
       median_change_24h: board.medianChange24h,
@@ -717,6 +754,7 @@ export default async function (req) {
       sentiment: {
         checked: sentimentReads.size,
         flips: closed.filter((c) => c.exit_reason === "flipped").length,
+        weakened: closed.filter((c) => c.exit_reason === "weakened").length,
       },
       open_count: positions.length,
       config,

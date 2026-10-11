@@ -199,6 +199,12 @@ function scoreSide(dir, m) {
   } else if (relStrength < -2) {
     mom -= 7;
   }
+  // regime tape: shorting a market that is broadly rising (or longing one
+  // broadly falling) fights the median coin — the desk's history pays for that
+  if (up ? m.median > 1.5 : m.median < -1.5) {
+    mom -= 6;
+    reasons.push(say("Most of the market is rising — shorts fight the tape", "Most of the market is falling — longs fight the tape"));
+  }
 
   if (up ? m.hist > 0 : m.hist < 0) {
     mom += 8;
