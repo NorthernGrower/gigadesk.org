@@ -12,7 +12,7 @@ import {
 
 const NAV = [
   { to: '/dashboard', label: 'Desk', icon: LayoutDashboard },
-  { to: '/screener', label: 'Screener', icon: Radar },
+  { to: '/screener', label: 'Scanner', icon: Radar },
   { to: '/bot', label: 'Bot', icon: BotIcon },
   { to: '/journal', label: 'Journal', icon: BookOpen },
   { to: '/watchlist', label: 'Watchlist', icon: Star },
