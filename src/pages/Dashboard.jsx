@@ -64,7 +64,7 @@ export default function Dashboard() {
     // bot's own mark-to-market writes from fanning out into more runs)
     let lastLiveRefresh = 0;
     const stopLive = onTradesChange(() => {
-      if (Date.now() - lastLiveRefresh < 15000) return;
+      if (Date.now() - lastLiveRefresh < 30000) return;
       lastLiveRefresh = Date.now();
       runBot(true)
         .then((data) => {

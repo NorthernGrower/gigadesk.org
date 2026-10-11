@@ -97,6 +97,9 @@ export default async function (req) {
       return out;
     }
 
+    // one query for every open trade: the paper desk manages its own records
+    // from this list and the live block filters out the real ones, instead of
+    // paying for a second identical read that only doubled entity traffic
     const openTrades = await readAll({ status: "open" });
     const live = await resolveLiveConnection(base44, config);
     let cash = Number(config.cash_balance) || 0;
@@ -596,8 +599,9 @@ export default async function (req) {
     }
 
     // ---- live (exchange) stats: every real trade, bot-placed or hand-logged
-    const realOpen = await readAll({ status: "open", mode: "real" });
-    const livePositions = realOpen.map((t) => {
+    const livePositions = openTrades
+      .filter((t) => (t.mode || "paper") === "real")
+      .map((t) => {
       const side = t.side === "short" ? "short" : "long";
       const entry = Number(t.entry_price) || 0;
       const price = priceMap.get(t.symbol)?.price ?? entry;
@@ -625,12 +629,11 @@ export default async function (req) {
     });
     const liveExposure = livePositions.reduce((a, p) => a + p.size_usd, 0);
     const liveUnrealized = livePositions.reduce((a, p) => a + p.pnl_usd, 0);
-    const realClosedToday = await readAll({
-      status: "closed",
-      mode: "real",
-      closed_at: { $gte: dayStart.toISOString() },
-    });
-    const liveRealized = realClosedToday.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
+    // already fetched with the paper day's closes above: same status and same
+    // time window, only the mode differs — no second read needed
+    const liveRealized = todays
+      .filter((t) => (t.mode || "paper") === "real")
+      .reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
 
     // the exchange's own quote-currency balance, refreshed on full cycles only
     let exchangeBalance = null;
