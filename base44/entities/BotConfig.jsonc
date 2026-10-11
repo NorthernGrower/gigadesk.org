@@ -70,7 +70,7 @@
     },
     "trailing_trigger_pct": {
       "type": "number",
-      "default": 1
+      "default": 3
     },
     "trailing_distance_pct": {
       "type": "number",

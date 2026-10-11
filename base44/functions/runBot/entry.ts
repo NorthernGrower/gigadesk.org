@@ -17,7 +17,7 @@ const DEFAULT_CONFIG = {
   target_pct: 2,
   daily_target_pct: 2,
   trailing_stop: true,
-  trailing_trigger_pct: 1,
+  trailing_trigger_pct: 3,
   trailing_distance_pct: 1.5,
   allow_shorts: true,
   timeframe: "1h",
@@ -196,7 +196,7 @@ export default async function (req) {
       if (config.trailing_stop) {
         if (side === "long" && price > peak) peak = price;
         if (side === "short" && price < peak) peak = price;
-        if (gainPct >= Number(config.trailing_trigger_pct ?? 1)) {
+        if (gainPct >= Number(config.trailing_trigger_pct ?? 3)) {
           const dist = Number(config.trailing_distance_pct ?? 1.5) / 100;
           const trail = side === "long" ? peak * (1 - dist) : peak * (1 + dist);
           if (side === "long" && trail > stop) stop = trail;

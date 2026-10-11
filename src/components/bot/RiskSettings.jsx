@@ -49,7 +49,7 @@ export default function RiskSettings({ config, onSaved }) {
     daily_target_pct: config?.daily_target_pct ?? 2,
     min_score: config?.min_score ?? 62,
     cooldown_minutes: config?.cooldown_minutes ?? 120,
-    trailing_trigger_pct: config?.trailing_trigger_pct ?? 1,
+    trailing_trigger_pct: config?.trailing_trigger_pct ?? 3,
     trailing_distance_pct: config?.trailing_distance_pct ?? 1.5,
     trailing_stop: config?.trailing_stop ?? true,
     allow_shorts: config?.allow_shorts ?? true,
