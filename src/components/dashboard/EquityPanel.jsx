@@ -13,6 +13,35 @@ import { format, parseISO } from 'date-fns';
 import { base44 } from '@/api/base44Client';
 import { fmtPct, fmtUsd } from '@/lib/format';
 
+// shared across every panel instance and refresh: one history fetch per minute,
+// and callers arriving while a fetch is in flight wait on it instead of
+// starting their own duplicate round-trip
+let historyCache = null;
+let historyPending = null;
+const HISTORY_TTL = 60000;
+
+function ensureHistory() {
+  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL) return Promise.resolve(historyCache);
+  if (!historyPending) {
+    historyPending = (async () => {
+      const closedPage = await base44.entities.Trade.filter(
+        { status: 'closed', mode: 'paper' },
+        { sort: 'closed_at', limit: 1000, fields: ['pnl_usd', 'closed_at'] },
+      );
+      const me = await base44.auth.me();
+      const candlePage = await base44.entities.EquityCandle.filter(
+        { owner: me?.id },
+        { sort: 'day', limit: 1000 },
+      );
+      historyCache = { at: Date.now(), closedItems: closedPage.items || [], candleItems: candlePage.items || [] };
+      return historyCache;
+    })().finally(() => {
+      historyPending = null;
+    });
+  }
+  return historyPending;
+}
+
 function Stat({ label, value, tone = 'neutral', hint }) {
   const tones = { up: 'text-primary', down: 'text-destructive', neutral: 'text-foreground' };
   return (
@@ -121,23 +150,23 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
     let cancelled = false;
 
     const load = async () => {
+      // the effect re-fires on every bot cycle (liveEquity moves); reloading
+      // two full history reads each cycle tripped the entity rate limit, so
+      // at most one refresh per minute keeps the chart current without the
+      // hammering
       try {
-        const closed = await base44.entities.Trade.filter(
-          { status: 'closed', mode: 'paper' },
-          { sort: 'closed_at', limit: 1000, fields: ['pnl_usd', 'closed_at'] },
-        );
-        const trades = closed.items || [];
+        // one shared history read per minute: the effect re-fires on every
+        // bot cycle (liveEquity moves) and each reload used to re-fetch the
+        // full closed-trade and candle histories, tripping the entity rate
+        // limit — a short cache keeps the chart current without the storm
+        const history = await ensureHistory();
+        const trades = history.closedItems;
         if (cancelled) return;
 
         // candles the bot saves once per day; when none exist yet the same
         // history is rebuilt by folding the closed trades day by day
         const todayKey = new Date().toISOString().slice(0, 10);
-        const me = await base44.auth.me();
-        const candlePage = await base44.entities.EquityCandle.filter(
-          { owner: me?.id },
-          { sort: 'day', limit: 1000 },
-        );
-        const saved = (candlePage.items || []).map((c) => ({
+        const saved = history.candleItems.map((c) => ({
           day: c.day,
           label: c.day === todayKey ? 'Today' : format(parseISO(c.day), 'MMM d'),
           open: Number(c.open) || 0,
@@ -257,10 +286,11 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
             avgLoss: losses.length ? grossLoss / losses.length : 0,
           },
         });
-      } catch (error) {
-        if (!cancelled) setState({ loading: false, points: [], stats: null, error: error.message });
-      }
-    };
+
+        } catch (error) {
+          if (!cancelled) setState({ loading: false, points: [], stats: null, error: error.message });
+        }
+        };
 
     load();
     window.addEventListener('bot:tick', load);

@@ -106,9 +106,20 @@ export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
   return unwrap(await base44.functions.invoke('coinDetail', { symbol, timeframe, withAi }));
 }
 
-export async function runBot(light = false) {
+// The bot cycle gets called from several places at once on page load (the
+// desk, the header runner, a live trade change). Concurrent light calls share
+// one result for a few seconds instead of each hitting the server — a burst
+// of identical cycles was tripping the entity rate limit and returning 500s.
+let lastLightRun = null;
+
+export function runBot(light = false) {
   // the desk's timezone keeps "today" counters on the user's own calendar day
-  return unwrap(await base44.functions.invoke('runBot', { light, tz_offset: new Date().getTimezoneOffset() }));
+  const invoke = async () =>
+    unwrap(await base44.functions.invoke('runBot', { light, tz_offset: new Date().getTimezoneOffset() }));
+  if (!light) return invoke();
+  if (lastLightRun && Date.now() - lastLightRun.at < 10000) return lastLightRun.promise;
+  lastLightRun = { at: Date.now(), promise: invoke() };
+  return lastLightRun.promise;
 }
 
 /** `tradeId` is optional: the `close_all` action works without one. */
