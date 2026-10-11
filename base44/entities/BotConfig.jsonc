@@ -146,6 +146,11 @@
       "type": "number",
       "default": 100
     },
+    "live_cap_usd": {
+      "type": "number",
+      "default": 0,
+      "description": "The most exchange money real orders may put to work in total across open positions; 0 = no limit"
+    },
     "last_run_at": {
       "type": "string",
       "format": "date-time"

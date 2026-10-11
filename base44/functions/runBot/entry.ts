@@ -30,6 +30,7 @@ const DEFAULT_CONFIG = {
   real_connection_id: "",
   real_sizing_mode: "paper",
   fixed_order_usd: 100,
+  live_cap_usd: 0,
   trading_style: "mild",
   profit_mode: "compound",
   sentiment_watch: true,
@@ -102,6 +103,16 @@ export default async function (req) {
     // paying for a second identical read that only doubled entity traffic
     const openTrades = await readAll({ status: "open" });
     const live = await resolveLiveConnection(base44, config);
+    // live budget: how much exchange money the bot may put to work in total,
+    // minus what its open real positions already hold — once the budget is
+    // gone, qualifying setups stay paper instead of breaching the cap
+    const liveBudgetCap = Number(config.live_cap_usd) || 0;
+    let liveBudget = liveBudgetCap > 0
+      ? liveBudgetCap -
+        openTrades
+          .filter((t) => (t.mode || "paper") === "real")
+          .reduce((a, t) => a + (Number(t.size_usd) || 0), 0)
+      : Infinity;
     let cash = Number(config.cash_balance) || 0;
     const closed = [];
     const positions = [];
@@ -480,29 +491,31 @@ export default async function (req) {
         // alerted rather than silently paper-traded
         let real = null;
         let realSizeUsd = 0;
-        if (live.conn && r.side === "long") {
-          realSizeUsd =
+        if (live.conn && r.side === "long" && liveBudget >= 10) {
+          realSizeUsd = Math.min(
             config.real_sizing_mode === "fixed"
               ? Math.min(Number(config.fixed_order_usd) || 100, cap)
-              : sizeUsd;
-          real =
-            realSizeUsd >= 10
-              ? await placeMarketOrder(live.conn, {
-                  symbol: r.symbol,
-                  side: "buy",
-                  usd: round(realSizeUsd, 2),
-                  price: r.entry,
-                })
-              : { ok: false, message: "The real order size is below the $10 minimum" };
-          if (!real.ok) {
-            await base44.entities.Alert.create({
+              : sizeUsd,
+            liveBudget,
+          );
+          if (realSizeUsd >= 10) {
+            real = await placeMarketOrder(live.conn, {
               symbol: r.symbol,
-              title: `Real order failed on ${r.symbol}`,
-              message: `${live.conn.label} said: ${real.message}`,
-              kind: "order_failed",
-              severity: "danger",
+              side: "buy",
+              usd: round(realSizeUsd, 2),
+              price: r.entry,
             });
-            continue;
+            if (!real.ok) {
+              await base44.entities.Alert.create({
+                symbol: r.symbol,
+                title: `Real order failed on ${r.symbol}`,
+                message: `${live.conn.label} said: ${real.message}`,
+                kind: "order_failed",
+                severity: "danger",
+              });
+              continue;
+            }
+            liveBudget -= realSizeUsd;
           }
         }
 
@@ -754,6 +767,8 @@ export default async function (req) {
         connection: live.conn ? { label: live.conn.label, exchange: live.conn.exchange } : null,
         balance_usd: exchangeBalance,
         open_count: livePositions.length,
+        cap_usd: liveBudgetCap,
+        budget_left: liveBudgetCap > 0 ? round(Math.max(0, liveBudgetCap - liveExposure)) : null,
         exposure: round(liveExposure),
         unrealized: round(liveUnrealized),
         realized_today: round(liveRealized),

@@ -63,6 +63,7 @@ export default function RiskSettings({ config, onSaved }) {
     real_connection_id: config?.real_connection_id || '',
     real_sizing_mode: config?.real_sizing_mode || 'paper',
     fixed_order_usd: config?.fixed_order_usd ?? 100,
+    live_cap_usd: config?.live_cap_usd ?? 0,
   });
   const [saving, setSaving] = useState(false);
   const [connections, setConnections] = useState([]);
@@ -108,6 +109,7 @@ export default function RiskSettings({ config, onSaved }) {
         real_connection_id: form.real_connection_id || '',
         real_sizing_mode: form.real_sizing_mode,
         fixed_order_usd: roundTo(form.fixed_order_usd, 2),
+        live_cap_usd: roundTo(Number(form.live_cap_usd) || 0, 2),
       });
       toast({ title: 'Risk rules saved', description: 'The bot picks them up on its next cycle.' });
       if (onSaved) onSaved();
@@ -342,6 +344,12 @@ export default function RiskSettings({ config, onSaved }) {
               </Field>
             ) : null}
           </div>
+          <Field
+            label="Live budget cap ($)"
+            hint="The most exchange money the bot may put to work in total across all open positions. 0 means no limit — it will use as much of the balance as your sizing rules allow."
+          >
+            <Input className="num" inputMode="decimal" value={form.live_cap_usd} onChange={setNum('live_cap_usd')} />
+          </Field>
           <p className="text-[11px] leading-snug text-muted-foreground">
             Market orders only. Real fills are tracked separately from the paper balance, and the bot closes a real position by selling the same amount on the same account.
           </p>
