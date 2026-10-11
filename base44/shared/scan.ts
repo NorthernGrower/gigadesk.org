@@ -3,7 +3,7 @@ import { analyzeCoin } from "./strategy.ts";
 
 const SCOPES = new Set(["all", "large", "mid", "small"]);
 
-const BARS_PER_DAY = { "15m": 96, "1h": 24, "4h": 6, "1d": 1 };
+const BARS_PER_DAY = { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 };
 
 function inScope(coin, scope) {
   if (!scope || scope === "all") return true;

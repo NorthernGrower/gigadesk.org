@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { scanBoard, persistSignals, raiseSetupAlerts } from "../../shared/scan.ts";
 
-const TIMEFRAMES = ["15m", "1h", "4h", "1d"];
+const TIMEFRAMES = ["15m", "1h", "4h", "12h", "1d", "1w", "1M"];
 const SCOPES = ["all", "large", "mid", "small"];
 
 export default async function (req) {

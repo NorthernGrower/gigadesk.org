@@ -4,7 +4,10 @@ export const TIMEFRAMES = [
   { value: '15m', label: '15m' },
   { value: '1h', label: '1H' },
   { value: '4h', label: '4H' },
+  { value: '12h', label: '12H' },
   { value: '1d', label: '1D' },
+  { value: '1w', label: '1W' },
+  { value: '1M', label: '1M' },
 ];
 
 export const TIERS = [
@@ -61,6 +64,8 @@ export const DEFAULT_CONFIG = {
   require_daily_target: true,
   cooldown_minutes: 120,
   auto_run: true,
+  profit_mode: 'compound',
+  sentiment_watch: true,
   real_orders_enabled: false,
   real_connection_id: '',
   real_sizing_mode: 'paper',

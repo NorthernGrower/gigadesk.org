@@ -12,6 +12,20 @@
       "default": "approve",
       "description": "off = signals only, approve = bot proposes and you confirm, auto = bot opens and closes on its own"
     },
+    "profit_mode": {
+      "type": "string",
+      "enum": [
+        "compound",
+        "stack"
+      ],
+      "default": "compound",
+      "description": "compound = booked profits return to the trading pool, stack = profits are set aside and only the starting capital (plus losses) is traded"
+    },
+    "sentiment_watch": {
+      "type": "boolean",
+      "default": true,
+      "description": "Each full cycle re-reads the chart behind every open trade and closes ones the market has turned against"
+    },
     "trading_style": {
       "type": "string",
       "enum": [
@@ -72,7 +86,10 @@
         "15m",
         "1h",
         "4h",
-        "1d"
+        "12h",
+        "1d",
+        "1w",
+        "1M"
       ],
       "default": "1h"
     },

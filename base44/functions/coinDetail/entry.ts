@@ -67,7 +67,9 @@ export default async function (req) {
     const body = await req.json().catch(() => ({}));
     const symbol = String(body.symbol || "").toUpperCase();
     if (!symbol) return Response.json({ error: "A coin symbol is required" }, { status: 400 });
-    const timeframe = ["15m", "1h", "4h", "1d"].includes(body.timeframe) ? body.timeframe : "1h";
+    const timeframe = ["15m", "1h", "4h", "12h", "1d", "1w", "1M"].includes(body.timeframe)
+      ? body.timeframe
+      : "1h";
     const withAi = body.withAi === true;
 
     const { coins } = await fetchMarkets();

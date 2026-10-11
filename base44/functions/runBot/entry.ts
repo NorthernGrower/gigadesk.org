@@ -31,6 +31,8 @@ const DEFAULT_CONFIG = {
   real_sizing_mode: "paper",
   fixed_order_usd: 100,
   trading_style: "mild",
+  profit_mode: "compound",
+  sentiment_watch: true,
 };
 
 // An aggressive-style trade that has gone nowhere for a quarter of the scan
@@ -39,7 +41,10 @@ const TIMEFRAME_MS = {
   "15m": 15 * 60000,
   "1h": 60 * 60000,
   "4h": 4 * 60 * 60000,
+  "12h": 12 * 3600000,
   "1d": 24 * 60 * 60000,
+  "1w": 7 * 24 * 60 * 60000,
+  "1M": 30 * 24 * 60 * 60000,
 };
 
 export default async function (req) {
@@ -141,7 +146,8 @@ export default async function (req) {
         closed_at: new Date().toISOString(),
         exit_reason: reason,
       });
-      if ((t.mode || "paper") === "paper") cash += size + pnl;
+      if ((t.mode || "paper") === "paper")
+        cash += (config.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : size + pnl;
       closed.push({
         id: t.id,
         symbol: t.symbol,
@@ -273,7 +279,7 @@ export default async function (req) {
     // the trade now favors the other side with conviction, the position is
     // closed (reason "flipped") and the capital is free for the next scan.
     const sentimentReads = new Map();
-    if (!light && sentinel.length) {
+    if (!light && config.sentiment_watch !== false && sentinel.length) {
       const moves = coins
         .map((c) => c.change24h)
         .filter((v) => Number.isFinite(v))
@@ -291,7 +297,8 @@ export default async function (req) {
           const row = analyzeCoin(coin, res.value, {
             medianChange24h,
             dailyTargetPct: Number(config.daily_target_pct) || 2,
-            barsPerDay: { "15m": 96, "1h": 24, "4h": 6, "1d": 1 }[tf] || 24,
+            barsPerDay:
+              { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[tf] || 24,
           });
           if (row) sentimentReads.set(group[i], row);
         });
@@ -607,7 +614,14 @@ export default async function (req) {
     ]);
     const realizedTotal = realizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0;
     const deployedTotal = deployedAgg?.rows?.[0]?.sum_size_usd ?? 0;
-    const anchoredCash = startBalance + realizedTotal - deployedTotal;
+    // profit handling: compound rolls booked profit back into the trading
+    // pool; stack sets profits aside so only the starting capital (plus any
+    // accumulated losses) is at risk
+    const stacked = Math.max(realizedTotal, 0);
+    const anchoredCash =
+      (config.profit_mode || "compound") === "stack"
+        ? startBalance + (realizedTotal - stacked) - deployedTotal
+        : startBalance + realizedTotal - deployedTotal;
     // equity ties directly to the money: starting balance plus everything
     // booked plus what the open positions are worth now. Mixing the in-loop
     // exposure with the aggregate understated equity whenever a position had
@@ -678,6 +692,8 @@ export default async function (req) {
       median_change_24h: board.medianChange24h,
       source: board.source,
       cash: round(anchoredCash),
+      profit_mode: config.profit_mode || "compound",
+      stacked: round(stacked),
       exposure: round(exposure),
       unrealized: round(unrealized),
       equity: round(equity),

@@ -84,7 +84,13 @@ export default function BotControls({ config, stats, onModeChange, onToggleAutoR
 
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         <Metric label="Equity" value={fmtUsd(stats?.equity || 0)} />
-        <Metric label="Cash free" value={fmtUsd(stats?.cash || 0)} hint={`${fmtUsd(stats?.exposure || 0)} in positions`} />
+        <Metric
+          label="Cash free"
+          value={fmtUsd(stats?.cash || 0)}
+          hint={`${fmtUsd(stats?.exposure || 0)} in positions${
+            stats?.profitMode === 'stack' && stats?.stacked ? ` · ${fmtUsd(stats.stacked)} stacked aside` : ''
+          }`}
+        />
         <Metric
           label="Unrealised"
           value={fmtUsd(stats?.unrealized || 0)}

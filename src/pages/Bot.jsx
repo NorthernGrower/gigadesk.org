@@ -168,6 +168,8 @@ export default function Bot() {
           equity: bot?.equity,
           cash: bot?.cash,
           exposure: bot?.exposure,
+          profitMode: bot?.profit_mode,
+          stacked: bot?.stacked,
           unrealized: bot?.unrealized,
           realizedToday: bot?.realized_today,
           dailyGoal: bot?.daily_goal,

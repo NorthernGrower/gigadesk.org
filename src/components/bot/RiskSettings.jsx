@@ -55,6 +55,8 @@ export default function RiskSettings({ config, onSaved }) {
     allow_shorts: config?.allow_shorts ?? true,
     require_daily_target: config?.require_daily_target ?? true,
     auto_run: config?.auto_run ?? true,
+    profit_mode: config?.profit_mode || 'compound',
+    sentiment_watch: config?.sentiment_watch ?? true,
     timeframe: config?.timeframe || '1h',
     market_cap_scope: config?.market_cap_scope || 'all',
     real_orders_enabled: config?.real_orders_enabled ?? false,
@@ -98,6 +100,8 @@ export default function RiskSettings({ config, onSaved }) {
         allow_shorts: form.allow_shorts,
         require_daily_target: form.require_daily_target,
         auto_run: form.auto_run,
+        profit_mode: form.profit_mode,
+        sentiment_watch: form.sentiment_watch,
         timeframe: form.timeframe,
         market_cap_scope: form.market_cap_scope,
         real_orders_enabled: form.real_orders_enabled,
@@ -205,6 +209,24 @@ export default function RiskSettings({ config, onSaved }) {
             </SelectContent>
           </Select>
         </Field>
+        <Field
+          label="Profit handling"
+          hint={
+            form.profit_mode === 'stack'
+              ? 'Profits are set aside and only the starting capital (plus losses) stays in the pool.'
+              : 'Booked profits roll back into the pool and grow future position sizes.'
+          }
+        >
+          <Select value={form.profit_mode} onValueChange={set('profit_mode')}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="compound">Compound profits</SelectItem>
+              <SelectItem value="stack">Stack profits aside</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
         <Field label="Market coverage">
           <Select value={form.market_cap_scope} onValueChange={set('market_cap_scope')}>
             <SelectTrigger>
@@ -245,6 +267,12 @@ export default function RiskSettings({ config, onSaved }) {
           hint="Runs a cycle in the background every few minutes."
           checked={form.auto_run}
           onChange={set('auto_run')}
+        />
+        <Toggle
+          label="Market tone watch"
+          hint="Every full cycle re-reads the chart behind each open trade and closes ones the market has turned against."
+          checked={form.sentiment_watch}
+          onChange={set('sentiment_watch')}
         />
       </div>
 
