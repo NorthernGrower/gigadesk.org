@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Bot, Radar, TrendingUp, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Image } from '@/components/ui/image';
-import TickerBox from '@/components/landing/TickerBox';
+// Ticker removed from the page for now; the TickerBox component, its stats
+// fetch and the gigaTicker function stay in place to bring it back later.
+// import TickerBox from '@/components/landing/TickerBox';
 
 const MASCOT =
   'https://media.base44.com/images/public/6ac856fac6ab24fc6a13a00c/ca8f4526c_generated_image.png';
@@ -38,24 +40,25 @@ const FEATURES = [
 ];
 
 export default function Landing() {
-  const [stats, setStats] = useState(EMPTY);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      base44.functions
-        .invoke('gigaTicker', {})
-        .then((res) => {
-          if (alive && res?.data && !res.data.error) setStats(res.data);
-        })
-        .catch(() => {});
-    load();
-    const timer = setInterval(load, 60000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
+  // Ticker stats fetch paused with the ticker; restore both together.
+  // const [stats, setStats] = useState(EMPTY);
+  //
+  // useEffect(() => {
+  //   let alive = true;
+  //   const load = () =>
+  //     base44.functions
+  //       .invoke('gigaTicker', {})
+  //       .then((res) => {
+  //         if (alive && res?.data && !res.data.error) setStats(res.data);
+  //       })
+  //       .catch(() => {});
+  //   load();
+  //   const timer = setInterval(load, 60000);
+  //   return () => {
+  //     alive = false;
+  //     clearInterval(timer);
+  //   };
+  // }, []);
 
   return (
     <div className="min-h-screen">
@@ -88,11 +91,6 @@ export default function Landing() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 md:px-6">
-        {/* the ticker box */}
-        <section className="pt-6">
-          <TickerBox stats={stats} />
-        </section>
-
         {/* hero */}
         <section className="grid items-center gap-8 py-14 md:grid-cols-2 md:py-20">
           <div>
@@ -121,9 +119,7 @@ export default function Landing() {
                 Sign in
               </Link>
             </div>
-            <p className="mt-4 text-xs text-muted-foreground">
-              The ticker above shows the live bot's results scaled to a $1,000,000 desk.
-            </p>
+
           </div>
           <div className="relative mx-auto w-full max-w-md">
             <div className="absolute inset-0 rounded-3xl bg-primary/10 blur-3xl" />
