@@ -557,14 +557,23 @@ export default async function (req) {
       }
     }
 
-    // ---- daily goal check
-    const dayStart = new Date();
-    dayStart.setUTCHours(0, 0, 0, 0);
+    // ---- daily goal check. "Today" follows the user's clock, not UTC: the
+    // old UTC-midnight boundary bucketed an evening trader's results into
+    // the next day, so the counter disagreed with the journal (even flipping
+    // sign). The desk sends getTimezoneOffset() (minutes west of UTC);
+    // callers that don't send it keep the UTC day.
+    const tzOffset = Number.isFinite(body.tz_offset) ? Number(body.tz_offset) : 0;
+    const localNowMs = Date.now() - tzOffset * 60000;
+    const dayStartMs = Math.floor(localNowMs / 86400000) * 86400000 + tzOffset * 60000;
+    const dayStart = new Date(dayStartMs);
     const todays = await readAll({
       status: "closed",
       closed_at: { $gte: dayStart.toISOString() },
     });
-    const realizedToday = todays.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
+    // the headline counter and the daily goal track the paper bot's results —
+    // real trades already report through the live stats block
+    const paperTodays = todays.filter((t) => (t.mode || "paper") === "paper");
+    const realizedToday = paperTodays.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
     const startBalance = Number(config.starting_balance) || 10000;
     const goal = (startBalance * (Number(config.daily_target_pct) || 2)) / 100;
     let goalHit = false;
@@ -676,11 +685,7 @@ export default async function (req) {
     // ---- save today's equity candle so the chart keeps its history even as
     // old trades age out of the journal
     const todayKey = new Date().toISOString().slice(0, 10);
-    const paperTodays = todays.filter((t) => (t.mode || "paper") === "paper");
-    const paperRealizedToday = paperTodays.reduce(
-      (a, t) => a + (Number(t.pnl_usd) || 0),
-      0,
-    );
+    const paperRealizedToday = realizedToday;
     // candles are per-user: one app user's equity chart must not overwrite
     // another's, so every write carries the owner and keys on owner + day
     const prevCandles = asArray(

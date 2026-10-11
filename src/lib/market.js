@@ -107,7 +107,8 @@ export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
 }
 
 export async function runBot(light = false) {
-  return unwrap(await base44.functions.invoke('runBot', { light }));
+  // the desk's timezone keeps "today" counters on the user's own calendar day
+  return unwrap(await base44.functions.invoke('runBot', { light, tz_offset: new Date().getTimezoneOffset() }));
 }
 
 /** `tradeId` is optional: the `close_all` action works without one. */
