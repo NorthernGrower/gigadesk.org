@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { UserRound } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import ConnectionsManager from '@/components/exchange/ConnectionsManager';
+import ChangePassword from '@/components/settings/ChangePassword';
 
 export default function Settings() {
   const [me, setMe] = useState(null);
@@ -56,6 +57,8 @@ export default function Settings() {
             <p className="mt-3 text-sm text-muted-foreground">Loading account…</p>
           )}
         </div>
+
+        <ChangePassword userId={me?.id} />
 
         <div>
           <h2 className="font-heading text-sm font-semibold">Exchange API keys</h2>
