@@ -12,6 +12,8 @@ import { toast } from "@/components/ui/use-toast";
 import { safeReturnTo } from "@/lib/authReturnTo";
 
 export default function Register() {
+  // verified users land on the desk unless a flow asked for another destination
+  const returnTo = safeReturnTo("/dashboard");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -46,7 +48,7 @@ export default function Register() {
       if (result?.access_token) {
         base44.auth.setToken(result.access_token);
       }
-      window.location.href = safeReturnTo();
+      window.location.href = returnTo;
     } catch (err) {
       setError(err.message || "Invalid verification code");
     } finally {
@@ -68,7 +70,7 @@ export default function Register() {
   };
 
   const handleGoogle = () => {
-    base44.auth.loginWithProvider("google", safeReturnTo());
+    base44.auth.loginWithProvider("google", returnTo);
   };
 
   if (showOtp) {
@@ -134,7 +136,7 @@ export default function Register() {
         <>
           Already have an account?{" "}
           <Link
-            to={"/login" + (safeReturnTo() !== "/" ? "?returnTo=" + encodeURIComponent(safeReturnTo()) : "")}
+            to={"/login" + (returnTo !== "/dashboard" ? "?returnTo=" + encodeURIComponent(returnTo) : "")}
             className="text-primary font-medium hover:underline"
           >
             Log in
