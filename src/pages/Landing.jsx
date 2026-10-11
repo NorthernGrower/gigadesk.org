@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Bot, Radar, TrendingUp, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
-import Image from '@/components/ui/image';
+import { Image } from '@/components/ui/image';
 import TickerBox from '@/components/landing/TickerBox';
 
 const MASCOT =
