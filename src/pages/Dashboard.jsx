@@ -112,7 +112,10 @@ export default function Dashboard() {
     }
   };
 
-  if (loading) return <LoadingBlock label="Scanning the whole market for the best setups" />;
+  if (loading)
+    return (
+      <LoadingBlock label="Setting up your desk — loading positions, setups and the market pulse" />
+    );
 
   const top = bot?.top?.[0];
   const config = bot?.config;
