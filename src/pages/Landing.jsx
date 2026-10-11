@@ -6,7 +6,7 @@ import { Image } from '@/components/ui/image';
 import TickerBox from '@/components/landing/TickerBox';
 
 const MASCOT =
-  'https://media.base44.com/images/public/6ac856fac6ab24fc6a13a00c/6a9a43276_generated_image.png';
+  'https://media.base44.com/images/public/6ac856fac6ab24fc6a13a00c/ca8f4526c_generated_image.png';
 
 const EMPTY = {
   equity: 1000000,
@@ -130,7 +130,7 @@ export default function Landing() {
             <Image
               src={MASCOT}
               alt="GigaDesk mascot at his trading desk"
-              className="relative w-full rounded-3xl border border-border/70"
+              className="relative aspect-square w-full rounded-3xl border border-border/70"
               fittingType="fit"
             />
           </div>
