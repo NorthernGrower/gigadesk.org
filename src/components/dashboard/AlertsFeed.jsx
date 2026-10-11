@@ -35,12 +35,21 @@ export default function AlertsFeed({ limit = 12, className = '' }) {
 
   useEffect(() => {
     load();
-    const unsubscribe = base44.entities.Alert.subscribe(() => load());
-    const onTick = () => load();
-    window.addEventListener('bot:tick', onTick);
+    // live changes refresh here, but bursts (one cycle writes many alerts at
+    // once) are coalesced into a single query — reloading on every event and
+    // every market tick tripped the entity rate limit
+    let timer = null;
+    const schedule = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        load();
+      }, 2000);
+    };
+    const unsubscribe = base44.entities.Alert.subscribe(schedule);
     return () => {
       unsubscribe();
-      window.removeEventListener('bot:tick', onTick);
+      if (timer) clearTimeout(timer);
     };
   }, [limit]);
 
