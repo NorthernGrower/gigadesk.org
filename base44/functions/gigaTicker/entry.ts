@@ -13,13 +13,16 @@ export default async function (req) {
     // rows, so the landing ticker works for signed-out visitors too.
     const dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
-    const [closedAgg, winsAgg, todayAgg, startAgg, bestAgg, openAgg] = await Promise.all([
+    const [closedAgg, winsAgg, todayAgg, startAgg, bestAgg, openAgg, decisiveAgg] = await Promise.all([
       base44.asServiceRole.entities.Trade.aggregate({ query: { status: 'closed' }, sum: 'pnl_usd' }),
       base44.asServiceRole.entities.Trade.aggregate({ query: { status: 'closed', pnl_usd: { $gt: 0 } } }),
       base44.asServiceRole.entities.Trade.aggregate({ query: { status: 'closed', closed_at: { $gte: dayStart.toISOString() } }, sum: 'pnl_usd' }),
       base44.asServiceRole.entities.BotConfig.aggregate({ query: {}, sum: 'starting_balance' }),
       base44.asServiceRole.entities.Trade.aggregate({ query: { status: 'closed' }, max: 'pnl_usd' }),
       base44.asServiceRole.entities.Trade.aggregate({ query: { status: 'open' } }),
+      // win rate only counts trades that actually made or lost money; the
+      // many flat "time" exits are break-even, not losses
+      base44.asServiceRole.entities.Trade.aggregate({ query: { status: 'closed', pnl_usd: { $ne: 0 } } }),
     ]);
 
     const closedRow = closedAgg?.rows?.[0] || {};
@@ -28,6 +31,7 @@ export default async function (req) {
     const startRow = startAgg?.rows?.[0] || {};
     const bestRow = bestAgg?.rows?.[0] || {};
     const openRow = openAgg?.rows?.[0] || {};
+    const decisiveRow = decisiveAgg?.rows?.[0] || {};
 
     const realized = Number(closedRow.sum_pnl_usd) || 0;
     const todayRealized = Number(todayRow.sum_pnl_usd) || 0;
@@ -35,6 +39,7 @@ export default async function (req) {
     const growth = startSum > 0 ? realized / startSum : 0;
     const closedCount = Number(closedRow.count) || 0;
     const wins = Number(winsRow.count) || 0;
+    const decisiveCount = Number(decisiveRow.count) || 0;
 
     const value = {
       equity: Math.round(BASE * (1 + growth)),
@@ -42,7 +47,7 @@ export default async function (req) {
       realized: Math.round(realized * 100) / 100,
       today_pnl: startSum > 0 ? Math.round(BASE * (todayRealized / startSum) * 100) / 100 : Math.round(todayRealized * 100) / 100,
       today_pct: startSum > 0 ? Math.round((todayRealized / startSum) * 10000) / 100 : 0,
-      win_rate: closedCount ? Math.round((wins / closedCount) * 100) : 0,
+      win_rate: decisiveCount ? Math.round((wins / decisiveCount) * 100) : 0,
       closed_count: closedCount,
       open_count: Number(openRow.count) || 0,
       best_trade: Math.round((Number(bestRow.max_pnl_usd) || 0) * 100) / 100,
