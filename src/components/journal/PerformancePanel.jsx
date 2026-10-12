@@ -55,7 +55,7 @@ function Block({ title, hint, data, loading }) {
   );
 }
 
-export default function PerformancePanel({ base = 10000 }) {
+export default function PerformancePanel({ base = 10000, desk = 'paper' }) {
   const [state, setState] = useState({
     loading: true,
     paper: { net: 0, trades: 0, wins: 0, base },
@@ -97,14 +97,17 @@ export default function PerformancePanel({ base = 10000 }) {
     };
   }, [base]);
 
+  const showPaper = desk !== 'live';
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      <Block
-        title="Paper bot"
-        hint="Every simulated trade the bot opened and closed."
-        data={state.paper}
-        loading={state.loading}
-      />
+    <div className={showPaper ? 'grid gap-3 lg:grid-cols-2' : ''}>
+      {showPaper ? (
+        <Block
+          title="Paper bot"
+          hint="Every simulated trade the bot opened and closed."
+          data={state.paper}
+          loading={state.loading}
+        />
+      ) : null}
       <Block
         title="Real money log"
         hint="The fills you logged from your own exchange — tracked separately from the paper balance."

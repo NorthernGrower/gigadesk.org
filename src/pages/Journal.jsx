@@ -99,7 +99,7 @@ export default function Journal() {
 
   return (
     <div className="space-y-4">
-      <PerformancePanel base={base} />
+      <PerformancePanel base={base} desk={desk} />
 
       {error ? <ErrorNotice message={error} onRetry={() => load({ reset: true })} /> : null}
 
