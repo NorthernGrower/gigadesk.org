@@ -18,7 +18,9 @@ export default function TodayProgress({ realizedToday, dailyGoal, goalHit, openC
       </div>
       {goalHit ? (
         <p className="mt-1.5 text-[11px] text-primary">
-          Target reached today — {fmtPct((realizedToday / (startingBalance || 1)) * 100)} on the balance.
+          {startingBalance > 0
+            ? `Target reached today — ${fmtPct((realizedToday / startingBalance) * 100)} on the balance.`
+            : 'Target reached today.'}
         </p>
       ) : (
         <p className="mt-1.5 text-[11px] text-muted-foreground">

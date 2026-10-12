@@ -310,6 +310,10 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
 
   const { stats, points, loading, error } = state;
   const net = stats?.net || 0;
+  // realised P&L as a share of the desk's starting equity: the first candle's
+  // open (the live desk has no paper starting balance — the exchange balance
+  // can be unreadable, so the old fallback divided by $1 and showed ±469%)
+  const equityBase = (points[0]?.open ?? 0) || startingBalance || 0;
 
   const lows = points.map((p) => p.low);
   const highs = points.map((p) => p.high);
@@ -346,7 +350,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
               </p>
             </div>
             <span className={`num text-sm ${net >= 0 ? 'text-primary' : 'text-destructive'}`}>
-              {fmtPct((net / (startingBalance || 1)) * 100)}
+              {fmtPct(equityBase > 0 ? (net / equityBase) * 100 : 0)}
             </span>
           </div>
 
