@@ -35,6 +35,7 @@ const DEFAULT_CONFIG = {
   profit_mode: "compound",
   sentiment_watch: true,
   confluence_v2: true,
+  champion_engine: true,
   active_desk: "paper",
 };
 
@@ -98,6 +99,9 @@ export default async function (req) {
     // AuditRun). BTC's 24h tape gates longs: risk-on and sideways entries
     // measured the weakest in every round, so longs fire only in a risk-off tape.
     const engineV2 = config.engine_v2 !== false;
+    // champion refinements on top of the entry rules (toggleable): 2.5R
+    // targets with break-even after +1.2R, 1.5x volume and risk-off longs only
+    const champion = config.champion_engine !== false;
     const btcChange = Number(priceMap.get("BTC")?.change24h) || 0;
     const btcRegime = btcChange > 1 ? "risk_on" : btcChange < -1 ? "risk_off" : "sideways";
 
@@ -642,7 +646,7 @@ export default async function (req) {
         // no chasing — the rule set that turned the 30-day Kraken backtest
         // from -8.6% to +8.3% with a 1.6% max drawdown
         if (engineV2) {
-          if (r.side === "long" && btcRegime !== "risk_off") return false;
+          if (champion && r.side === "long" && btcRegime !== "risk_off") return false;
           if (!r.htf_trend || r.htf_trend !== (r.side === "long" ? "up" : "down")) return false;
           const ind = r.indicators || {};
           if ((Number(ind.adx) || 0) < 25) return false;
@@ -652,7 +656,7 @@ export default async function (req) {
               : (Number(ind.minus_di) || 0) > (Number(ind.plus_di) || 0);
           if (!diOwned) return false;
           if ((r.confluence || 0) < 3) return false;
-          if ((Number(ind.vol_ratio) || 0) < 1.5) return false;
+          if ((Number(ind.vol_ratio) || 0) < (champion ? 1.5 : 1.2)) return false;
           if (ind.ema20) {
             const stretch = ((r.price - ind.ema20) / ind.ema20) * 100 * (r.side === "long" ? 1 : -1);
             if (stretch > 5) return false;
@@ -660,7 +664,7 @@ export default async function (req) {
           if (r.fib_phase === "chasing") return false;
         }
         if (!requireTarget) return true;
-        if (engineV2) {
+        if (champion && engineV2) {
           const stopPct = (Math.abs(r.entry - r.stop) / r.entry) * 100;
           return 2.5 * stopPct >= targetPct && r.score >= 58;
         }
@@ -787,8 +791,8 @@ export default async function (req) {
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
-            target_price: engineV2 ? engineTarget(r) : r.target,
-            target_r: engineV2 ? 2.5 : null,
+            target_price: engineV2 && champion ? engineTarget(r) : r.target,
+            target_r: engineV2 && champion ? 2.5 : null,
             peak_price: r.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,

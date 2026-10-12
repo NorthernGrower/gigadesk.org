@@ -58,7 +58,12 @@
     "engine_v2": {
       "type": "boolean",
       "default": true,
-      "description": "Optimizer-winning entry rules: the higher timeframe must confirm the trade, ADX 25 with the DI pair owned, 3 confluences, 1.5x volume, no chasing, a 5% max stretch, 2.5R targets with break-even after +1.2R, and longs only while BTC's tape is risk-off. Turn off to revert to score-only entries"
+      "description": "Structural entry rules: the higher timeframe must confirm the trade, ADX 25 with the DI pair owned, 3 confluences, no chasing and a 5% max stretch. Turn off to revert to score-only entries"
+    },
+    "champion_engine": {
+      "type": "boolean",
+      "default": true,
+      "description": "The optimizer champion's refinements on top of the entry rules: 2.5R targets with break-even after +1.2R, 1.5x volume, and longs only while BTC's tape is risk-off. Turn off to trade the base V2 rules"
     },
     "starting_balance": {
       "type": "number",

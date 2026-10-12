@@ -58,7 +58,18 @@ const ROUND12_VARIANTS = [
     pattern_min_quality: 2,
   }),
 ];
-const OPTIMIZE_VARIANTS = ROUND12_VARIANTS;
+// Round 13: validates the new live toggle. The champion (rules as they run
+// today) against "champion off" — the same structural V2 gate but with the
+// champion's refinements stripped: 1.2x volume, config targets, no regime
+// gate and no break-even. Confirms the toggle's default (on) is the winner.
+const ROUND13_VARIANTS = [
+  variantCfg("champ_r8", "Reference: the live engine's rules as they run today", CHAMPION),
+  variantCfg("r13_base_v2", "Champion off: base V2 rules (1.2x volume, config targets, no regime gate, no break-even)", {
+    ...BASE,
+    cooldown_bars: 72,
+  }),
+];
+const OPTIMIZE_VARIANTS = ROUND13_VARIANTS;
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 

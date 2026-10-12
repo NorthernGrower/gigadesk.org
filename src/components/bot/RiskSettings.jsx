@@ -141,6 +141,7 @@ export default function RiskSettings({ config, onSaved }) {
     sentiment_watch: config?.sentiment_watch ?? true,
     confluence_v2: config?.confluence_v2 !== false,
     engine_v2: config?.engine_v2 !== false,
+    champion_engine: config?.champion_engine !== false,
   });
 
   // re-sync the forms whenever a fresh config lands (after a save or a cycle)
@@ -182,6 +183,7 @@ export default function RiskSettings({ config, onSaved }) {
       sentiment_watch: config.sentiment_watch ?? true,
       confluence_v2: config.confluence_v2 !== false,
       engine_v2: config.engine_v2 !== false,
+      champion_engine: config.champion_engine !== false,
     });
   }, [config?.id, config?.updated_date]);
 
@@ -268,6 +270,7 @@ export default function RiskSettings({ config, onSaved }) {
         sentiment_watch: shared.sentiment_watch,
         confluence_v2: shared.confluence_v2,
         engine_v2: shared.engine_v2,
+        champion_engine: shared.champion_engine,
       });
       toast({ title: 'Shared settings saved', description: 'Both desks scan with these on the next cycle.' });
       if (onSaved) onSaved();
@@ -480,9 +483,15 @@ export default function RiskSettings({ config, onSaved }) {
           />
           <Toggle
             label="Optimizer entry rules"
-            hint="The backtest-winning rules: higher-timeframe confirmation, momentum strength, 1.5x volume, no chasing, 2.5R targets with break-even after +1.2R, and longs only while BTC's tape is risk-off."
+            hint="Structural entry rules: higher-timeframe confirmation, ADX 25 with the DI pair owned, 3 confluences, bounded stretch and no chasing. Turn off to revert to score-only entries."
             checked={shared.engine_v2}
             onChange={setSharedV('engine_v2')}
+          />
+          <Toggle
+            label="Champion rules"
+            hint="The optimizer champion's refinements: 2.5R targets, break-even after +1.2R, 1.5x volume, and longs only while BTC's tape is risk-off. Governs both desks; turn off to trade the base entry rules."
+            checked={shared.champion_engine}
+            onChange={setSharedV('champion_engine')}
           />
         </div>
         <Button className="w-full" onClick={saveShared} disabled={saving === 'shared'}>
