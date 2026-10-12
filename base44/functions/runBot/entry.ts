@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, pickQuoteBalance, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, pickQuoteBalance, pickNativeQuoteBalance, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
@@ -122,6 +122,19 @@ export default async function (req) {
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
+    // real orders settle in the exchange's native quote currency (USD on
+    // Kraken), so fiat held in another currency — however it converts for
+    // display — can never fund an order. Real sizing reads the native quote
+    // balance, not the converted figure, so a CAD-only Kraken account stops
+    // firing orders the exchange refuses with EOrder:Insufficient funds.
+    const connRow = managed.conn
+      ? await base44.asServiceRole.entities.ExchangeConnection
+          .get(managed.conn.id)
+          .catch(() => null)
+      : null;
+    const spendableQuote = connRow
+      ? await pickNativeQuoteBalance(connRow.balances, connRow.exchange)
+      : 0;
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
     // gone, qualifying setups stay paper instead of breaching the cap
@@ -563,6 +576,31 @@ export default async function (req) {
             .filter((r) => qualifies(r, "live"))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
         : [];
+      // a desk with qualifying setups but nothing to pay with should say so
+      // once (throttled), instead of firing order attempts into a wall of
+      // exchange-side insufficient-funds failures every cycle
+      if (live.conn && liveWanted.length && spendableQuote < 10) {
+        const recent = asArray(
+          await base44.entities.Alert.filter(
+            {
+              created_by_id: config.created_by_id,
+              kind: "order_failed",
+              mode: "live",
+              created_date: { $gte: new Date(Date.now() - 30 * 60000).toISOString() },
+            },
+            { limit: 1 },
+          ),
+        );
+        if (!recent.length)
+          await base44.entities.Alert.create({
+            symbol: liveWanted[0].symbol,
+            title: `No spendable quote currency on ${live.conn.label}`,
+            message: `${liveWanted.length} qualifying setup(s) skipped — the account holds no funds in the currency its orders settle in. Deposit the native quote currency to enable live buys.`,
+            mode: "live",
+            kind: "order_failed",
+            severity: "danger",
+          });
+      }
       const liveSymbols = new Set(liveWanted.map((r) => r.symbol));
       const paperWanted = tradable
         .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
@@ -609,10 +647,11 @@ export default async function (req) {
         // live-qualified setup never falls back to paper silently.
         let real = null;
         let realSizeUsd = 0;
-        if (desk === "live" && live.conn && liveBudget >= 10) {
+        if (desk === "live" && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
           realSizeUsd = Math.min(
             liveSizingMode === "fixed" ? Math.min(liveFixedUsd, cap) : sizeUsd,
             liveBudget,
+            spendableQuote,
           );
           if (realSizeUsd >= 10) {
             real = await placeMarketOrder(live.conn, {
