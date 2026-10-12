@@ -528,8 +528,7 @@ export default async function (req) {
       const liveRequireTarget = lrVal("require_daily_target", true) !== false;
       const paperTargetPct = Number(config.daily_target_pct) || 2;
       const liveTargetPct = Number(lrVal("daily_target_pct", 2)) || 2;
-      const liveSizingMode = lrVal("real_sizing_mode", "paper");
-      const liveFixedUsd = Number(lrVal("fixed_order_usd", 100)) || 100;
+      const liveSlots = Math.max(1, liveMaxOpen - liveOpenCount);
       const riskPct = Math.min(25, (Number(config.risk_per_trade_pct) || 4) * styleRisk);
 
       // self-teaching: past results per pattern (side x cap tier) nudge scores
@@ -644,15 +643,20 @@ export default async function (req) {
           qty = sizeUsd / r.entry;
         }
 
-        // live leg: a market buy on the exchange, sized by the live rules —
-        // "match paper" spends the paper sizing, "fixed" spends fixed_order_usd,
-        // both within the live budget. A refused order is alerted and a
-        // live-qualified setup never falls back to paper silently.
+        // live leg: a market buy on the exchange, sized by the live risk
+        // rules — risk per trade % of the spendable exchange balance, risked
+        // between entry and stop (the same maths as the paper desk), within
+        // the live budget. A refused order is alerted and a live-qualified
+        // setup never falls back to paper silently.
         let real = null;
         let realSizeUsd = 0;
         if (desk === "live" && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
+          const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
+          const liveFreeSlots = Math.max(1, liveSlots - opened.filter((o) => o.mode === "real").length);
+          const liveRiskUsd = (spendableQuote * liveRiskPct) / 100;
           realSizeUsd = Math.min(
-            liveSizingMode === "fixed" ? Math.min(liveFixedUsd, cap) : sizeUsd,
+            (liveRiskUsd / stopDist) * r.entry,
+            spendableQuote / liveFreeSlots,
             liveBudget,
             spendableQuote,
           );

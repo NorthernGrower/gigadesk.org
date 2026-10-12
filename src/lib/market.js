@@ -68,8 +68,6 @@ export const DEFAULT_CONFIG = {
   sentiment_watch: true,
   real_orders_enabled: false,
   real_connection_id: '',
-  real_sizing_mode: 'paper',
-  fixed_order_usd: 100,
 };
 
 export function roundTo(n, d = 2) {

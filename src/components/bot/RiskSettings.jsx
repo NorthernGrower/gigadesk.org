@@ -109,8 +109,6 @@ export default function RiskSettings({ config, onSaved }) {
   const [live, setLive] = useState({
     real_orders_enabled: config?.real_orders_enabled ?? false,
     real_connection_id: lr.real_connection_id || config?.real_connection_id || '',
-    real_sizing_mode: lr.real_sizing_mode || config?.real_sizing_mode || 'paper',
-    fixed_order_usd: lr.fixed_order_usd ?? config?.fixed_order_usd ?? 100,
     live_cap_usd: lr.live_cap_usd ?? config?.live_cap_usd ?? 0,
     risk_per_trade_pct: lr.risk_per_trade_pct ?? config?.risk_per_trade_pct ?? 4,
     max_open_positions: lr.max_open_positions ?? config?.max_open_positions ?? 8,
@@ -151,8 +149,6 @@ export default function RiskSettings({ config, onSaved }) {
     setLive({
       real_orders_enabled: config.real_orders_enabled ?? false,
       real_connection_id: rules.real_connection_id || config.real_connection_id || '',
-      real_sizing_mode: rules.real_sizing_mode || config.real_sizing_mode || 'paper',
-      fixed_order_usd: rules.fixed_order_usd ?? config.fixed_order_usd ?? 100,
       live_cap_usd: rules.live_cap_usd ?? config.live_cap_usd ?? 0,
       risk_per_trade_pct: rules.risk_per_trade_pct ?? config.risk_per_trade_pct ?? 4,
       max_open_positions: rules.max_open_positions ?? config.max_open_positions ?? 8,
@@ -212,8 +208,6 @@ export default function RiskSettings({ config, onSaved }) {
         real_orders_enabled: live.real_orders_enabled,
         live_rules: {
           real_connection_id: live.real_connection_id || '',
-          real_sizing_mode: live.real_sizing_mode,
-          fixed_order_usd: roundTo(live.fixed_order_usd, 2),
           live_cap_usd: roundTo(Number(live.live_cap_usd) || 0, 2),
           risk_per_trade_pct: roundTo(live.risk_per_trade_pct, 2),
           max_open_positions: Math.max(1, Math.round(Number(live.max_open_positions) || 1)),
@@ -353,24 +347,9 @@ export default function RiskSettings({ config, onSaved }) {
                   </SelectContent>
                 </Select>
               </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Order sizing" hint="What each real order spends.">
-                  <Select value={live.real_sizing_mode} onValueChange={setLiveV('real_sizing_mode')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="paper">Match paper sizing</SelectItem>
-                      <SelectItem value="fixed">Fixed amount</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                {live.real_sizing_mode === 'fixed' ? (
-                  <Field label="Fixed order ($)" hint="Spent on every real order.">
-                    <Input className="num" inputMode="decimal" value={live.fixed_order_usd} onChange={setLiveNum('fixed_order_usd')} />
-                  </Field>
-                ) : null}
-              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Each real order is sized by Risk per trade % of the account's spendable balance, risked between entry and stop — the same maths the paper desk uses. Set it under the live rules below.
+              </p>
               <Field
                 label="Live budget cap ($)"
                 hint="The most exchange money real orders may put to work in total across all open positions. 0 means no limit."

@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
+import { readAccount, pickFundingQuote } from "../../shared/exchanges.ts";
 import { recordLesson } from "../../shared/learn.ts";
 
 /** Exit maths shared by the single close and the close-everything action. */
@@ -144,14 +145,32 @@ export default async function (req) {
       }
 
       // real orders: confirming a long with real orders on fires a market buy
-      // on the chosen exchange; a refused order keeps the proposal standing
+      // on the chosen exchange, sized by the live risk rules — risk per trade
+      // % of the account's spendable quote balance, risked between entry and
+      // stop (the same maths as the paper desk). A refused order keeps the
+      // proposal standing.
       let real = null;
       let realSize = 0;
       const live = await resolveLiveConnection(base44, config);
       if (live.conn && trade.side === "long") {
+        const acct = await readAccount({
+          exchange: live.conn.exchange,
+          testnet: live.conn.testnet,
+          api_key: live.conn.api_key,
+          api_secret: live.conn.api_secret,
+          passphrase: live.conn.passphrase || "",
+        });
+        const funding = acct.ok ? pickFundingQuote(acct.balances, live.conn.exchange) : null;
+        const balance = funding ? funding.amount : 0;
+        const LR = config.live_rules || {};
+        const liveRiskPct = Math.min(25, Number(LR.risk_per_trade_pct ?? config.risk_per_trade_pct ?? 4) || 4);
+        const entry = Number(trade.entry_price) || 0;
+        const stopDist =
+          Math.abs(entry - (Number(trade.stop_price) || 0)) ||
+          entry * ((Number(config.default_stop_pct) || 2.5) / 100);
         realSize =
-          config.real_sizing_mode === "fixed"
-            ? Number(config.fixed_order_usd) || 100
+          balance >= 10 && stopDist > 0
+            ? Math.min(((balance * liveRiskPct) / 100 / stopDist) * entry, balance)
             : size;
         real =
           realSize >= 10
