@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Layers, Wallet } from 'lucide-react';
 import AlertsFeed from '@/components/dashboard/AlertsFeed';
 import BestBuyCard from '@/components/dashboard/BestBuyCard';
@@ -31,6 +31,7 @@ import { fmtUsd } from '@/lib/format';
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const [bot, setBot] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -133,10 +134,24 @@ export default function Dashboard() {
 
   const persistDesk = (desk) => {
     setDeskMode(desk);
+    window.dispatchEvent(new CustomEvent('desk:changed', { detail: desk }));
     if (bot?.config?.id) {
       base44.entities.BotConfig.update(bot.config.id, { active_desk: desk }).catch(() => {});
     }
   };
+
+  // the header's Live/Paper button lands here with ?desk= — take it straight
+  // to that desk (viewing the desk is safe, so no confirmation) and clean the
+  // param so a later refresh follows the saved desk again
+  useEffect(() => {
+    const desk = new URLSearchParams(location.search).get('desk');
+    if (desk !== 'live' && desk !== 'paper') return;
+    // wait for the bot rules to land before switching: switching earlier gets
+    // overridden when the load() below re-applies the saved desk
+    if (!bot?.config?.id) return;
+    navigate('/dashboard', { replace: true });
+    if (deskMode !== desk) persistDesk(desk);
+  }, [location.search, bot?.config?.id, deskMode]);
 
   const switchDesk = (desk) => {
     if (desk === 'live' && deskMode !== 'live') {

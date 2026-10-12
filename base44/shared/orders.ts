@@ -5,7 +5,7 @@ import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krake
 import { decryptSecret } from "./crypto.ts";
 import { round } from "./market.ts";
 
-export const QUOTE_ASSET = { binance_us: "USD", binance: "USDT", bybit: "USDT", kucoin: "USDT", kraken: "USDT" };
+export const QUOTE_ASSET = { binance_us: "USD", binance: "USDT", bybit: "USDT", kucoin: "USDT", kraken: "USD" };
 
 const trunc = (n, d) => {
   const f = 10 ** d;

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Activity,
   CheckCircle2,
+  Landmark,
   PauseCircle,
   PlayCircle,
   Wallet,
@@ -170,12 +171,18 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <StatCard
+          label="Equity"
+          value={live.balance_usd != null ? fmtUsd((live.balance_usd || 0) + (live.unrealized || 0)) : '—'}
+          sub="exchange balance plus unrealised P&L"
+          icon={Wallet}
+        />
         <StatCard
           label="Exchange balance"
           value={live.balance_usd != null ? fmtUsd(live.balance_usd) : '—'}
           sub={live.balance_usd != null ? 'exchange-reported quote balance' : 'unavailable — verify the connection'}
-          icon={Wallet}
+          icon={Landmark}
         />
         <StatCard
           label="Open positions"
