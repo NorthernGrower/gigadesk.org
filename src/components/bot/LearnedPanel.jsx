@@ -66,7 +66,7 @@ export default function LearnedPanel() {
             const [side, bucket] = String(row.pattern).split('/');
             const trades = row.count || 0;
             const winRate = Math.round((Number(row.avg_win) || 0) * 100);
-            const avgPnl = Number(row.avg_pnl_pct) || 0;
+            const avgPnl = Math.round((Number(row.avg_pnl_pct) || 0) * 100) / 100;
             const adj = scoreAdj(row);
             return (
               <div
