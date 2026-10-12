@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import ScannedCoins from '@/components/desk/ScannedCoins';
-import { runBot } from '@/lib/market';
+import { getLastBot, runBot } from '@/lib/market';
 import { pageItems } from '@/lib/market';
 import { base44 } from '@/api/base44Client';
 
@@ -34,11 +34,18 @@ export default function LiveScannedCoins() {
         setScanned(data.scanned ?? null);
       }
     };
-    runBot(false)
-      .then((data) => {
-        if (alive && data) applyScan(data);
-      })
-      .catch(() => {});
+    // the last scan's board ranks the list instantly; only a cold open (or a
+    // stale one) triggers a fresh full scan
+    const cached = getLastBot();
+    if (cached) {
+      applyScan(cached);
+    } else {
+      runBot(false)
+        .then((data) => {
+          if (alive && data) applyScan(data);
+        })
+        .catch(() => {});
+    }
     // every later cycle updates the list in place
     const onTick = (event) => {
       const data = event.detail;

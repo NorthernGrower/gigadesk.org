@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
 import useSavedBalance from '@/hooks/useSavedBalance';
 import { onTradesChange } from '@/lib/live';
-import { emitBotTick, ensureBotConfig, pageItems, runBot, tradeAction } from '@/lib/market';
+import { emitBotTick, ensureBotConfig, getLastBot, pageItems, runBot, tradeAction } from '@/lib/market';
 
 export default function Bot() {
   const { toast } = useToast();
@@ -54,6 +54,13 @@ export default function Bot() {
   useEffect(() => {
     let alive = true;
     (async () => {
+      // revisits render the last cycle immediately; the light refresh below updates it
+      const cached = getLastBot();
+      if (cached) {
+        setBot(cached);
+        if (cached.config) setConfig(cached.config);
+        setLoading(false);
+      }
       try {
         const cfg = await ensureBotConfig();
         if (!alive) return;

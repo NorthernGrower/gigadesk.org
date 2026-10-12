@@ -24,7 +24,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
 import { onTradesChange } from '@/lib/live';
-import { emitBotTick, requestBotRun, runBot, tradeAction } from '@/lib/market';
+import { emitBotTick, getLastBot, requestBotRun, runBot, tradeAction } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 
 export default function Dashboard() {
@@ -43,6 +43,30 @@ export default function Dashboard() {
     let alive = true;
 
     const load = async () => {
+      // revisits render the last scan immediately and refresh quietly behind it
+      const cached = getLastBot();
+      if (cached) {
+        setBot(cached);
+        if (cached?.config?.active_desk === 'live' || cached?.config?.active_desk === 'paper') {
+          setDeskMode(cached.config.active_desk);
+        }
+        setLoading(false);
+        runBot(true)
+          .then((data) => {
+            if (alive) {
+              setBot((prev) => ({
+                ...data,
+                top: data.top?.length ? data.top : prev?.top || [],
+                summary: data.summary ? data.summary : prev?.summary || null,
+                universe: data.universe || prev?.universe || 0,
+                median_change_24h: data.summary ? data.median_change_24h : prev?.median_change_24h ?? 0,
+                scanned: data.scanned || prev?.scanned || 0,
+              }));
+            }
+          })
+          .catch(() => {});
+        return;
+      }
       try {
         const data = await runBot(false);
         if (alive) {

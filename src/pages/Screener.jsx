@@ -5,7 +5,7 @@ import FiltersBar from '@/components/screener/FiltersBar';
 import ScreenerTable from '@/components/screener/ScreenerTable';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
-import { ensureBotConfig, pageItems, scanMarket } from '@/lib/market';
+import { ensureBotConfig, getLastBot, pageItems, scanMarket } from '@/lib/market';
 
 export default function Screener() {
   const navigate = useNavigate();
@@ -23,7 +23,8 @@ export default function Screener() {
   const [targetPct, setTargetPct] = useState(2);
 
   const scan = async (options = {}) => {
-    setLoading(true);
+    // quiet = the board already shows the last scan, so this is a background refresh
+    if (options.quiet !== true) setLoading(true);
     setError(null);
     try {
       const data = await scanMarket({
@@ -55,7 +56,14 @@ export default function Screener() {
         if (!alive) return;
         setWatchSymbols(symbols);
         setTargetPct(target);
-        await scan({ timeframe: '1h', tier: 'all', depth: '70', targetPct: target, symbols });
+        // revisits render the bot's last scan immediately, then the fresh
+        // scan below quietly replaces it with the requested depth
+        const cached = getLastBot();
+        if (cached?.top?.length) {
+          setBoard({ rows: cached.top, scannedCount: cached.scanned, universeCount: cached.universe, summary: cached.summary });
+          setLoading(false);
+        }
+        await scan({ timeframe: '1h', tier: 'all', depth: '70', targetPct: target, symbols, quiet: Boolean(cached?.top?.length) });
       } catch (err) {
         if (alive) {
           setError(err.message);

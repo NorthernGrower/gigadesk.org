@@ -110,10 +110,42 @@ export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
 // of identical cycles was tripping the entity rate limit and returning 500s.
 let lastLightRun = null;
 
+// The last finished cycle's result, kept so revisiting pages render it
+// instantly instead of staring at a spinner while a fresh scan runs.
+let lastBot = null;
+
+export function getLastBot(maxAgeMs = 600000) {
+  return lastBot && Date.now() - lastBot.at < maxAgeMs ? lastBot.data : null;
+}
+
+function rememberBot(data) {
+  if (!data) return;
+  if (data.summary) {
+    lastBot = { at: Date.now(), data };
+  } else if (lastBot) {
+    // light cycles keep the scan's board but refresh the stats around it
+    lastBot = {
+      at: Date.now(),
+      data: {
+        ...lastBot.data,
+        ...data,
+        top: lastBot.data.top,
+        summary: lastBot.data.summary,
+        universe: lastBot.data.universe,
+        median_change_24h: lastBot.data.median_change_24h,
+        scanned: lastBot.data.scanned,
+      },
+    };
+  }
+}
+
 export function runBot(light = false) {
   // the desk's timezone keeps "today" counters on the user's own calendar day
-  const invoke = async () =>
-    unwrap(await base44.functions.invoke('runBot', { light, tz_offset: new Date().getTimezoneOffset() }));
+  const invoke = async () => {
+    const data = unwrap(await base44.functions.invoke('runBot', { light, tz_offset: new Date().getTimezoneOffset() }));
+    rememberBot(data);
+    return data;
+  };
   if (!light) return invoke();
   if (lastLightRun && Date.now() - lastLightRun.at < 10000) return lastLightRun.promise;
   lastLightRun = { at: Date.now(), promise: invoke() };
