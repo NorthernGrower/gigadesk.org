@@ -450,6 +450,9 @@ export function variantCfg(id, description, over = {}) {
     slope_must_agree: false,
     stoch_must_agree: false,
     max_bb_width: 0,
+    entry_limit_pct: 0,
+    limit_wait_bars: 8,
+    skip_sideways: false,
     ...over,
   };
 }
@@ -532,10 +535,45 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
   const trades = [];
   let missed = 0;
   let pos = null;
+  let pending = null;
   let cooldownUntil = 0;
   const end = candles.length - 1;
   for (let j = WARMUP; j < end; j++) {
     const bar = candles[j];
+    // pending limit order: fills when the tape touches the limit price, and
+    // cancels if the pullback never comes within the wait window
+    if (pending && !pos) {
+      if (j > pending.until) {
+        missed += 1;
+        pending = null;
+      } else {
+        const filled = pending.long ? bar.l <= pending.limit : bar.h >= pending.limit;
+        if (filled) {
+          const unitAtFill = Math.abs(pending.limit - pending.stop);
+          if (unitAtFill > 0) {
+            pos = {
+              symbol: pending.row.symbol,
+              side: pending.row.side,
+              entry: pending.limit,
+              stop: pending.stop,
+              target:
+                cfg.target_r != null
+                  ? pending.long
+                    ? pending.limit + cfg.target_r * unitAtFill
+                    : pending.limit - cfg.target_r * unitAtFill
+                  : pending.rowTarget,
+              stopPct: (unitAtFill / pending.limit) * 100,
+              atr: pending.atr,
+              unit: unitAtFill,
+              j,
+              entryTime: bar.t,
+            };
+          }
+          pending = null;
+          if (pos) continue;
+        }
+      }
+    }
     if (pos) {
       const long = pos.side === "long";
       const hitStop = long ? bar.l <= pos.stop : bar.h >= pos.stop;
@@ -630,6 +668,12 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
           continue;
         }
       }
+      // a flat BTC tape is where this engine's entries win least, on either
+      // side: skip every trade opened into it
+      if (cfg.skip_sideways && regimeLabel(btcByTime.get(bar.t)) === "sideways") {
+        missed += 1;
+        continue;
+      }
       const unit = Math.abs(bar.c - Number(row.stop));
       if (unit > 0) {
         const target =
@@ -638,18 +682,32 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
               ? bar.c + cfg.target_r * unit
               : bar.c - cfg.target_r * unit
             : Number(row.target);
-        pos = {
-          symbol: row.symbol,
-          side: row.side,
-          entry: bar.c,
-          stop: Number(row.stop),
-          target,
-          stopPct: (unit / bar.c) * 100,
-          atr: Number(row.indicators && row.indicators.atr) || bar.c * 0.02,
-          unit,
-          j,
-          entryTime: bar.t,
-        };
+        // limit-entry mode: wait for a better price instead of buying the
+        // signal bar's close, so every fill starts closer to the stop
+        if (cfg.entry_limit_pct) {
+          pending = {
+            row,
+            long: row.side === "long",
+            limit: row.side === "long" ? bar.c * (1 - cfg.entry_limit_pct / 100) : bar.c * (1 + cfg.entry_limit_pct / 100),
+            stop: Number(row.stop),
+            rowTarget: Number(row.target),
+            atr: Number(row.indicators && row.indicators.atr) || bar.c * 0.02,
+            until: j + (Number(cfg.limit_wait_bars) || 8),
+          };
+        } else {
+          pos = {
+            symbol: row.symbol,
+            side: row.side,
+            entry: bar.c,
+            stop: Number(row.stop),
+            target,
+            stopPct: (unit / bar.c) * 100,
+            atr: Number(row.indicators && row.indicators.atr) || bar.c * 0.02,
+            unit,
+            j,
+            entryTime: bar.t,
+          };
+        }
       }
     }
   }

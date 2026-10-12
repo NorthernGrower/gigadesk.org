@@ -174,6 +174,63 @@ const ROUND16_VARIANTS = [
   }),
 ];
 
+// Round 17: builds on the round-16 winner (quality stack + score 68, no flat
+// time exit). Tests exit targets, stop management, and the cheaper-fill lever:
+// entering on a limit a fraction below/above the signal bar instead of paying
+// the close.
+const R16_BEST = { ...R14_STACK, min_score: 68, time_flat_bars: 0 };
+const ROUND17_VARIANTS = [
+  variantCfg("r16_best", "Reference: the round-16 winner (quality stack + score 68, no time exit)", R16_BEST),
+  variantCfg("r17_t2", "Winner + 2R targets", { ...R16_BEST, target_r: 2 }),
+  variantCfg("r17_t3", "Winner + 3R targets", { ...R16_BEST, target_r: 3 }),
+  variantCfg("r17_trail", "Winner + ATR trailing stop after +1.5R", { ...R16_BEST, trail_r: 1.5 }),
+  variantCfg("r17_be15", "Winner + break-even after +1.5R", { ...R16_BEST, be_stop_r: 1.5 }),
+  variantCfg("r17_champ_notime", "Live champion with only the flat time exit removed", {
+    ...CHAMPION,
+    time_flat_bars: 0,
+  }),
+  variantCfg("r17_limit05", "Winner + limit entry 0.5% better than the signal close", {
+    ...R16_BEST,
+    entry_limit_pct: 0.5,
+  }),
+  variantCfg("r17_limit10", "Winner + limit entry 1% better than the signal close", {
+    ...R16_BEST,
+    entry_limit_pct: 1,
+  }),
+];
+
+// Round 18: locks in the round-17 winner (break-even at +1.5R) and probes the
+// last measurable leak: trades opened into a flat BTC tape, plus tighter and
+// looser break-even placement.
+const R17_BEST = { ...R16_BEST, be_stop_r: 1.5 };
+const ROUND18_VARIANTS = [
+  variantCfg("r17_be15", "Reference: the round-17 winner", R17_BEST),
+  variantCfg("r18_no_sideways", "Winner + no trades opened into a flat BTC tape", {
+    ...R17_BEST,
+    skip_sideways: true,
+  }),
+  variantCfg("r18_be12", "Winner + break-even earlier, at +1.2R", { ...R17_BEST, be_stop_r: 1.2 }),
+  variantCfg("r18_be20", "Winner + break-even later, at +2.0R", { ...R17_BEST, be_stop_r: 2 }),
+  variantCfg("r18_be15_trail2", "Winner + ATR trail after +2.0R", { ...R17_BEST, trail_r: 2 }),
+  variantCfg("r18_be15_rr15", "Winner + minimum 1.5R setups only", { ...R17_BEST, min_rr: 1.5 }),
+  variantCfg("r18_be15_s72", "Winner + score bar 72", { ...R17_BEST, min_score: 72 }),
+];
+
+// Round 19: combos of the two round-18 winners — flat-tape skip and later
+// break-even — to settle the final stack.
+const R18_BEST = { ...R17_BEST, skip_sideways: true };
+const ROUND19_VARIANTS = [
+  variantCfg("r18_no_sideways", "Reference: flat-tape skip (round-18 winner)", R18_BEST),
+  variantCfg("r19_nosid_be20", "Flat-tape skip + break-even at +2.0R", { ...R18_BEST, be_stop_r: 2 }),
+  variantCfg("r19_nosid_be15", "Flat-tape skip + break-even at +1.5R (sanity)", R18_BEST),
+  variantCfg("r19_nosid_t3", "Flat-tape skip + 3R targets", { ...R18_BEST, target_r: 3 }),
+  variantCfg("r19_be20_nosid", "Break-even at +2.0R + flat-tape skip (same stack, ordering check)", {
+    ...R17_BEST,
+    be_stop_r: 2,
+    skip_sideways: true,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -220,11 +277,17 @@ export default async function (req) {
       const result = await runOptimize(
         coins,
         months
-          ? Number(body.round) >= 16
-            ? ROUND16_VARIANTS
-            : Number(body.round) >= 15
-              ? ROUND15_VARIANTS
-              : ROUND14_VARIANTS
+          ? Number(body.round) >= 19
+            ? ROUND19_VARIANTS
+            : Number(body.round) >= 18
+              ? ROUND18_VARIANTS
+              : Number(body.round) >= 17
+              ? ROUND17_VARIANTS
+              : Number(body.round) >= 16
+              ? ROUND16_VARIANTS
+              : Number(body.round) >= 15
+                ? ROUND15_VARIANTS
+                : ROUND14_VARIANTS
           : body.timeframe === "4h"
             ? ROUND11_4H_VARIANTS
             : OPTIMIZE_VARIANTS,
