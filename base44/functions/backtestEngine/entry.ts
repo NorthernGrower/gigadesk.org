@@ -11,18 +11,14 @@ const CG2 = {
   min_confluence: 3, min_vol_ratio: 1.2, max_stretch_pct: 5, no_chasing: true,
 };
 const BASE = { ...CG2, cooldown_bars: 24 };
-const R25S = { ...BASE, target_r: 2.5, be_stop_r: 1.2, skip_riskon_long: true, min_vol_ratio: 1.5 };
+// Final check: the round-7 winner and runner-up against the round-2 deep
+// selection baseline, over a wider 20-symbol universe for stability.
+const WIDE = { ...BASE, target_r: 2.5, be_stop_r: 1.2, skip_riskon_long: true, min_vol_ratio: 1.5, skip_sideways_long: true };
 const OPTIMIZE_VARIANTS = [
-  variantCfg("rr25_be12_skipron", "Round 4 break-even anchor: deep selection + cooldown + 2.5R + BE1.2 + no risk-on longs", { ...BASE, target_r: 2.5, be_stop_r: 1.2, skip_riskon_long: true }),
-  variantCfg("rr25_be12_v15", "Round 4 winner: deep selection + cooldown + 2.5R + BE1.2 + volume 1.5x", { ...BASE, target_r: 2.5, be_stop_r: 1.2, min_vol_ratio: 1.5 }),
-  variantCfg("rr25_be12_skipron_v15", "Both round 4 winners combined", R25S),
-  variantCfg("rr25_be12_skipron_v15_cool48", "Combined plus a 48-bar cooldown", { ...R25S, cooldown_bars: 48 }),
-  variantCfg("rr25_be12_skipron_v15_sideskip", "Combined plus skipping sideways longs", { ...R25S, skip_sideways_long: true }),
-  variantCfg("rr25_be12_skipron_v15_tu36", "Combined plus underwater trades cut at 36 bars", { ...R25S, time_underwater_bars: 36 }),
-  variantCfg("rr25_be12_skipron_v15_trail2", "Combined plus a 1.5x-ATR trail after +2R", { ...R25S, trail_r: 2 }),
-  variantCfg("rr2_be12_skipron_v15", "Combined with a 2R target", { ...BASE, target_r: 2, be_stop_r: 1.2, skip_riskon_long: true, min_vol_ratio: 1.5 }),
-  variantCfg("rr25_be12_skipron_stretch3", "Round 4 anchor with a 3% max stretch", { ...BASE, target_r: 2.5, be_stop_r: 1.2, skip_riskon_long: true, max_stretch_pct: 3 }),
-  variantCfg("rr3_be12_skipron_v15", "Combined with a 3R target", { ...BASE, target_r: 3, be_stop_r: 1.2, skip_riskon_long: true, min_vol_ratio: 1.5 }),
+  variantCfg("deep_base_wide", "Reference: deep selection + 24-bar cooldown + engine targets", BASE),
+  variantCfg("sideskip_cool48_wide", "Round 6 winner over the wider universe", WIDE),
+  variantCfg("sideskip_cool72_wide", "Round 7 winner (72-bar cooldown) over the wider universe", { ...WIDE, cooldown_bars: 72 }),
+  variantCfg("sideskip_cool48_v2_wide", "Round 7 runner-up (2x volume) over the wider universe", { ...WIDE, min_vol_ratio: 2 }),
 ];
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade

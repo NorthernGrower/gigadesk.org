@@ -140,6 +140,7 @@ export default function RiskSettings({ config, onSaved }) {
     market_cap_scope: config?.market_cap_scope || 'all',
     sentiment_watch: config?.sentiment_watch ?? true,
     confluence_v2: config?.confluence_v2 !== false,
+    engine_v2: config?.engine_v2 !== false,
   });
 
   // re-sync the forms whenever a fresh config lands (after a save or a cycle)
@@ -180,6 +181,7 @@ export default function RiskSettings({ config, onSaved }) {
       market_cap_scope: config.market_cap_scope || 'all',
       sentiment_watch: config.sentiment_watch ?? true,
       confluence_v2: config.confluence_v2 !== false,
+      engine_v2: config.engine_v2 !== false,
     });
   }, [config?.id, config?.updated_date]);
 
@@ -265,6 +267,7 @@ export default function RiskSettings({ config, onSaved }) {
         market_cap_scope: shared.market_cap_scope,
         sentiment_watch: shared.sentiment_watch,
         confluence_v2: shared.confluence_v2,
+        engine_v2: shared.engine_v2,
       });
       toast({ title: 'Shared settings saved', description: 'Both desks scan with these on the next cycle.' });
       if (onSaved) onSaved();
@@ -474,6 +477,12 @@ export default function RiskSettings({ config, onSaved }) {
             hint="Adds Fibonacci pullback zones, Elliott wave counts and multi-touch support/resistance to scoring, with stale-breakout discounts. Turn off to revert to the previous engine."
             checked={shared.confluence_v2}
             onChange={setSharedV('confluence_v2')}
+          />
+          <Toggle
+            label="Optimizer entry rules"
+            hint="The backtest-winning rules: higher-timeframe confirmation, momentum strength, 1.5x volume, no chasing, 2.5R targets with break-even after +1.2R, and longs only while BTC's tape is risk-off."
+            checked={shared.engine_v2}
+            onChange={setSharedV('engine_v2')}
           />
         </div>
         <Button className="w-full" onClick={saveShared} disabled={saving === 'shared'}>

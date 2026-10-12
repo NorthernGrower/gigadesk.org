@@ -55,6 +55,11 @@
       "default": true,
       "description": "Advanced structure engine: Fibonacci pullbacks, Elliott wave counts and multi-touch zones. Turn off to revert to the previous scoring"
     },
+    "engine_v2": {
+      "type": "boolean",
+      "default": true,
+      "description": "Optimizer-winning entry rules: the higher timeframe must confirm the trade, ADX 25 with the DI pair owned, 3 confluences, 1.5x volume, no chasing, a 5% max stretch, 2.5R targets with break-even after +1.2R, and longs only while BTC's tape is risk-off. Turn off to revert to score-only entries"
+    },
     "starting_balance": {
       "type": "number",
       "default": 10000
@@ -132,7 +137,8 @@
     },
     "cooldown_minutes": {
       "type": "number",
-      "default": 120
+      "default": 4320,
+      "description": "How long a desk leaves a just-closed symbol alone; the optimizer winner is 72 hourly bars"
     },
     "auto_run": {
       "type": "boolean",

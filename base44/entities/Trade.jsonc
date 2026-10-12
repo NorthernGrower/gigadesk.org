@@ -55,6 +55,10 @@
     "target_price": {
       "type": "number"
     },
+    "target_r": {
+      "type": "number",
+      "description": "The R-multiple target the trade was opened with; drives its break-even management"
+    },
     "peak_price": {
       "type": "number"
     },

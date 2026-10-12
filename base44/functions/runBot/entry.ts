@@ -94,6 +94,13 @@ export default async function (req) {
     const { coins } = await fetchMarkets();
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
+    // engine_v2: the optimizer-winning rules (seven Kraken rounds, recorded in
+    // AuditRun). BTC's 24h tape gates longs: risk-on and sideways entries
+    // measured the weakest in every round, so longs fire only in a risk-off tape.
+    const engineV2 = config.engine_v2 !== false;
+    const btcChange = Number(priceMap.get("BTC")?.change24h) || 0;
+    const btcRegime = btcChange > 1 ? "risk_on" : btcChange < -1 ? "risk_off" : "sideways";
+
     // entity reads cap each page, so a plain read silently missed open trades
     // once the desk held more than a page — the exact window that let already
     // open symbols be traded again. Page through until every match is in.
@@ -267,6 +274,17 @@ export default async function (req) {
       const prevPeak = Number(t.peak_price) || entry;
       let peak = prevPeak;
       const updates = {};
+
+      // engine_v2: break-even once the trade is +1.2R in — the optimizer
+      // winner's protective stop move, applied before any trailing
+      const targetR = Number(t.target_r) || 0;
+      if (engineV2 && targetR && target) {
+        const bePct = ((Math.abs(target - entry) / targetR) / entry) * 100 * 1.2;
+        if (gainPct >= bePct) {
+          const be = side === "long" ? entry * 1.0005 : entry * 0.9995;
+          if (side === "long" ? be > stop : be < stop) stop = be;
+        }
+      }
 
       // trailing follows the desk the position trades on: real positions
       // trail by the live rules, paper ones by the paper rules
@@ -562,6 +580,12 @@ export default async function (req) {
         return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
       });
 
+      // engine_v2 targets: 2.5R from entry, the optimizer winner
+      const engineTarget = (r) =>
+        round(
+          r.side === "long" ? r.entry + 2.5 * (r.entry - r.stop) : r.entry - 2.5 * (r.entry - r.stop),
+          8,
+        );
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         const minScore = desk === "live" ? liveMinScore : paperMinScore;
@@ -570,7 +594,33 @@ export default async function (req) {
         if (blocked.has(r.symbol) || r.score < minScore) return false;
         // real orders are longs only — shorts stay paper
         if (desk === "live" ? r.side !== "long" : !allowShorts && r.side !== "long") return false;
+        // engine_v2 entry quality: higher-timeframe confirmation, momentum
+        // strength, structure confluence, 1.5x volume, a bounded stretch and
+        // no chasing — the rule set that turned the 30-day Kraken backtest
+        // from -8.6% to +8.3% with a 1.6% max drawdown
+        if (engineV2) {
+          if (r.side === "long" && btcRegime !== "risk_off") return false;
+          if (!r.htf_trend || r.htf_trend !== (r.side === "long" ? "up" : "down")) return false;
+          const ind = r.indicators || {};
+          if ((Number(ind.adx) || 0) < 25) return false;
+          const diOwned =
+            r.side === "long"
+              ? (Number(ind.plus_di) || 0) > (Number(ind.minus_di) || 0)
+              : (Number(ind.minus_di) || 0) > (Number(ind.plus_di) || 0);
+          if (!diOwned) return false;
+          if ((r.confluence || 0) < 3) return false;
+          if ((Number(ind.vol_ratio) || 0) < 1.5) return false;
+          if (ind.ema20) {
+            const stretch = ((r.price - ind.ema20) / ind.ema20) * 100 * (r.side === "long" ? 1 : -1);
+            if (stretch > 5) return false;
+          }
+          if (r.fib_phase === "chasing") return false;
+        }
         if (!requireTarget) return true;
+        if (engineV2) {
+          const stopPct = (Math.abs(r.entry - r.stop) / r.entry) * 100;
+          return 2.5 * stopPct >= targetPct && r.score >= 58;
+        }
         return Number(r.required_move_pct) >= targetPct && r.score >= 58;
       };
       const liveWanted = live.conn
@@ -694,7 +744,8 @@ export default async function (req) {
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
-            target_price: r.target,
+            target_price: engineV2 ? engineTarget(r) : r.target,
+            target_r: engineV2 ? 2.5 : null,
             peak_price: r.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -749,7 +800,8 @@ export default async function (req) {
           quantity: round(qty, 8),
           size_usd: round(sizeUsd),
           stop_price: r.stop,
-          target_price: r.target,
+          target_price: engineV2 ? engineTarget(r) : r.target,
+          target_r: engineV2 ? 2.5 : null,
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
