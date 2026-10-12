@@ -53,12 +53,66 @@ async function guardConstraints(cfg, { usd, quantity, price, side, pair }) {
 
 export async function placeMarketOrder(cfg, params) {
   const side = params.side === "sell" ? "sell" : "buy";
-  const pair = `${String(params.symbol || "").toUpperCase()}${QUOTE_ASSET[cfg.exchange] || "USDT"}`;
+  // quoteAsset is the funding asset resolved from the account's balances
+  // (USD or USDT on Kraken) — orders settle in the pair's quote currency
+  const pair = `${String(params.symbol || "").toUpperCase()}${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
   const idem = idemKey(params.symbol);
   if (cfg.exchange === "bybit") return bybitOrder(cfg, params, side, pair, idem);
   if (cfg.exchange === "kucoin") return kucoinOrder(cfg, params, side, pair, idem);
   if (cfg.exchange === "kraken") return krakenOrder(cfg, params, side, pair, idem);
   return binanceOrder(cfg, params, side, pair, idem);
+}
+
+/**
+ * Converts a fiat cash balance (CAD, EUR, GBP) into USDT by buying on the
+ * Kraken USDT/fiat market — the only API route to move that cash into an
+ * asset the bot can trade. Returns {ok, order_id, filled_qty, message}.
+ */
+export async function convertToUsdt(cfg, { amount, currency }) {
+  if (cfg.exchange !== "kraken")
+    return { ok: false, message: "Fiat conversion is available on Kraken connections only" };
+  const cur = String(currency || "CAD").toUpperCase();
+  const pairsRes = await callJson("https://api.kraken.com/0/public/AssetPairs");
+  const pairRow = Object.values((pairsRes.data || {}).result || {}).find(
+    (p) => p && p.wsname === `USDT/${cur}`,
+  );
+  if (!pairRow) return { ok: false, message: `Kraken has no USDT/${cur} market` };
+  const ticker = await callJson(`https://api.kraken.com/0/public/Ticker?pair=${pairRow.altname}`);
+  const info = Object.values((ticker.data || {}).result || {})[0];
+  const price = info && Number(info.c && info.c[0]);
+  if (!(price > 0)) return { ok: false, message: "Could not read the current USDT price" };
+  const vol = trunc((Number(amount) || 0) / price, Number(pairRow.lot_decimals) || 8);
+  const orderMin = Number(pairRow.ordermin) || 0;
+  if (orderMin && vol < orderMin)
+    return { ok: false, message: `Convert amount is below the ${orderMin} USDT order minimum` };
+  const path = "/0/private/AddOrder";
+  const nonce = String(krakenNonce());
+  const body = `nonce=${nonce}&pair=${pairRow.altname}&type=buy&ordertype=market&volume=${vol}`;
+  const sign = await krakenSign(cfg.api_secret, path, nonce, body);
+  const res = await callJson(`https://api.kraken.com${path}`, {
+    method: "POST",
+    headers: {
+      "API-Key": cfg.api_key,
+      "API-Sign": sign,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const data = res.data || {};
+  const failed = Array.isArray(data.error) ? data.error : [];
+  const result = data.result || {};
+  const txid = Array.isArray(result.txid) ? result.txid[0] : result.txid;
+  if (!failed.length && txid)
+    return {
+      ok: true,
+      order_id: String(txid),
+      filled_qty: vol,
+      message: `Bought ${vol} USDT with ${round(amount, 2)} ${cur} at ${round(price, 4)} ${cur}/USDT`,
+    };
+  return {
+    ok: false,
+    message: `Kraken said: ${KRAKEN_MESSAGES[failed[0] || ""] || failed[0] || res.text || "no response from Kraken"}`,
+  };
 }
 
 /**

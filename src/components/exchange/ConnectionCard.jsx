@@ -8,11 +8,15 @@ const fmt = (n) => {
   return v >= 1000 ? v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : v.toLocaleString(undefined, { maximumFractionDigits: 6 });
 };
 
-export default function ConnectionCard({ conn, busy, onCheck, onRemove }) {
+export default function ConnectionCard({ conn, busy, onCheck, onRemove, onConvert }) {
   const [confirming, setConfirming] = useState(false);
+  const [confirmConvert, setConfirmConvert] = useState(false);
   const meta = EXCHANGE_META[conn.exchange] || { name: conn.exchange };
   const ok = conn.status === 'connected';
   const balances = Array.isArray(conn.balances) ? conn.balances.slice(0, 5) : [];
+  // cash held in a currency the bot cannot trade with — Kraken has no
+  // fiat-to-fiat route, so it swaps into USDT on the USDT/fiat market
+  const fiat = (conn.balances || []).find((b) => ['CAD', 'EUR', 'GBP'].includes(b.asset) && (Number(b.total) || 0) >= 1);
 
   return (
     <div className="surface p-4">
@@ -77,6 +81,17 @@ export default function ConnectionCard({ conn, busy, onCheck, onRemove }) {
           {conn.last_checked_at ? `Checked ${new Date(conn.last_checked_at).toLocaleString()}` : 'Never checked'}
         </p>
         <div className="flex items-center gap-2">
+          {fiat && onConvert && (
+            confirmConvert ? (
+              <Button variant="destructive" size="sm" disabled={busy} onClick={() => onConvert(conn)}>
+                Confirm convert
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmConvert(true)} title="Swaps this cash into USDT on the USDT market so the bot can trade it">
+                Convert {fiat.asset} to USDT
+              </Button>
+            )
+          )}
           <Button variant="outline" size="sm" disabled={busy} onClick={() => onCheck(conn)}>
             <RefreshCw className={busy ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
             Check

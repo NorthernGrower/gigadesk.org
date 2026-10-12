@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, pickQuoteBalance, pickNativeQuoteBalance, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, pickQuoteBalance, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
@@ -132,9 +132,11 @@ export default async function (req) {
           .get(managed.conn.id)
           .catch(() => null)
       : null;
-    const spendableQuote = connRow
-      ? await pickNativeQuoteBalance(connRow.balances, connRow.exchange)
-      : 0;
+    // the funding asset is what orders actually settle in: USD, or USDT
+    // after a CAD (or EUR/GBP) balance was swapped on the USDT/fiat market
+    const funding = connRow ? pickFundingQuote(connRow.balances, connRow.exchange) : null;
+    const spendableQuote = funding ? funding.amount : 0;
+    if (managed.conn && funding) managed.conn.quoteAsset = funding.asset;
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
     // gone, qualifying setups stay paper instead of breaching the cap
@@ -1065,7 +1067,7 @@ export default async function (req) {
       positions,
       top: (board.rows || []).slice(0, 12).map((r) => ({
         ...r,
-        pair: `${r.symbol}/${managed.conn ? QUOTE_ASSET[managed.conn.exchange] || "USDT" : "USDT"}`,
+        pair: `${r.symbol}/${(managed.conn && (managed.conn.quoteAsset || QUOTE_ASSET[managed.conn.exchange])) || "USDT"}`,
         exchange: managed.conn ? managed.conn.exchange : null,
       })),
       scanned: board.scannedCount,

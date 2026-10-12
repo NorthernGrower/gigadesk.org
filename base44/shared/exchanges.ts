@@ -494,6 +494,25 @@ export async function pickNativeQuoteBalance(balances = [], exchange) {
   return row ? Math.round((Number(row.total) || 0) * 100) / 100 : 0;
 }
 
+/**
+ * The asset the account can actually fund orders with, in preference order:
+ * the exchange's native quote, then the other stables its pairs settle in —
+ * USD, then USDT on Kraken. Fiat in another currency (CAD, EUR, GBP) can
+ * never fund an order there. Returns null when the account holds none.
+ */
+export function pickFundingQuote(balances = [], exchange) {
+  const order = exchange === "kraken" ? ["USD", "USDT"] : (QUOTE_ALIASES[exchange] || ["USDT"]);
+  const list = (balances || []).map((b) => ({
+    asset: String(b.asset || "").toUpperCase(),
+    total: Number(b.total) || 0,
+  }));
+  for (const asset of order) {
+    const row = list.find((b) => b.asset === asset && b.total > 0);
+    if (row) return { asset, amount: Math.round(row.total * 100) / 100 };
+  }
+  return null;
+}
+
 // USD conversion rate for fiat quote currencies, cached for an hour.
 const FIAT = new Set(["CAD", "EUR", "GBP"]);
 const fiatToUsdRate = async (asset) => {

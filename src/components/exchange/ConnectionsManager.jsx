@@ -52,6 +52,26 @@ export default function ConnectionsManager({ showSafety = false }) {
     }
   };
 
+  const handleConvert = async (conn) => {
+    setBusyId(conn.id);
+    try {
+      const res = await base44.functions.invoke('convertToUsdt', { id: conn.id, action: 'execute' });
+      const data = res && res.data ? res.data : res;
+      toast({
+        title: data && data.ok ? 'Converted to USDT' : 'Convert failed',
+        description: (data && data.message) || '',
+        variant: data && data.ok ? undefined : 'destructive',
+      });
+      if (data && Array.isArray(data.balances)) {
+        setConnections((list) => list.map((c) => (c.id === conn.id ? { ...c, balances: data.balances, status: 'connected' } : c)));
+      }
+    } catch (e) {
+      toast({ title: 'Convert failed', description: (e && e.message) || '', variant: 'destructive' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleRemove = async (conn) => {
     setBusyId(conn.id);
     try {
@@ -98,7 +118,7 @@ export default function ConnectionsManager({ showSafety = false }) {
           </div>
         ) : (
           connections.map((conn) => (
-            <ConnectionCard key={conn.id} conn={conn} busy={busyId === conn.id} onCheck={handleCheck} onRemove={handleRemove} />
+            <ConnectionCard key={conn.id} conn={conn} busy={busyId === conn.id} onCheck={handleCheck} onRemove={handleRemove} onConvert={handleConvert} />
           ))
         )}
       </div>
