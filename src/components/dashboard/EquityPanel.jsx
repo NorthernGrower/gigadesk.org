@@ -342,7 +342,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
                 {fmtUsd(points[points.length - 1].equity)}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                from {fmtUsd(startingBalance)} · realised {fmtUsd(net)}
+                from {fmtUsd(points[points.length - 1].open)} · realised {fmtUsd(net)}
               </p>
             </div>
             <span className={`num text-sm ${net >= 0 ? 'text-primary' : 'text-destructive'}`}>
