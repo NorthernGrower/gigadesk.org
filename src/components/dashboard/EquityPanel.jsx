@@ -13,33 +13,41 @@ import { format, parseISO } from 'date-fns';
 import { base44 } from '@/api/base44Client';
 import { fmtPct, fmtUsd } from '@/lib/format';
 
-// shared across every panel instance and refresh: one history fetch per minute,
-// and callers arriving while a fetch is in flight wait on it instead of
-// starting their own duplicate round-trip
-let historyCache = null;
-let historyPending = null;
+// shared across every panel instance and refresh: one history fetch per minute
+// per desk, and callers arriving while a fetch is in flight wait on it instead
+// of starting their own duplicate round-trip
+const historyCaches = new Map();
 const HISTORY_TTL = 60000;
 
-function ensureHistory() {
-  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL) return Promise.resolve(historyCache);
-  if (!historyPending) {
-    historyPending = (async () => {
-      const closedPage = await base44.entities.Trade.filter(
-        { status: 'closed', mode: 'paper' },
-        { sort: 'closed_at', limit: 1000, fields: ['pnl_usd', 'closed_at'] },
-      );
-      const me = await base44.auth.me();
-      const candlePage = await base44.entities.EquityCandle.filter(
-        { owner: me?.id },
-        { sort: 'day', limit: 1000 },
-      );
-      historyCache = { at: Date.now(), closedItems: closedPage.items || [], candleItems: candlePage.items || [] };
-      return historyCache;
-    })().finally(() => {
-      historyPending = null;
-    });
+function ensureHistory(desk) {
+  const cached = historyCaches.get(desk);
+  if (cached && Date.now() - cached.at < HISTORY_TTL) return Promise.resolve(cached);
+  const pendingKey = `pending:${desk}`;
+  if (!historyCaches.has(pendingKey)) {
+    historyCaches.set(
+      pendingKey,
+      (async () => {
+        const closedPage = await base44.entities.Trade.filter(
+          { status: 'closed', mode: desk === 'live' ? 'real' : 'paper' },
+          { sort: 'closed_at', limit: 1000, fields: ['pnl_usd', 'closed_at'] },
+        );
+        const me = await base44.auth.me();
+        // live candles are stored under a live-suffixed owner so the paper
+        // history — and the paper desk reset — stay untouched
+        const candleOwner = desk === 'live' ? `${me?.id}|live` : me?.id;
+        const candlePage = await base44.entities.EquityCandle.filter(
+          { owner: candleOwner },
+          { sort: 'day', limit: 1000 },
+        );
+        const value = { at: Date.now(), closedItems: closedPage.items || [], candleItems: candlePage.items || [] };
+        historyCaches.set(desk, value);
+        return value;
+      })().finally(() => {
+        historyCaches.delete(pendingKey);
+      }),
+    );
   }
-  return historyPending;
+  return historyCaches.get(pendingKey);
 }
 
 function Stat({ label, value, tone = 'neutral', hint }) {
@@ -143,7 +151,7 @@ function renderCandles(points) {
   };
 }
 
-export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 2, liveEquity = null }) {
+export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 2, liveEquity = null, desk = 'paper' }) {
   const [state, setState] = useState({ loading: true, points: [], stats: null, error: null });
 
   useEffect(() => {
@@ -159,7 +167,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
         // bot cycle (liveEquity moves) and each reload used to re-fetch the
         // full closed-trade and candle histories, tripping the entity rate
         // limit — a short cache keeps the chart current without the storm
-        const history = await ensureHistory();
+        const history = await ensureHistory(desk);
         const trades = history.closedItems;
         if (cancelled) return;
 
@@ -298,7 +306,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
       cancelled = true;
       window.removeEventListener('bot:tick', load);
     };
-  }, [startingBalance, liveEquity]);
+  }, [startingBalance, liveEquity, desk]);
 
   const { stats, points, loading, error } = state;
   const net = stats?.net || 0;
@@ -311,7 +319,7 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
   return (
     <div className="surface p-4">
       <div className="flex items-center justify-between">
-        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Paper equity</p>
+        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{desk === 'live' ? 'Live equity' : 'Paper equity'}</p>
         <span className="num text-[11px] text-muted-foreground">target {fmtPct(dailyTargetPct)} / day</span>
       </div>
 

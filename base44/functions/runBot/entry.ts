@@ -910,6 +910,52 @@ export default async function (req) {
       { key: ["owner", "day"] },
     );
 
+    // ---- live desk equity candles: the same day-by-day history for real
+    // trading, stored under a live-suffixed owner so the paper candles — and
+    // the paper desk reset — stay untouched. Skipped when the exchange
+    // balance could not be read this cycle, so stale figures never become
+    // candle history.
+    const liveEquityNow = exchangeBalance != null ? round(exchangeBalance + liveUnrealized) : null;
+    if (liveEquityNow != null) {
+      const liveOwner = `${user.id}|live`;
+      const liveTodays = todays.filter((t) => (t.mode || "paper") === "real");
+      const prevLiveCandles = asArray(
+        await base44.entities.EquityCandle.filter(
+          { owner: liveOwner, day: { $lt: todayKey } },
+          { sort: "-day", limit: 1 },
+        ),
+      );
+      const prevLiveClose = prevLiveCandles.length ? Number(prevLiveCandles[0].close) : null;
+      const existingLive = asArray(
+        await base44.entities.EquityCandle.filter(
+          { owner: liveOwner, day: todayKey },
+          { limit: 1 },
+        ),
+      )[0];
+      const liveOpen = existingLive
+        ? Number(existingLive.open)
+        : prevLiveClose != null
+          ? prevLiveClose
+          : liveEquityNow;
+      const liveHighBase = existingLive ? Number(existingLive.high) || liveOpen : liveOpen;
+      const liveLowBase = existingLive ? Number(existingLive.low) || liveOpen : liveOpen;
+      await base44.entities.EquityCandle.upsert(
+        [
+          {
+            owner: liveOwner,
+            day: todayKey,
+            open: round(liveOpen),
+            high: round(Math.max(liveHighBase, liveOpen, liveEquityNow)),
+            low: round(Math.min(liveLowBase, liveOpen, liveEquityNow)),
+            close: round(liveEquityNow),
+            realized: round(liveRealized),
+            trades: liveTodays.length,
+          },
+        ],
+        { key: ["owner", "day"] },
+      );
+    }
+
     return Response.json({
       mode: config.mode,
       closed,

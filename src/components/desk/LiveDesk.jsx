@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import StatCard from '@/components/common/StatCard';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
+import EquityPanel from '@/components/dashboard/EquityPanel';
 import LiveSignals from '@/components/desk/LiveSignals';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -203,6 +204,15 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
           tone={(live.realized_today || 0) >= 0 ? 'up' : 'down'}
         />
       </div>
+
+      <EquityPanel
+        desk="live"
+        startingBalance={Number(live.balance_usd) || 0}
+        dailyTargetPct={
+          Number(bot?.config?.live_rules?.daily_target_pct ?? bot?.config?.daily_target_pct) || 2
+        }
+        liveEquity={live.balance_usd != null ? (live.balance_usd || 0) + (live.unrealized || 0) : null}
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <div className="surface p-3">
