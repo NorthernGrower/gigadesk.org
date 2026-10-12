@@ -466,7 +466,8 @@ export default async function (req) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
       // when real orders are on, only scan coins the connected exchange
       // actually lists — anything else could never be bought there
-      const listed = live.conn ? await fetchListedSymbols(live.conn) : null;
+      // scan only markets the account's funding currency can actually settle
+      const listed = live.conn ? await fetchListedSymbols(live.conn, funding ? [funding.asset] : null) : null;
       if (listed) eligibleCount = listed.size;
       board = await scanBoard({
         timeframe: config.timeframe || "1h",
@@ -597,7 +598,7 @@ export default async function (req) {
           await base44.entities.Alert.create({
             symbol: liveWanted[0].symbol,
             title: `No spendable quote currency on ${live.conn.label}`,
-            message: `${liveWanted.length} qualifying setup(s) skipped — the account holds no funds in the currency its orders settle in. Deposit the native quote currency to enable live buys.`,
+            message: `${liveWanted.length} qualifying setup(s) skipped — the account holds no funds in a currency its orders settle in. Deposit the native quote currency, or use the convert button on the connection card, to enable live buys.`,
             mode: "live",
             kind: "order_failed",
             severity: "danger",
@@ -844,7 +845,7 @@ export default async function (req) {
         side,
         mode: "real",
         exchange: t.exchange || null,
-        pair: `${t.symbol}/${QUOTE_ASSET[t.exchange] || "USDT"}`,
+        pair: `${t.symbol}/${(funding && funding.asset) || QUOTE_ASSET[t.exchange] || "USDT"}`,
         entry_price: entry,
         current_price: round(price, 8),
         stop_price: t.stop_price,

@@ -83,13 +83,16 @@ const sortBalances = (list) =>
  * cache). Returns null when the listing feed is unavailable — the caller then
  * scans the default universe rather than scanning nothing.
  */
-export async function fetchListedSymbols(cfg) {
+export async function fetchListedSymbols(cfg, quotes = null) {
   try {
     const key = `listed:${cfg.exchange}:${cfg.testnet ? "testnet" : "live"}`;
     const cached = cacheGet(key);
     if (cached) return cached;
 
     let set = null;
+    // optional narrowing to the quote currency the account actually funds
+    // orders with (USD, USDT or USDC) — null keeps the exchange's default
+    const wanted = quotes && quotes.length ? quotes.map((q) => String(q).toUpperCase()) : null;
     if (cfg.exchange === "binance" || cfg.exchange === "binance_us") {
       const base = cfg.testnet
         ? "https://testnet.binance.vision"
@@ -99,10 +102,10 @@ export async function fetchListedSymbols(cfg) {
       const res = await callJson(`${base}/api/v3/exchangeInfo`);
       const rows = ((res.data || {}).symbols) || [];
       // the bot's data feed and order pairs quote in USDT (USD on Binance US)
-      const quotes = cfg.exchange === "binance_us" ? ["USD", "USDT"] : ["USDT"];
+      const quotesList = wanted || (cfg.exchange === "binance_us" ? ["USD", "USDT"] : ["USDT"]);
       set = new Set(
         rows
-          .filter((s) => s.status === "TRADING" && quotes.includes(s.quoteAsset))
+          .filter((s) => s.status === "TRADING" && quotesList.includes(s.quoteAsset))
           .map((s) => String(s.baseAsset || "").toUpperCase())
           .filter(Boolean),
       );
@@ -116,8 +119,10 @@ export async function fetchListedSymbols(cfg) {
         );
         const result = (res.data || {}).result || {};
         for (const s of result.list || []) {
-          if (s.status === "Trading" && String(s.symbol || "").endsWith("USDT"))
-            set.add(String(s.symbol).slice(0, -4).toUpperCase());
+          for (const q of wanted || ["USDT"]) {
+            if (s.status === "Trading" && String(s.symbol || "").endsWith(q))
+              set.add(String(s.symbol).slice(0, -q.length).toUpperCase());
+          }
         }
         cursor = result.nextPageCursor || "";
         if (!cursor) break;
@@ -129,16 +134,17 @@ export async function fetchListedSymbols(cfg) {
       set = new Set(
         tickers
           .map((t) => String(t.symbol || ""))
-          .filter((s) => s.endsWith("-USDT"))
+          .filter((s) => (wanted || ["USDT"]).some((q) => s.endsWith(`-${q}`)))
           .map((s) => s.split("-")[0].toUpperCase())
           .filter(Boolean),
       );
     } else if (cfg.exchange === "kraken") {
       const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
       const pairs = Object.values(((res.data || {}).result) || {});
+      const rawQuotes = new Set((wanted || ["USDT"]).map((q) => ({ USD: "ZUSD", EUR: "ZEUR", GBP: "ZGBP" }[q] || q)));
       set = new Set(
         pairs
-          .filter((p) => p && p.quote === "USDT")
+          .filter((p) => p && rawQuotes.has(p.quote))
           .map((p) => krakenAsset(p.base).toUpperCase())
           .filter(Boolean),
       );
@@ -204,8 +210,10 @@ export async function fetchMarketConstraints(cfg) {
       const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
       const pairs = Object.values(((res.data || {}).result) || {});
       for (const p of pairs) {
-        if (!p || p.quote !== "USDT") continue;
-        map.set(`${krakenAsset(p.base).toUpperCase()}USDT`, {
+        if (!p) continue;
+        const quote = { ZUSD: "USD", USDT: "USDT", USDC: "USDC" }[p.quote];
+        if (!quote) continue;
+        map.set(`${krakenAsset(p.base).toUpperCase()}${quote}`, {
           minQty: Number(p.ordermin) || null,
           qtyStep: 10 ** -(Number(p.lot_decimals) || 8),
           minNotional: null,
@@ -501,7 +509,7 @@ export async function pickNativeQuoteBalance(balances = [], exchange) {
  * never fund an order there. Returns null when the account holds none.
  */
 export function pickFundingQuote(balances = [], exchange) {
-  const order = exchange === "kraken" ? ["USD", "USDT"] : (QUOTE_ALIASES[exchange] || ["USDT"]);
+  const order = exchange === "kraken" ? ["USD", "USDT", "USDC"] : (QUOTE_ALIASES[exchange] || ["USDT"]);
   const list = (balances || []).map((b) => ({
     asset: String(b.asset || "").toUpperCase(),
     total: Number(b.total) || 0,

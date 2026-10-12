@@ -286,7 +286,7 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
   const payload = {
     clientOid: idem,
     side: side.toUpperCase(),
-    symbol: `${String(symbol || "").toUpperCase()}-${QUOTE_ASSET[cfg.exchange] || "USDT"}`,
+    symbol: `${String(symbol || "").toUpperCase()}-${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`,
     type: "market",
   };
   if (side === "buy") payload.funds = String(round(usd, 2));
