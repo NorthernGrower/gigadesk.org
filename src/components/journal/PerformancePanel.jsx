@@ -14,7 +14,7 @@ function Metric({ label, value, tone = 'neutral', hint }) {
   );
 }
 
-function Block({ title, hint, data, loading }) {
+function Block({ title, hint, data, loading, showBase = true }) {
   if (loading) {
     return (
       <div className="surface p-4">
@@ -48,9 +48,11 @@ function Block({ title, hint, data, loading }) {
           tone={data.net >= 0 ? 'up' : 'down'}
         />
       </div>
-      <p className="num text-[11px] text-muted-foreground">
-        {data.trades ? `${fmtPct((data.net / (data.base || 10000)) * 100)} on a ${fmtUsd(data.base || 10000)} base` : 'No closed trades yet'}
-      </p>
+      {showBase ? (
+        <p className="num text-[11px] text-muted-foreground">
+          {data.trades ? `${fmtPct((data.net / (data.base || 10000)) * 100)} on a ${fmtUsd(data.base || 10000)} base` : 'No closed trades yet'}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -113,6 +115,7 @@ export default function PerformancePanel({ base = 10000, desk = 'paper' }) {
         hint="The fills you logged from your own exchange — tracked separately from the paper balance."
         data={state.real}
         loading={state.loading}
+        showBase={false}
       />
     </div>
   );
