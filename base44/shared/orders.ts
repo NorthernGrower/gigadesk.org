@@ -1,7 +1,7 @@
 // Market order execution for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every request is bounded by
 // a 10s timeout and refusals are returned as values, never thrown.
-import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, KRAKEN_MESSAGES, fetchMarketConstraints } from "./exchanges.ts";
+import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, KRAKEN_MESSAGES, fetchMarketConstraints } from "./exchanges.ts";
 import { decryptSecret } from "./crypto.ts";
 import { round } from "./market.ts";
 
@@ -92,6 +92,10 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
     status_message: stored.status_message || "",
     allow_trading: stored.allow_trading === true,
     last_checked_at: stored.last_checked_at || null,
+    // the last saved balance travels with the status, so a desk showing an
+    // errored or locked connection keeps its last known figure
+    balance_usd: stored.balance_usd != null ? Number(stored.balance_usd) : null,
+    balance_updated_at: stored.balance_updated_at || null,
   };
   if (stored.status !== "connected" || stored.allow_trading !== true) {
     return { conn: null, reason: `${info.label} is not verified and enabled for trading`, info };
@@ -240,7 +244,7 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price, validate }, side
   );
   if (!(vol > 0)) return { ok: false, message: "No usable price to size a market order on Kraken" };
   const path = "/0/private/AddOrder";
-  const nonce = String(Date.now() * 1000);
+  const nonce = String(krakenNonce());
   // Kraken's `type` is the direction (buy/sell) and `ordertype` is market —
   // anything else comes back as EGeneral:Invalid arguments:type
   const body = `nonce=${nonce}&pair=${pair}&type=${side}&ordertype=market&volume=${vol}${validate ? "&validate=true" : ""}`;

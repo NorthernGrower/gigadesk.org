@@ -336,6 +336,14 @@ const KRAKEN_ASSETS = {
 
 const krakenAsset = (a) => KRAKEN_ASSETS[a] || a;
 
+// Kraken rejects any request whose nonce is not strictly above the previous
+// one — two signed calls landing in the same millisecond would collide, and
+// every rejection counts toward the temporary lockout. Bump past whatever
+// this server last issued.
+let lastKrakenNonce = 0;
+export const krakenNonce = () =>
+  (lastKrakenNonce = Math.max(Date.now() * 1000, lastKrakenNonce + 1));
+
 // Kraken's signature is HMAC-SHA512 over the URI path plus the RAW bytes of
 // sha256(nonce + post body). Encoding the digest as a hex string made every
 // signed request fail (EAPI:Invalid key), and the desk's repeated connection
@@ -362,7 +370,7 @@ export const KRAKEN_MESSAGES = {
 
 async function krakenAccount(cfg) {
   const path = "/0/private/Balance";
-  const nonce = String(Date.now() * 1000);
+  const nonce = String(krakenNonce());
   const body = `nonce=${nonce}`;
   const sign = await krakenSign(cfg.api_secret, path, nonce, body);
   const res = await callJson(`https://api.kraken.com${path}`, {

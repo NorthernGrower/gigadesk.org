@@ -1011,6 +1011,8 @@ export default async function (req) {
               status_message: managed.info.status_message,
               allow_trading: managed.info.allow_trading,
               last_checked_at: managed.info.last_checked_at,
+              balance_usd: managed.info.balance_usd,
+              balance_updated_at: managed.info.balance_updated_at,
             }
           : null,
         eligible_markets: eligibleCount,

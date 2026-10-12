@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -53,13 +53,26 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
   const staleScan = bot?.updated_at ? Date.now() - Date.parse(bot.updated_at) > 10 * 60000 : true;
   const connectionId = bot?.config?.real_connection_id || connection?.id || null;
   const balanceUsd =
-    live.balance_usd != null ? live.balance_usd : savedBalance?.usd != null ? savedBalance.usd : null;
-  const balanceAsOf = live.balance_as_of || savedBalance?.asOf || connection?.last_checked_at || null;
+    live.balance_usd != null
+      ? live.balance_usd
+      : savedBalance?.usd != null
+        ? savedBalance.usd
+        : connection?.balance_usd != null
+          ? connection.balance_usd
+          : null;
+  const balanceAsOf =
+    live.balance_as_of || savedBalance?.asOf || connection?.balance_updated_at || connection?.last_checked_at || null;
 
+  // an errored or locked key is checked on demand only: Kraken counts every
+  // failed signed read toward its temporary lockout, so a timer that keeps
+  // verifying a dead connection would keep re-arming the lock
+  const statusRef = useRef(connection?.status);
+  statusRef.current = connection?.status;
   useEffect(() => {
     if (!connectionId) return undefined;
     let alive = true;
     const check = async () => {
+      if (statusRef.current && statusRef.current !== 'connected') return;
       try {
         const res = await base44.functions.invoke('checkExchangeConnection', { id: connectionId });
         const conn = res.data?.connection;
@@ -76,7 +89,7 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
       alive = false;
       clearInterval(timer);
     };
-  }, [connectionId]);
+  }, [connectionId, connection?.status]);
 
   useEffect(() => {
     let alive = true;
