@@ -152,7 +152,11 @@ export default function Bot() {
     }
   };
 
-  if (loading && !bot) return <LoadingBlock label="Loading live bot stats and rules" />;
+  if (loading && !bot) return <LoadingBlock label="Loading bot stats and rules" />;
+
+  // the page follows the desk: the paper desk shows paper stats and paper
+  // positions, the live desk keeps its exchange-reported view
+  const desk = config?.active_desk === 'live' ? 'live' : 'paper';
 
   return (
     <div className="space-y-4">
@@ -164,32 +168,49 @@ export default function Bot() {
         onModeChange={changeMode}
         onToggleAutoRun={toggleAutoRun}
         onRunNow={() => cycle(false)}
-        stats={{
-          balance: bot?.live?.balance_usd,
-          balanceStale: bot?.live?.balance_stale,
-          balanceError: bot?.live?.balance_error,
-          exposure: bot?.live?.exposure,
-          cap: bot?.live?.cap_usd,
-          budget: bot?.live?.budget_left,
-          unrealized: bot?.live?.unrealized,
-          realizedToday: bot?.live?.realized_today,
-          openCount: bot?.live?.open_count,
-          scanned: bot?.scanned,
-          enabled: bot?.live?.enabled,
-        }}
+        desk={desk}
+        stats={
+          desk === 'paper'
+            ? {
+                balance: bot?.cash,
+                exposure: bot?.exposure,
+                unrealized: bot?.unrealized,
+                realizedToday: bot?.realized_today,
+                dailyGoal: bot?.daily_goal,
+                openCount: bot?.open_count,
+                scanned: bot?.scanned,
+              }
+            : {
+                balance: bot?.live?.balance_usd,
+                balanceStale: bot?.live?.balance_stale,
+                balanceError: bot?.live?.balance_error,
+                exposure: bot?.live?.exposure,
+                cap: bot?.live?.cap_usd,
+                budget: bot?.live?.budget_left,
+                unrealized: bot?.live?.unrealized,
+                realizedToday: bot?.live?.realized_today,
+                openCount: bot?.live?.open_count,
+                scanned: bot?.scanned,
+                enabled: bot?.live?.enabled,
+              }
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <ProposedTrades trades={proposed} onAction={handleProposal} busyId={busyId} />
           <PositionsPanel
-            title="Live positions"
-            positions={bot?.live?.positions || []}
+            title={desk === 'paper' ? 'Paper positions' : 'Live positions'}
+            positions={desk === 'paper' ? bot?.positions || [] : bot?.live?.positions || []}
             onClose={closePosition}
             onCloseAll={closeAll}
             closingId={closingId}
             closingAll={closingAll}
-            hint="Exchange-reported live positions, marked to market every cycle."
+            hint={
+              desk === 'paper'
+                ? 'Open paper positions, marked to market every cycle.'
+                : 'Exchange-reported live positions, marked to market every cycle.'
+            }
           />
           <AlertsFeed limit={12} />
         </div>

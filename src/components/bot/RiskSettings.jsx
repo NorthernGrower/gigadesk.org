@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, RotateCcw, Save } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -429,8 +429,9 @@ export default function RiskSettings({ config, onSaved }) {
             {saving === 'paper' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save paper rules
           </Button>
-          <Button size="sm" variant="ghost" className="w-full text-[11px] text-muted-foreground" onClick={resetBalance} disabled={saving === 'paper'}>
-            Reset paper desk (trades + stats)
+          <Button variant="outline" className="w-full border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={resetBalance} disabled={saving === 'paper'}>
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Reset paper stats
           </Button>
         </div>
       )}
