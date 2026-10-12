@@ -12,6 +12,15 @@
       "default": "approve",
       "description": "off = signals only, approve = bot proposes and you confirm, auto = bot opens and closes on its own"
     },
+    "active_desk": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "live"
+      ],
+      "default": "paper",
+      "description": "Which desk the dashboard opens on; switching desks never touches the other one's data"
+    },
     "profit_mode": {
       "type": "string",
       "enum": [
@@ -35,6 +44,11 @@
       ],
       "default": "mild",
       "description": "timid = pickier setups and smaller risk, mild = your rules as set, aggressive = lower score bar, bigger risk, stagnant trades cut early"
+    },
+    "confluence_v2": {
+      "type": "boolean",
+      "default": true,
+      "description": "Advanced structure engine: Fibonacci pullbacks, Elliott wave counts and multi-touch zones. Turn off to revert to the previous scoring"
     },
     "starting_balance": {
       "type": "number",
@@ -127,7 +141,7 @@
     "real_orders_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "When on, qualifying longs are sent to the chosen exchange as market orders"
+      "description": "When on, qualifying longs are sent to the chosen exchange as market orders. Pausing stops new entries but keeps managing open real positions"
     },
     "real_connection_id": {
       "type": "string",

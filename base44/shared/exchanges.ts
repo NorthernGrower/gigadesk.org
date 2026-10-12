@@ -137,6 +137,75 @@ export async function fetchListedSymbols(cfg) {
   }
 }
 
+/**
+ * Exchange trading constraints per pair: minimum order size, quantity step and
+ * minimum order value, so orders are rounded to what the exchange accepts
+ * (10 min cache). Returns null when the feed is unavailable — orders then fall
+ * back to the desk's own rounding.
+ */
+export async function fetchMarketConstraints(cfg) {
+  try {
+    const key = `constraints:${cfg.exchange}:${cfg.testnet ? "testnet" : "live"}`;
+    const cached = cacheGet(key);
+    if (cached) return cached;
+    const map = new Map();
+    if (cfg.exchange === "binance" || cfg.exchange === "binance_us") {
+      const base = cfg.testnet
+        ? "https://testnet.binance.vision"
+        : cfg.exchange === "binance_us"
+          ? "https://api.binance.us"
+          : "https://api.binance.com";
+      const res = await callJson(`${base}/api/v3/exchangeInfo`);
+      for (const s of ((res.data || {}).symbols) || []) {
+        if (s.status !== "TRADING") continue;
+        const filters = s.filters || [];
+        const lot = filters.find((f) => f.filterType === "LOT_SIZE") || {};
+        const notion = filters.find((f) => f.filterType === "MIN_NOTIONAL" || f.filterType === "NOTIONAL") || {};
+        map.set(s.symbol, {
+          minQty: Number(lot.minQty) || null,
+          qtyStep: Number(lot.stepSize) || null,
+          minNotional: Number(notion.minNotional) || null,
+        });
+      }
+    } else if (cfg.exchange === "bybit") {
+      const base = cfg.testnet ? "https://api-testnet.bybit.com" : "https://api.bybit.com";
+      let cursor = "";
+      for (let page = 0; page < 5; page++) {
+        const res = await callJson(
+          `${base}/v5/market/instruments-info?category=spot&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        );
+        const result = (res.data || {}).result || {};
+        for (const s of result.list || []) {
+          const lot = s.lotSizeFilter || {};
+          map.set(String(s.symbol || ""), {
+            minQty: Number(lot.minOrderQty) || null,
+            qtyStep: Number(lot.qtyStep) || null,
+            minNotional: Number(lot.minNotionalValue) || null,
+          });
+        }
+        cursor = result.nextPageCursor || "";
+        if (!cursor) break;
+      }
+    } else if (cfg.exchange === "kraken") {
+      const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
+      const pairs = Object.values(((res.data || {}).result) || {});
+      for (const p of pairs) {
+        if (!p || p.quote !== "USDT") continue;
+        map.set(`${krakenAsset(p.base).toUpperCase()}USDT`, {
+          minQty: Number(p.ordermin) || null,
+          qtyStep: 10 ** -(Number(p.lot_decimals) || 8),
+          minNotional: null,
+        });
+      }
+    }
+    if (map.size) return cacheSet(key, map, 10 * 60 * 1000);
+    return null;
+  } catch (err) {
+    console.log(`market constraints for ${cfg.exchange} failed: ${err && err.message}`);
+    return null;
+  }
+}
+
 // ---- Binance / Binance US (HMAC-SHA256 over the query string) ----
 async function binanceAccount(cfg) {
   const base = cfg.testnet

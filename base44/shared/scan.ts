@@ -66,6 +66,7 @@ export async function scanBoard({
   dailyTargetPct = 2,
   extraSymbols = [],
   onlySymbols = null,
+  confluenceV2 = true,
 } = {}) {
   const safeScope = SCOPES.has(scope) ? scope : "all";
   const { coins, source, medianChange24h } = await loadUniverse();
@@ -91,6 +92,7 @@ export async function scanBoard({
         medianChange24h,
         dailyTargetPct,
         barsPerDay: BARS_PER_DAY[timeframe] || 24,
+        confluenceV2,
       });
       if (row) rows.push(row);
     });

@@ -61,7 +61,8 @@ export default async function (req) {
         return Response.json({ error: "No live prices for your open positions right now" }, { status: 502 });
       }
 
-      const live = await resolveLiveConnection(base44, config);
+      // closing positions is management: it must work even with new entries paused
+      const live = await resolveLiveConnection(base44, config, { manage: true });
       let cashDelta = 0;
       let pnlTotal = 0;
       for (const openTrade of closeable) {
@@ -200,7 +201,7 @@ export default async function (req) {
       let closePrice = price;
       // closing a bot-placed real position sends a real sell order first
       if (trade.mode === "real" && trade.exchange_order_id) {
-        const live = await resolveLiveConnection(base44, config);
+        const live = await resolveLiveConnection(base44, config, { manage: true });
         if (!live.conn) return Response.json({ error: live.reason }, { status: 409 });
         const sell = await placeMarketOrder(live.conn, {
           symbol: trade.symbol,

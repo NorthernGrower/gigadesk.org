@@ -17,6 +17,7 @@ import {
   seriesChange,
   percentileRank,
 } from "./indicators.ts";
+import { fibRead, elliottRead, zoneRead, breakoutAge } from "./confluence.ts";
 
 const last = (arr) => (arr && arr.length ? arr[arr.length - 1] : null);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -55,7 +56,7 @@ function qualityFor(score, rr, confluence) {
  * can extend it, never shrink it below that floor.
  */
 function levelsFor(dir, price, ctx) {
-  const { atrVal, swingLow, swingHigh, resistance, support } = ctx;
+  const { atrVal, swingLow, swingHigh, resistance, support, fibTargets } = ctx;
   const minStop = 0.8 * atrVal;
   const maxStop = 2.4 * atrVal;
   let stop;
@@ -70,6 +71,15 @@ function levelsFor(dir, price, ctx) {
     if (resistance && resistance > price) {
       const level = resistance * 1.004;
       if (level >= price + 1.6 * unit && level <= price + 3 * unit) target = level;
+    } else {
+      // Fibonacci extensions of the impulse leg can set the target too,
+      // inside the same tradable band
+      for (const fibLevel of fibTargets || []) {
+        if (fibLevel >= price + 1.6 * unit && fibLevel <= price + 3 * unit) {
+          target = fibLevel;
+          break;
+        }
+      }
     }
   } else {
     const structural = swingHigh + 0.2 * atrVal;
@@ -79,6 +89,13 @@ function levelsFor(dir, price, ctx) {
     if (support && support < price) {
       const level = support * 0.996;
       if (level <= price - 1.6 * unit && level >= price - 3 * unit) target = level;
+    } else {
+      for (const fibLevel of fibTargets || []) {
+        if (fibLevel <= price - 1.6 * unit && fibLevel >= price - 3 * unit) {
+          target = fibLevel;
+          break;
+        }
+      }
     }
   }
 
@@ -140,6 +157,20 @@ function scoreSide(dir, m) {
   } else if (m.structure === (up ? "down" : "up")) {
     trend -= 10;
     reasons.push(say("Swing structure is still bearish", "Swing structure is still bullish"));
+  }
+  // simplified Elliott read: an early/mid impulse adds, a late five-wave
+  // count subtracts (fresh entries chase the end of the move), a corrective
+  // phase mildly supports the pending continuation, ambiguous counts score zero
+  const ell = m.elliott;
+  if (ell && ell.scenario === "impulse") {
+    trend += 6;
+    confluence += 1;
+    reasons.push(say(`Elliott count reads an early impulse (${ell.waves} waves up)`, `Elliott count reads an early impulse (${ell.waves} waves down)`));
+  } else if (ell && ell.scenario === "impulse_late") {
+    trend -= 6;
+    reasons.push(say("The wave count looks late-stage — fresh entries here chase the end of the move", "The wave count looks late-stage — fresh entries here chase the end of the move"));
+  } else if (ell && ell.scenario === "corrective") {
+    trend += 3;
   }
   const diOwned = up ? m.plusDi > m.minusDi : m.minusDi > m.plusDi;
   if (m.adx >= 25 && diOwned) {
@@ -280,21 +311,55 @@ function scoreSide(dir, m) {
   if (m.volRatio3 >= 1.3) vol += 6;
   cats.volume = clamp(Math.round(vol), 0, 100);
 
-  // ---- desk 4: location of the entry
+  // ---- desk 4: location of the entry. Fibonacci first: a pullback into the
+  // golden pocket inside an established leg is the classic entry, and the
+  // branches stay exclusive so nothing is double-counted.
   let loc = 42;
   const nearEma = Math.abs(m.price - m.ema20) / m.price < 0.015;
   const nearVwap = m.vwapDistPct != null && Math.abs(m.vwapDistPct) < 1;
-  if (nearEma && cats.trend >= 60) {
+  const fib = m.fib;
+  if (fib && fib.phase && fib.phase !== "none" && fib.phase !== "breakout") {
+    if (fib.phase === "golden") {
+      loc += 16;
+      confluence += 2;
+      reasons.push("Fibonacci golden pocket: price sits in the 0.5-0.618 pullback of the last impulse leg");
+    } else if (fib.phase === "shallow") {
+      loc += 6;
+      confluence += 1;
+      reasons.push("Price is pulling back into the 0.236-0.382 Fibonacci zone");
+    } else if (fib.phase === "deep") {
+      loc += 4;
+      reasons.push("Price is in a deep (0.618-0.786) Fibonacci pullback");
+    } else if (fib.phase === "chasing") {
+      loc -= 6;
+      reasons.push(say("Price is past the last impulse high - the Fibonacci pullback entry is gone", "Price is past the last impulse low - the Fibonacci pullback entry is gone"));
+    } else if (fib.phase === "broken") {
+      loc -= 12;
+      reasons.push("Price retraced beyond the 0.786 level - the impulse leg is invalidated");
+    }
+  } else if (m.breakout) {
+    const stale = m.breakoutStale === true;
+    loc += stale ? 4 : 14;
+    reasons.push(
+      stale
+        ? say(
+            `Broke out through ${m.breakoutLevel} ${m.breakoutAge} bars ago with no follow-through`,
+            `Broke down through ${m.breakoutLevel} ${m.breakoutAge} bars ago with no follow-through`,
+          )
+        : say(`Breaking out above the last swing high at ${m.breakoutLevel}`, `Breaking down through the last swing low at ${m.breakoutLevel}`),
+    );
+    if (!stale) confluence += 1;
+    if (m.volRatio >= 1.5 && !stale) {
+      loc += 6;
+      reasons.push("The breakout carries strong volume behind it");
+    }
+  } else if (nearEma && cats.trend >= 60) {
     loc += 18;
     reasons.push(say("Pullback into the 20 average inside an uptrend", "Bounce into the 20 average inside a downtrend"));
     confluence += 2;
   } else if (nearVwap && cats.trend >= 60) {
     loc += 14;
     reasons.push("Price is testing its volume-weighted average price");
-    confluence += 1;
-  } else if (m.breakout) {
-    loc += 14;
-    reasons.push(say(`Breaking out above the last swing high at ${m.breakoutLevel}`, `Breaking down through the last swing low at ${m.breakoutLevel}`));
     confluence += 1;
   }
   if (m.roomAhead >= 6) loc += 10;
@@ -322,6 +387,17 @@ function scoreSide(dir, m) {
     reasons.push(say("Price is stretched far above the 20 average", "Price is stretched far below the 20 average"));
   } else if (stretch > 7) {
     loc -= 6;
+  }
+  // multi-touch zones: a retest of a level the market has respected before
+  const zone = m.zones;
+  if (zone && (up ? zone.at_support : zone.at_resistance)) {
+    loc += 6;
+    reasons.push(say("Price is retesting a multi-touch support zone", "Price is retesting a multi-touch resistance zone"));
+    if (fib && fib.phase === "golden") {
+      loc += 5;
+      confluence += 1;
+      reasons.push(say("Fibonacci level aligns with a multi-touch support zone", "Fibonacci level aligns with a multi-touch resistance zone"));
+    }
   }
   cats.location = clamp(Math.round(loc), 0, 100);
 
@@ -481,9 +557,26 @@ export function analyzeCoin(coin, candles, ctx = {}) {
   const median = Number(ctx.medianChange24h) || 0;
   const dailyTarget = Number(ctx.dailyTargetPct) || 2;
 
+  // structural confluence (Fibonacci legs, Elliott counts, S/R zones). The v2
+  // engine runs unless config turns it off, or a backtest asks for the legacy read.
+  const engineV2 = ctx.confluenceV2 !== false && ctx.legacy !== true;
+  const fibLong = engineV2 ? fibRead(pivotList, price, 1) : null;
+  const fibShort = engineV2 ? fibRead(pivotList, price, -1) : null;
+  const ellLong = engineV2 ? elliottRead(pivotList, 1) : null;
+  const ellShort = engineV2 ? elliottRead(pivotList, -1) : null;
+  const zones = engineV2 ? zoneRead(pivotList, price) : null;
+  const ageLong = engineV2 && price > lastSwingHigh * 1.002 ? breakoutAge(candles, lastSwingHigh, 1) : 0;
+  const ageShort = engineV2 && price < lastSwingLow * 0.998 ? breakoutAge(candles, lastSwingLow, -1) : 0;
+
   const levelCtx = { atrVal, swingLow: lastSwingLow, swingHigh: lastSwingHigh, resistance, support };
-  const longLevels = levelsFor(1, price, levelCtx);
-  const shortLevels = levelsFor(-1, price, levelCtx);
+  const longLevels = levelsFor(1, price, {
+    ...levelCtx,
+    fibTargets: engineV2 && fibLong ? fibLong.targets : [],
+  });
+  const shortLevels = levelsFor(-1, price, {
+    ...levelCtx,
+    fibTargets: engineV2 && fibShort ? fibShort.targets : [],
+  });
 
   const shared = {
     price,
@@ -526,6 +619,11 @@ export function analyzeCoin(coin, candles, ctx = {}) {
     roomAhead: roomUpPct,
     breakout: price > lastSwingHigh * 1.002,
     breakoutLevel: r2(lastSwingHigh, 6),
+    fib: fibLong,
+    elliott: ellLong,
+    zones,
+    breakoutStale: ageLong > 12,
+    breakoutAge: ageLong,
   });
   const shortRead = scoreSide(-1, {
     ...shared,
@@ -534,6 +632,11 @@ export function analyzeCoin(coin, candles, ctx = {}) {
     roomAhead: roomDownPct,
     breakout: price < lastSwingLow * 0.998,
     breakoutLevel: r2(lastSwingLow, 6),
+    fib: fibShort,
+    elliott: ellShort,
+    zones,
+    breakoutStale: ageShort > 12,
+    breakoutAge: ageShort,
   });
 
   const side = longRead.score >= shortRead.score ? "long" : "short";
@@ -587,6 +690,8 @@ export function analyzeCoin(coin, candles, ctx = {}) {
     pattern: pattern.name,
     pattern_bias: pattern.bias,
     rsi_divergence: div.kind,
+    fib_phase: chosen.fib && chosen.fib.phase !== "none" ? chosen.fib.phase : null,
+    elliott: chosen.elliott && chosen.elliott.scenario ? chosen.elliott.scenario : null,
     categories: chosen.categories,
     meets_daily_target: levels.requiredMovePct >= dailyTarget && score >= 58,
     reasons: chosen.reasons,
@@ -629,6 +734,22 @@ export function analyzeCoin(coin, candles, ctx = {}) {
       htf_trend: htfTrend,
       pattern: pattern.name,
       rsi_divergence: div.kind,
+      fib:
+        chosen.fib && chosen.fib.phase !== "none"
+          ? {
+              phase: chosen.fib.phase,
+              retracement: chosen.fib.retracement == null ? null : r2(chosen.fib.retracement, 3),
+              leg_pct: r2(chosen.fib.move_pct, 1),
+              targets: (chosen.fib.targets || []).map((t) => r2(t, 6)),
+            }
+          : null,
+      elliott: chosen.elliott && chosen.elliott.scenario ? chosen.elliott.scenario : null,
+      zones: zones
+        ? {
+            strong_support: zones.strong_support == null ? null : r2(zones.strong_support, 6),
+            strong_resistance: zones.strong_resistance == null ? null : r2(zones.strong_resistance, 6),
+          }
+        : null,
     },
   };
 }

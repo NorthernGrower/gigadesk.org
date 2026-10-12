@@ -34,6 +34,8 @@ const DEFAULT_CONFIG = {
   trading_style: "mild",
   profit_mode: "compound",
   sentiment_watch: true,
+  confluence_v2: true,
+  active_desk: "paper",
 };
 
 // An aggressive-style trade that has gone nowhere for a quarter of the scan
@@ -102,7 +104,12 @@ export default async function (req) {
     // from this list and the live block filters out the real ones, instead of
     // paying for a second identical read that only doubled entity traffic
     const openTrades = await readAll({ status: "open" });
-    const live = await resolveLiveConnection(base44, config);
+    // managing existing real positions must work even while new live entries
+    // are paused — the pause gates entries, never risk management
+    const managed = await resolveLiveConnection(base44, config, { manage: true });
+    const live = config.real_orders_enabled === true
+      ? managed
+      : { conn: null, reason: "Live trading is paused", info: managed.info };
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
     // gone, qualifying setups stay paper instead of breaching the cap
@@ -125,8 +132,35 @@ export default async function (req) {
      * and remembers the lesson. Returns false when the exchange refused.
      */
     async function closeOut(t, side, exitPrice, reason, extraUpdates = {}, alertFor) {
-      if (t.mode === "real" && live.conn) {
-        const sell = await placeMarketOrder(live.conn, {
+      if (t.mode === "real" && t.exchange_order_id) {
+        if (!managed.conn) {
+          // never book a close the exchange has not confirmed: with live
+          // trading paused or the connection unhealthy, the real position
+          // stays open and one alert is raised instead of a silent paper close
+          const recent = asArray(
+            await base44.entities.Alert.filter(
+              {
+                trade_id: t.id,
+                kind: "order_failed",
+                created_date: { $gte: new Date(Date.now() - 30 * 60000).toISOString() },
+              },
+              { limit: 1 },
+            ),
+          );
+          if (!recent.length)
+            await base44.entities.Alert.create({
+              symbol: t.symbol,
+              title: `Cannot close ${t.symbol} right now`,
+              message: managed.reason || "The exchange connection is unavailable — the position stays open.",
+              kind: "order_failed",
+              severity: "danger",
+              trade_id: t.id,
+            });
+          if (Object.keys(extraUpdates).length)
+            await base44.entities.Trade.update(t.id, extraUpdates);
+          return false;
+        }
+        const sell = await placeMarketOrder(managed.conn, {
           symbol: t.symbol,
           side: "sell",
           quantity: Number(t.quantity) || 0,
@@ -291,6 +325,19 @@ export default async function (req) {
     if (pendingMarks.length)
       await base44.entities.Trade.bulkUpdate(pendingMarks.slice(0, 500));
 
+    // signals age out: a setup older than a day is no longer actionable
+    if (!light) {
+      await base44.asServiceRole.entities.Signal
+        .updateMany(
+          {
+            status: "new",
+            detected_at: { $lt: new Date(Date.now() - 24 * 3600 * 1000).toISOString() },
+          },
+          { $set: { status: "expired" } },
+        )
+        .catch(() => {});
+    }
+
     // ---- sentiment watch: re-read every surviving position's chart so a
     // market turn is caught between stops. When the same engine that picked
     // the trade now favors the other side with conviction, the position is
@@ -316,6 +363,7 @@ export default async function (req) {
             dailyTargetPct: Number(config.daily_target_pct) || 2,
             barsPerDay:
               { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[tf] || 24,
+            confluenceV2: config.confluence_v2 !== false,
           });
           if (row) sentimentReads.set(group[i], row);
         });
@@ -362,6 +410,7 @@ export default async function (req) {
     const maxOpen = Math.max(1, Number(config.max_open_positions) || 8);
     const opened = [];
     const proposed = [];
+    let eligibleCount = null;
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
 
@@ -370,6 +419,7 @@ export default async function (req) {
       // when real orders are on, only scan coins the connected exchange
       // actually lists — anything else could never be bought there
       const listed = live.conn ? await fetchListedSymbols(live.conn) : null;
+      if (listed) eligibleCount = listed.size;
       board = await scanBoard({
         timeframe: config.timeframe || "1h",
         scope: config.market_cap_scope || "all",
@@ -377,6 +427,7 @@ export default async function (req) {
         dailyTargetPct: Number(config.daily_target_pct) || 2,
         extraSymbols: watch.map((w) => w.symbol),
         ...(listed ? { onlySymbols: listed } : {}),
+        confluenceV2: config.confluence_v2 !== false,
       });
 
       const cooldownMs = (Number(config.cooldown_minutes) || 120) * 60000;
@@ -630,6 +681,8 @@ export default async function (req) {
         image: t.image,
         side,
         mode: "real",
+        exchange: t.exchange || null,
+        pair: `${t.symbol}/${QUOTE_ASSET[t.exchange] || "USDT"}`,
         entry_price: entry,
         current_price: round(price, 8),
         stop_price: t.stop_price,
@@ -650,18 +703,24 @@ export default async function (req) {
 
     // the exchange's own quote-currency balance, refreshed on full cycles only
     let exchangeBalance = null;
-    if (live.conn && !light) {
+    let balanceStale = false;
+    let balanceError = null;
+    if (managed.conn && !light) {
       const acct = await readAccount({
-        exchange: live.conn.exchange,
-        testnet: live.conn.testnet,
-        api_key: live.conn.api_key,
-        api_secret: live.conn.api_secret,
-        passphrase: live.conn.passphrase || "",
+        exchange: managed.conn.exchange,
+        testnet: managed.conn.testnet,
+        api_key: managed.conn.api_key,
+        api_secret: managed.conn.api_secret,
+        passphrase: managed.conn.passphrase || "",
       });
       if (acct.ok) {
-        const quote = QUOTE_ASSET[live.conn.exchange] || "USDT";
+        const quote = QUOTE_ASSET[managed.conn.exchange] || "USDT";
         const row = (acct.balances || []).find((b) => b.asset === quote);
         exchangeBalance = row ? round(Number(row.total) || 0, 2) : 0;
+      } else {
+        // never treat a failed read as current: the desk shows the failure
+        balanceStale = true;
+        balanceError = acct.message;
       }
     }
 
@@ -746,7 +805,11 @@ export default async function (req) {
       opened,
       proposed,
       positions,
-      top: (board.rows || []).slice(0, 12),
+      top: (board.rows || []).slice(0, 12).map((r) => ({
+        ...r,
+        pair: `${r.symbol}/${managed.conn ? QUOTE_ASSET[managed.conn.exchange] || "USDT" : "USDT"}`,
+        exchange: managed.conn ? managed.conn.exchange : null,
+      })),
       scanned: board.scannedCount,
       scan_log: scanLog,
       universe: board.universeCount,
@@ -764,8 +827,22 @@ export default async function (req) {
       goal_hit: goalHit,
       live: {
         enabled: config.real_orders_enabled === true,
-        connection: live.conn ? { label: live.conn.label, exchange: live.conn.exchange } : null,
+        paused: config.real_orders_enabled !== true,
+        entry_ready: config.real_orders_enabled === true && live.conn != null,
+        connection: managed.info
+          ? {
+              label: managed.info.label,
+              exchange: managed.info.exchange,
+              status: managed.info.status,
+              status_message: managed.info.status_message,
+              allow_trading: managed.info.allow_trading,
+              last_checked_at: managed.info.last_checked_at,
+            }
+          : null,
+        eligible_markets: eligibleCount,
         balance_usd: exchangeBalance,
+        balance_stale: balanceStale,
+        balance_error: balanceError,
         open_count: livePositions.length,
         cap_usd: liveBudgetCap,
         budget_left: liveBudgetCap > 0 ? round(Math.max(0, liveBudgetCap - liveExposure)) : null,

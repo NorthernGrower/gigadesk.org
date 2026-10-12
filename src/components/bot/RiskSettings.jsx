@@ -276,6 +276,12 @@ export default function RiskSettings({ config, onSaved }) {
           checked={form.sentiment_watch}
           onChange={set('sentiment_watch')}
         />
+        <Toggle
+          label="Structure engine v2"
+          hint="Adds Fibonacci pullback zones, Elliott wave counts and multi-touch support/resistance to scoring, with stale-breakout discounts. Turn off to revert to the previous engine."
+          checked={form.confluence_v2 !== false}
+          onChange={set('confluence_v2')}
+        />
       </div>
 
       {form.trailing_stop ? (

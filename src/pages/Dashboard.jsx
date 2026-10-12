@@ -9,10 +9,22 @@ import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import SmartMoneyPanel from '@/components/dashboard/SmartMoneyPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
+import LiveDesk from '@/components/desk/LiveDesk';
 import StatCard from '@/components/common/StatCard';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { base44 } from '@/api/base44Client';
 import { onTradesChange } from '@/lib/live';
 import { emitBotTick, requestBotRun, runBot, tradeAction } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
@@ -26,6 +38,7 @@ export default function Dashboard() {
   const [closingId, setClosingId] = useState(null);
   const [closingAll, setClosingAll] = useState(false);
   const [deskMode, setDeskMode] = useState('paper');
+  const [confirmLive, setConfirmLive] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -33,7 +46,13 @@ export default function Dashboard() {
     const load = async () => {
       try {
         const data = await runBot(false);
-        if (alive) setBot(data);
+        if (alive) {
+          setBot(data);
+          // the desk switch is persistent: the dashboard opens on the desk last used
+          if (data?.config?.active_desk === 'live' || data?.config?.active_desk === 'paper') {
+            setDeskMode(data.config.active_desk);
+          }
+        }
       } catch (err) {
         if (alive) setError(err.message);
       } finally {
@@ -112,6 +131,21 @@ export default function Dashboard() {
     }
   };
 
+  const persistDesk = (desk) => {
+    setDeskMode(desk);
+    if (bot?.config?.id) {
+      base44.entities.BotConfig.update(bot.config.id, { active_desk: desk }).catch(() => {});
+    }
+  };
+
+  const switchDesk = (desk) => {
+    if (desk === 'live' && deskMode !== 'live') {
+      setConfirmLive(true);
+      return;
+    }
+    persistDesk(desk);
+  };
+
   if (loading)
     return (
       <LoadingBlock label="Setting up your desk — loading positions, setups and the market pulse" />
@@ -134,7 +168,7 @@ export default function Dashboard() {
             <button
               key={opt.value}
               type="button"
-              onClick={() => setDeskMode(opt.value)}
+              onClick={() => switchDesk(opt.value)}
               className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${
                 deskMode === opt.value
                   ? opt.value === 'live'
@@ -147,43 +181,25 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
-        {deskMode === 'live' && !bot?.live?.enabled ? (
+        {deskMode === 'live' && bot?.live?.paused ? (
           <span className="text-[11px] text-muted-foreground">
-            Live orders are off — flip the Paper/Live switch in the header to route the bot to your exchange.
+            Live trading is paused — new live entries are stopped, open real positions stay managed.
           </span>
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {deskMode === 'live' ? (
-          <>
-            <StatCard
-              label="Exchange balance"
-              value={bot?.live?.balance_usd != null ? fmtUsd(bot.live.balance_usd) : '—'}
-              sub={bot?.live?.connection ? bot.live.connection.label : 'Verified exchange needed to refresh'}
-              icon={Wallet}
-            />
-            <StatCard
-              label="Today realised"
-              value={fmtUsd(bot?.live?.realized_today || 0)}
-              sub="closed real trades today"
-              tone={(bot?.live?.realized_today || 0) >= 0 ? 'up' : 'down'}
-            />
-            <StatCard
-              label="Open positions"
-              value={bot?.live?.open_count ?? 0}
-              sub={`${fmtUsd(bot?.live?.exposure || 0)} deployed`}
-              icon={Layers}
-            />
-            <StatCard
-              label="Unrealised"
-              value={fmtUsd(bot?.live?.unrealized || 0)}
-              sub="marked to market every cycle"
-              tone={(bot?.live?.unrealized || 0) >= 0 ? 'up' : 'down'}
-            />
-          </>
-        ) : (
-          <>
+      {deskMode === 'live' ? (
+        <LiveDesk
+          bot={bot}
+          onClosePosition={closePosition}
+          onCloseAll={closeAll}
+          closingId={closingId}
+          closingAll={closingAll}
+          onBackToPaper={() => persistDesk('paper')}
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard label="Equity" value={fmtUsd(bot?.equity || 0)} sub={`${fmtUsd(bot?.cash || 0)} free cash`} icon={Wallet} />
             <StatCard
               label="Today realised"
@@ -203,66 +219,77 @@ export default function Dashboard() {
               sub={`${bot?.scanned || 0} coins scanned`}
               tone={(bot?.unrealized || 0) >= 0 ? 'up' : 'down'}
             />
-          </>
-        )}
-      </div>
+          </div>
 
-      <TodayProgress
-        realizedToday={bot?.realized_today || 0}
-        dailyGoal={bot?.daily_goal || 0}
-        goalHit={bot?.goal_hit}
-        openCount={bot?.open_count}
-        scanned={bot?.scanned}
-        startingBalance={Number(config?.starting_balance) || 10000}
-      />
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <div className="min-w-0 space-y-4">
-          {top ? (
-            <BestBuyCard
-              row={top}
-              targetPct={Number(config?.daily_target_pct) || 2}
-              onOpenChart={() => navigate(`/coin/${top.symbol}`)}
-              onAnalyze={() => navigate(`/coin/${top.symbol}?ai=1`)}
-            />
-          ) : (
-            <BestWorstPositions
-              positions={deskMode === 'live' ? bot?.live?.positions || [] : bot?.positions || []}
-            />
-          )}
-
-          <EquityPanel
+          <TodayProgress
+            realizedToday={bot?.realized_today || 0}
+            dailyGoal={bot?.daily_goal || 0}
+            goalHit={bot?.goal_hit}
+            openCount={bot?.open_count}
+            scanned={bot?.scanned}
             startingBalance={Number(config?.starting_balance) || 10000}
-            dailyTargetPct={Number(config?.daily_target_pct) || 2}
-            liveEquity={bot?.equity}
           />
 
-          <PositionsPanel
-            positions={deskMode === 'live' ? bot?.live?.positions || [] : bot?.positions || []}
-            onClose={closePosition}
-            onCloseAll={closeAll}
-            closingId={closingId}
-            closingAll={closingAll}
-            hint={
-              deskMode === 'live'
-                ? 'Your real positions on the exchange, marked to market every cycle.'
-                : 'Live profit and loss, marked to market every cycle.'
-            }
-          />
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-4">
+              {top ? (
+                <BestBuyCard
+                  row={top}
+                  targetPct={Number(config?.daily_target_pct) || 2}
+                  onOpenChart={() => navigate(`/coin/${top.symbol}`)}
+                  onAnalyze={() => navigate(`/coin/${top.symbol}?ai=1`)}
+                />
+              ) : (
+                <BestWorstPositions positions={bot?.positions || []} />
+              )}
 
-          <SmartMoneyPanel />
-        </div>
+              <EquityPanel
+                startingBalance={Number(config?.starting_balance) || 10000}
+                dailyTargetPct={Number(config?.daily_target_pct) || 2}
+                liveEquity={bot?.equity}
+              />
 
-        <div className="min-w-0 space-y-4">
-          <MarketPulse
-            summary={bot?.summary}
-            medianChange24h={bot?.median_change_24h}
-            universe={bot?.universe}
-            updatedAt={bot?.updated_at}
-          />
-          <AlertsFeed limit={8} />
-        </div>
-      </div>
+              <PositionsPanel
+                positions={bot?.positions || []}
+                onClose={closePosition}
+                onCloseAll={closeAll}
+                closingId={closingId}
+                closingAll={closingAll}
+                hint="Live profit and loss, marked to market every cycle."
+              />
+
+              <SmartMoneyPanel />
+            </div>
+
+            <div className="min-w-0 space-y-4">
+              <MarketPulse
+                summary={bot?.summary}
+                medianChange24h={bot?.median_change_24h}
+                universe={bot?.universe}
+                updatedAt={bot?.updated_at}
+              />
+              <AlertsFeed limit={8} />
+            </div>
+          </div>
+        </>
+      )}
+
+      <AlertDialog open={confirmLive} onOpenChange={setConfirmLive}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch to the Live Desk?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This desk shows your exchange-reported balances and confirmed real positions. New live entries only
+              fire while live trading is enabled on the desk — enabling it places real market orders on your
+              connected exchange. Your Paper Desk and its history stay untouched.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Stay on Paper</AlertDialogCancel>
+            <AlertDialogAction onClick={() => persistDesk('live')}>Open Live Desk</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
