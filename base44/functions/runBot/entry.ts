@@ -628,11 +628,12 @@ export default async function (req) {
       });
 
       // engine_v2 targets: 2.5R from entry, the optimizer winner
-      const engineTarget = (r) =>
-        round(
-          r.side === "long" ? r.entry + 2.5 * (r.entry - r.stop) : r.entry - 2.5 * (r.entry - r.stop),
-          8,
-        );
+      // 2.5R from entry, on the trade's own side: the stop sits opposite the
+      // target, so the distance is always |entry - stop| measured outward
+      const engineTarget = (r) => {
+        const dist = 2.5 * Math.abs(r.entry - r.stop);
+        return round(r.side === "long" ? r.entry + dist : r.entry - dist, 8);
+      };
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         const minScore = desk === "live" ? liveMinScore : paperMinScore;
