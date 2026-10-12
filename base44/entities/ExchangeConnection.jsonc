@@ -79,7 +79,7 @@
     },
     "balance_usd": {
       "type": "number",
-      "description": "Last saved quote-currency balance, kept on the connection so the desk never goes blank"
+      "description": "Total account value in USD, every holding priced \u2014 not just the quote cash. Kept on the connection so the desk never goes blank; order sizing always reads the funding cash in balances, never this figure."
     },
     "balance_updated_at": {
       "type": "string",

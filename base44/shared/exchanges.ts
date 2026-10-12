@@ -1,7 +1,7 @@
 // Signed account reads for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every outbound request is
 // bounded by a 10s timeout and errors are returned, never thrown.
-import { cacheGet, cacheSet } from "./market.ts";
+import { cacheGet, cacheSet, fetchLivePrices } from "./market.ts";
 
 export const enc = new TextEncoder();
 
@@ -392,10 +392,10 @@ export const KRAKEN_MESSAGES = {
   "EGeneral:Temporary lockout": "Kraken temporarily locked this key after repeated failed attempts — wait about 15 minutes, then reconnect",
 };
 
-async function krakenCall(cfg, nonce) {
-  const path = "/0/private/Balance";
-  const body = `nonce=${nonce}`;
-  const sign = await krakenSign(cfg.api_secret, path, nonce, body);
+async function krakenSignedCall(cfg, path, extraBody = "") {
+  const nonce = krakenNonce();
+  const body = `nonce=${nonce}${extraBody}`;
+  const sign = await krakenSign(cfg.api_secret, path, String(nonce), body);
   return callJson(`https://api.kraken.com${path}`, {
     method: "POST",
     headers: {
@@ -405,6 +405,10 @@ async function krakenCall(cfg, nonce) {
     },
     body,
   });
+}
+
+async function krakenCall(cfg, nonce) {
+  return krakenSignedCall(cfg, "/0/private/Balance");
 }
 
 async function krakenAccount(cfg) {
@@ -519,6 +523,46 @@ export function pickFundingQuote(balances = [], exchange) {
     if (row) return { asset, amount: Math.round(row.total * 100) / 100 };
   }
   return null;
+}
+
+/**
+ * The account's TOTAL value in USD: every holding priced, not just the quote
+ * cash — so the desk's balance matches what the exchange app shows. Kraken
+ * prices the whole account itself on TradeBalance ("eb", combined balance of
+ * every currency converted to the requested asset), which is the durable
+ * source: no external price feed to go stale. Other exchanges (and a Kraken
+ * fallback) value each asset: quote stables 1:1, fiat at the FX rate, crypto
+ * at live exchange prices — an asset no feed prices contributes 0.
+ */
+export async function accountValueUsd(cfg, balances = []) {
+  if (cfg && cfg.exchange === "kraken") {
+    const res = await krakenSignedCall(cfg, "/0/private/TradeBalance", "&asset=ZUSD");
+    const data = res.data || {};
+    const failed = Array.isArray(data.error) ? data.error : [];
+    const eb = data.result ? Number(data.result.eb) : NaN;
+    if (failed.length === 0 && Number.isFinite(eb)) return Math.round(eb * 100) / 100;
+    // the endpoint can be refused (key permission, transient) — fall through
+    // to per-asset pricing rather than showing nothing
+  }
+  const list = (balances || [])
+    .map((b) => ({
+      asset: String(b.asset || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+      total: Number(b.total) || 0,
+    }))
+    .filter((b) => b.total > 0);
+  if (!list.length) return 0;
+  let total = 0;
+  const crypto = [];
+  for (const b of list) {
+    if (["USD", "USDT", "USDC"].includes(b.asset)) total += b.total;
+    else if (["CAD", "EUR", "GBP"].includes(b.asset)) total += b.total * (await fiatToUsdRate(b.asset));
+    else crypto.push(b);
+  }
+  if (crypto.length) {
+    const prices = await fetchLivePrices(crypto.map((b) => b.asset), "USDT");
+    for (const b of crypto) total += b.total * (prices.get(b.asset) || 0);
+  }
+  return Math.round(total * 100) / 100;
 }
 
 // USD conversion rate for fiat quote currencies, cached for an hour.

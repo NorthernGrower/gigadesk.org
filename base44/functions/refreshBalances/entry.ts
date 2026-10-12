@@ -1,7 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, isBackedOff, backoffUntil, balanceJustRead } from '../../shared/exchanges.ts';
+import { readAccount, accountValueUsd, isBackedOff, backoffUntil, balanceJustRead } from '../../shared/exchanges.ts';
 import { decryptSecret } from '../../shared/crypto.ts';
-import { pickQuoteBalance } from '../../shared/exchanges.ts';
 
 // Refreshes every connected exchange's quote balance and stores it on the
 // connection, so the desk always has a saved balance to show even when a
@@ -24,13 +23,14 @@ export default async function (req) {
       const batch = usable.slice(i, i + 6);
       const settled = await Promise.allSettled(
         batch.map(async (conn) => {
-          const account = await readAccount({
+          const cfg = {
             exchange: conn.exchange,
             testnet: Boolean(conn.testnet),
             api_key: await decryptSecret(conn.api_key),
             api_secret: await decryptSecret(conn.api_secret),
             passphrase: await decryptSecret(conn.passphrase || ''),
-          });
+          };
+          const account = await readAccount(cfg);
           if (!account.ok) {
             // back the key off instead of retrying it next cycle: a lockout
             // needs silence to clear, so the saver pauses on this connection
@@ -39,7 +39,10 @@ export default async function (req) {
             });
             return { id: conn.id, label: conn.label, ok: false, message: account.message };
           }
-          const balance = await pickQuoteBalance(account.balances, conn.exchange);
+          // total account value (every holding priced), so the desk matches
+          // what the exchange app shows — sizing still reads the cash in
+          // `balances`, never this figure
+          const balance = await accountValueUsd(cfg, account.balances);
           await base44.asServiceRole.entities.ExchangeConnection.update(conn.id, {
             status: 'connected',
             status_message: account.message,

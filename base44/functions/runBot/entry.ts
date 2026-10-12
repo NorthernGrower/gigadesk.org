@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } fr
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, fetchMarketConstraints, pickQuoteBalance, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
@@ -1052,7 +1052,9 @@ export default async function (req) {
         passphrase: managed.conn.passphrase || "",
       });
       if (acct.ok) {
-        exchangeBalance = await pickQuoteBalance(acct.balances, managed.conn.exchange);
+        // total account value (every holding priced) — the funding cash the
+        // bot sizes with is read separately from the balances list
+        exchangeBalance = await accountValueUsd(managed.conn, acct.balances);
         // keep the balance on the connection so a later failed read never
         // leaves the desk blank
         await base44.asServiceRole.entities.ExchangeConnection.update(managed.conn.id, {

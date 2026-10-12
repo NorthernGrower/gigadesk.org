@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, pickQuoteBalance, backoffUntil, isBackedOff } from '../../shared/exchanges.ts';
+import { readAccount, accountValueUsd, backoffUntil, isBackedOff } from '../../shared/exchanges.ts';
 import { encryptSecret, decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -51,13 +51,14 @@ export default async function(req) {
     }
 
     const apiKey = await decryptSecret(conn.api_key || '');
-    const account = await readAccount({
+    const cfg = {
       exchange: conn.exchange,
       testnet: Boolean(conn.testnet),
       api_key: apiKey,
       api_secret: await decryptSecret(conn.api_secret),
       passphrase: await decryptSecret(conn.passphrase || ''),
-    });
+    };
+    const account = await readAccount(cfg);
 
     const patch = {
       // upgrade credentials stored before encryption existed (legacy rows)
@@ -80,7 +81,9 @@ export default async function(req) {
       // desk stop retrying it into a longer exchange-side lockout
       ...(account.ok
         ? {
-            balance_usd: await pickQuoteBalance(account.balances, conn.exchange),
+            // total account value (every holding priced) — sizing reads the
+            // cash in `balances`, never this figure
+            balance_usd: await accountValueUsd(cfg, account.balances),
             balance_updated_at: new Date().toISOString(),
             backoff_until: null,
           }

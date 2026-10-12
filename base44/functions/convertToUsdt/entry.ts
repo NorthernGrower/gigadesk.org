@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import {
   readAccount,
-  pickQuoteBalance,
+  accountValueUsd,
   pickFundingQuote,
   isBackedOff,
 } from "../../shared/exchanges.ts";
@@ -46,7 +46,7 @@ export default async function (req) {
     const balances = acct.balances || [];
     const funding = pickFundingQuote(balances, "kraken");
     if (funding && funding.amount >= 10) {
-      await saveBalance(base44, conn, acct, balances);
+      await saveBalance(base44, conn, cfg, acct, balances);
       return Response.json({
         ok: false,
         message: `This account already holds ${round(funding.amount, 2)} ${funding.asset} — the bot can trade with it as-is.`,
@@ -73,15 +73,15 @@ export default async function (req) {
     const res = await convertFiatToUsd(cfg, { amount: fiat.total, currency: fiat.asset });
     // refresh the saved balances either way so the card shows the new state
     const after = await readAccount(cfg);
-    if (after.ok) await saveBalance(base44, conn, after, after.balances);
+    if (after.ok) await saveBalance(base44, conn, cfg, after, after.balances);
     return Response.json({ ...res, balances: after.ok ? after.balances : balances });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 }
 
-async function saveBalance(base44, conn, acct, balances) {
-  const usd = await pickQuoteBalance(balances, "kraken");
+async function saveBalance(base44, conn, cfg, acct, balances) {
+  const usd = await accountValueUsd(cfg, balances);
   await base44.asServiceRole.entities.ExchangeConnection.update(conn.id, {
     status: "connected",
     status_message: acct.message,
