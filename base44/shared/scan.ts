@@ -196,6 +196,7 @@ export async function raiseSetupAlerts(base44, rows, limit = 3) {
       symbol: r.symbol,
       title: `${r.symbol} ${r.side} setup — score ${r.score}`,
       message: `${String(r.verdict).replace("_", " ")} at ${r.entry}. Target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. ${r.reasons[0] || ""}`,
+      mode: "paper",
       kind: "new_setup",
       severity: r.score >= 80 ? "success" : "info",
     })),

@@ -29,6 +29,7 @@ function closingValues(trade, price) {
       kind: pnl >= 0 ? "target_hit" : "stop_hit",
       severity: pnl >= 0 ? "success" : "danger",
       trade_id: trade.id,
+      mode: trade.mode === "real" ? "live" : "paper",
     },
   };
 }
@@ -75,6 +76,7 @@ export default async function (req) {
               symbol: openTrade.symbol,
               title: `Could not close ${openTrade.symbol} on the exchange`,
               message: live.reason,
+              mode: "live",
               kind: "order_failed",
               severity: "danger",
               trade_id: openTrade.id,
@@ -91,6 +93,7 @@ export default async function (req) {
               symbol: openTrade.symbol,
               title: `Could not close ${openTrade.symbol} on ${live.conn.label}`,
               message: sell.message,
+              mode: "live",
               kind: "order_failed",
               severity: "danger",
               trade_id: openTrade.id,
