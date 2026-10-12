@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import AlertsFeed from '@/components/dashboard/AlertsFeed';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import BotControls from '@/components/bot/BotControls';
 import ProposedTrades from '@/components/bot/ProposedTrades';
@@ -212,7 +211,6 @@ export default function Bot() {
                 : 'Exchange-reported live positions, marked to market every cycle.'
             }
           />
-          <AlertsFeed limit={12} />
         </div>
         <div className="space-y-4">
           <LearnedPanel />
