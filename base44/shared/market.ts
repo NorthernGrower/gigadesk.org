@@ -233,7 +233,7 @@ const KRAKEN_PUBLIC = "https://api.kraken.com/0/public";
 /**
  * Live last prices for the handful of symbols the bot is acting on. One
  * batched public call covers up to 100 symbols (weight 2), a single Kraken
- * call covers pairs the US feed does not list, and a 5-second cache keeps
+ * call covers pairs the US feed does not list, and a 30-second cache keeps
  * overlapping cycles from repeating the calls — so tracking stays live
  * without denting either exchange's rate limits.
  */
@@ -279,7 +279,7 @@ export async function fetchLivePrices(symbols, quoteAsset = "USDT") {
       console.log(`kraken live prices failed: ${err && err.message}`);
     }
   }
-  return cacheSet(key, map, 5000);
+  return cacheSet(key, map, 30000);
 }
 
 export function chunk(items, size) {
