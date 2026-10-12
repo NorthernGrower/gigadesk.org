@@ -139,6 +139,11 @@ function rememberBot(data) {
   }
 }
 
+// A full cycle requested while one is already in flight shares its promise:
+// overlapping full cycles used to race on the server, and the loser failed
+// with a 500 — leaving that cycle with zero new trades.
+let lastFullRun = null;
+
 export function runBot(light = false) {
   // the desk's timezone keeps "today" counters on the user's own calendar day
   const invoke = async () => {
@@ -146,7 +151,14 @@ export function runBot(light = false) {
     rememberBot(data);
     return data;
   };
-  if (!light) return invoke();
+  if (!light) {
+    if (lastFullRun && Date.now() - lastFullRun.at < 5000) return lastFullRun.promise;
+    const promise = invoke().finally(() => {
+      if (lastFullRun && lastFullRun.promise === promise) lastFullRun = null;
+    });
+    lastFullRun = { at: Date.now(), promise };
+    return promise;
+  }
   if (lastLightRun && Date.now() - lastLightRun.at < 10000) return lastLightRun.promise;
   lastLightRun = { at: Date.now(), promise: invoke() };
   return lastLightRun.promise;

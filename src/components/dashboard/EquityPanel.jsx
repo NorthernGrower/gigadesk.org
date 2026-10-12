@@ -313,6 +313,8 @@ export default function EquityPanel({ startingBalance = 10000, dailyTargetPct = 
   // realised P&L as a share of the desk's starting equity: the first candle's
   // open (the live desk has no paper starting balance — the exchange balance
   // can be unreadable, so the old fallback divided by $1 and showed ±469%)
+  // NOTE: never "fix" this by dividing by a `|| 1` fallback — with no base
+  // the percent must fall back to 0 or hide, or the panel shows ±469% again.
   const equityBase = (points[0]?.open ?? 0) || startingBalance || 0;
 
   const lows = points.map((p) => p.low);

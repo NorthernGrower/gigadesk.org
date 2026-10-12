@@ -90,11 +90,21 @@ export default async function (req) {
       : 0;
     // only full cycles scan and trade, so only they share the single-flight
     // guard: a cheap light cycle must never block the desk's fresh scan
-    const cycleInFlight = !dryRun && !light && startedAt > 0 && Date.now() - startedAt < 45000;
-    if (!light && !dryRun)
-      await base44.entities.BotConfig.update(config.id, {
-        last_cycle_started_at: new Date().toISOString(),
-      });
+    const full = !dryRun && !light;
+    const cycleInFlight = full && startedAt > 0 && Date.now() - startedAt < 45000;
+    // claim the cycle slot, then verify the claim stuck: two cycles starting
+    // in the same instant both read the old timestamp and both passed the
+    // window above — the read-back catches the loser, which manages exits
+    // only and skips the scan, so it can never open duplicate positions
+    let claimConfirmed = false;
+    if (full) {
+      const claim = new Date().toISOString();
+      await base44.entities.BotConfig.update(config.id, { last_cycle_started_at: claim });
+      const fresh = asArray(
+        await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
+      )[0];
+      claimConfirmed = !fresh || fresh.last_cycle_started_at === claim;
+    }
 
     const { coins } = await fetchMarkets();
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
@@ -522,7 +532,7 @@ export default async function (req) {
     const scanGateOpen =
       paperOpenCount < paperMaxOpen || (live.conn != null && liveOpenCount < liveMaxOpen);
 
-    if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight) {
+    if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight && (dryRun || claimConfirmed)) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
       // when real orders are on, only scan coins the connected exchange
       // actually lists — anything else could never be bought there
@@ -561,7 +571,12 @@ export default async function (req) {
       const liveCooldownMs = (Number(lrVal("cooldown_minutes", 120)) || 120) * 60000;
       const since = new Date(Date.now() - Math.max(paperCooldownMs, liveCooldownMs, reentryMs)).toISOString();
       const recent = await readAll({ closed_at: { $gte: since } });
-      const pending = await readAll({ status: "proposed" });
+      // proposals block their symbol while pending — but only fresh ones:
+      // proposals left over from an approve-mode era (never acted on) blocked
+      // their symbols forever and silently killed re-entries on both desks
+      const pending = (await readAll({ status: "proposed" })).filter(
+        (t) => (t.created_date || "") >= new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+      );
       const blockedLive = new Set([
         ...stillOpen.filter((t) => (t.mode || "paper") === "real").map((t) => t.symbol),
         ...recent
@@ -670,19 +685,12 @@ export default async function (req) {
             severity: "danger",
           });
       }
-      const liveSymbols = new Set(liveWanted.map((r) => r.symbol));
-      const paperWanted = tradable
-        .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
-        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
-
       const gateReason = entryGate;
       const constraints = live.conn ? await fetchMarketConstraints(live.conn) : null;
       // trade from the live tape: refresh the wanted symbols' prices so real
       // order sizing and target placement use the current price, not the
       // snapshot the scan ran on
-      const livePx = await fetchLivePrices([
-        ...new Set([...liveWanted, ...paperWanted].map((r) => r.symbol)),
-      ]);
+      const livePx = await fetchLivePrices([...new Set(liveWanted.map((r) => r.symbol))]);
       const atLive = (r) => {
         const px = Number(livePx.get(r.symbol)) || 0;
         return px > 0 ? { ...r, entry: px } : r;
@@ -691,6 +699,37 @@ export default async function (req) {
       const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
       const sizeLive = (r, slots) => liveEntrySize({ row: r, balance: quoteLeft, budget: liveBudget, slots,
         riskPct: liveRiskPct, minimum: minimumFor(r) });
+      // claim only what the live desk can actually pay for: size each wanted
+      // setup the way the entry loop will, so setups live cannot afford fall
+      // through to the paper desk instead of being claimed and dropped. The
+      // old pre-claim starved the paper desk of every qualifying setup the
+      // moment live trading was ready but the budget was small.
+      const livePlans = [];
+      if (live.conn && !isBackedOff(connRow) && liveBudget >= 10 && spendableQuote >= 10) {
+        let simBudget = liveBudget;
+        let simQuote = quoteLeft;
+        for (const r of liveWanted) {
+          if (stillOpen.some((t) => t.symbol === r.symbol)) continue;
+          const size = liveEntrySize({
+            row: r,
+            balance: simQuote,
+            budget: simBudget,
+            slots: Math.max(1, liveSlots - livePlans.length),
+            riskPct: liveRiskPct,
+            minimum: minimumFor(r),
+          });
+          if (!(size >= 10)) continue;
+          livePlans.push({ r, size: round(size, 2) });
+          simBudget -= size;
+          simQuote -= size * 1.005;
+        }
+      }
+      // the live desk claims only setups it has an affordable plan for;
+      // everything else stays in the paper pool
+      const liveSymbols = new Set(livePlans.map((p) => p.r.symbol));
+      const paperWanted = tradable
+        .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
+        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
       if (dryRun) {
         const plans = [];
         for (const r of liveWanted) {
@@ -756,31 +795,31 @@ export default async function (req) {
         // setup never falls back to paper silently.
         let real = null;
         let realSizeUsd = 0;
-        if (desk === "live" && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
-          const liveFreeSlots = Math.max(1, liveSlots - opened.filter((o) => o.mode === "real").length);
-          const rl = atLive(r);
-          realSizeUsd = sizeLive(rl, liveFreeSlots);
-          if (realSizeUsd >= 10) {
-            real = await placeMarketOrder(live.conn, {
+        // the live leg spends its pre-sized plan; a setup without an
+        // affordable plan was never claimed, so paper inherits it below
+        const plan = desk === "live" ? livePlans.find((p) => p.r.symbol === r.symbol) : null;
+        const rl = plan ? plan.r : atLive(r);
+        if (plan && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
+          realSizeUsd = plan.size;
+          real = await placeMarketOrder(live.conn, {
+            symbol: r.symbol,
+            side: "buy",
+            usd: realSizeUsd,
+            price: rl.entry,
+          });
+          if (!real.ok) {
+            await base44.entities.Alert.create({
               symbol: r.symbol,
-              side: "buy",
-              usd: round(realSizeUsd, 2),
-              price: rl.entry,
-            });
-            if (!real.ok) {
-              await base44.entities.Alert.create({
-                symbol: r.symbol,
-                title: `Real order failed on ${r.symbol}`,
-                message: real.message,
+              title: `Real order failed on ${r.symbol}`,
+              message: real.message,
               mode: "live",
-                kind: "order_failed",
-                severity: "danger",
-              });
-              continue;
-            }
-            liveBudget -= realSizeUsd;
-            quoteLeft -= realSizeUsd * 1.005;
+              kind: "order_failed",
+              severity: "danger",
+            });
+            continue;
           }
+          liveBudget -= realSizeUsd;
+          quoteLeft -= realSizeUsd * 1.005;
         }
 
         if (real) {
@@ -1090,6 +1129,12 @@ export default async function (req) {
     // booked plus what the open positions are worth now. Mixing the in-loop
     // exposure with the aggregate understated equity whenever a position had
     // no live price (its size was subtracted but never added back).
+    // NOTE (kept-sane guard): these equity/cash figures feed the desk panels
+    // (EquityPanel.jsx, TodayProgress.jsx). The on-screen percent divides net
+    // P&L by the first candle's open or the starting balance — NEVER by a
+    // `|| 1` fallback, which once showed a bogus ±469% whenever a balance was
+    // missing. After touching anything here, check both desk panels still
+    // show sane percentages (paper and live) before shipping.
     const equity = startBalance + realizedTotal + unrealized;
 
     await base44.entities.BotConfig.update(config.id, {
