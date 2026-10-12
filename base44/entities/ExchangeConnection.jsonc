@@ -16,13 +16,25 @@
       "type": "string"
     },
     "api_key": {
-      "type": "string"
+      "type": "string",
+      "description": "AES-256-GCM encrypted at rest; never readable by any client",
+      "rls": {
+        "read": false
+      }
     },
     "api_secret": {
-      "type": "string"
+      "type": "string",
+      "description": "AES-256-GCM encrypted at rest; never readable by any client",
+      "rls": {
+        "read": false
+      }
     },
     "passphrase": {
-      "type": "string"
+      "type": "string",
+      "description": "AES-256-GCM encrypted at rest; never readable by any client",
+      "rls": {
+        "read": false
+      }
     },
     "key_hint": {
       "type": "string"

@@ -34,8 +34,15 @@ export async function placeMarketOrder(cfg, params) {
 export async function resolveLiveConnection(base44, config) {
   if (!config || config.real_orders_enabled !== true) return { conn: null, reason: "Real orders are off" };
   if (!config.real_connection_id) return { conn: null, reason: "No exchange account is selected for real orders" };
-  const stored = await base44.entities.ExchangeConnection.get(config.real_connection_id).catch(() => null);
-  if (!stored) return { conn: null, reason: "The selected exchange account is missing" };
+  // credential fields are hidden from every client-side read, so this read
+  // goes through the service role — with an owner check, since the row rules
+  // no longer apply here
+  const stored = await base44.asServiceRole.entities.ExchangeConnection
+    .get(config.real_connection_id)
+    .catch(() => null);
+  if (!stored || (config.created_by_id && stored.created_by_id !== config.created_by_id)) {
+    return { conn: null, reason: "The selected exchange account is missing" };
+  }
   if (stored.status !== "connected" || stored.allow_trading !== true) {
     return { conn: null, reason: `${stored.label || stored.exchange} is not verified and enabled for trading` };
   }
@@ -44,7 +51,7 @@ export async function resolveLiveConnection(base44, config) {
       exchange: stored.exchange,
       label: stored.label || stored.exchange,
       testnet: Boolean(stored.testnet),
-      api_key: stored.api_key,
+      api_key: await decryptSecret(stored.api_key),
       api_secret: await decryptSecret(stored.api_secret),
       passphrase: await decryptSecret(stored.passphrase || ""),
     },

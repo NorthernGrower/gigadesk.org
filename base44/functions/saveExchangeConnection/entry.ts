@@ -40,7 +40,7 @@ export default async function(req) {
 
     const patch = {
       exchange,
-      api_key: apiKey,
+      api_key: await encryptSecret(apiKey),
       api_secret: await encryptSecret(apiSecret),
       passphrase: await encryptSecret(passphrase),
       label: (String(body.label || '').trim() || meta.name).slice(0, 60),
