@@ -97,8 +97,10 @@ export default async function (req) {
 
     const config = asArray(await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }))[0];
     const desk = config?.active_desk === "live" ? "live" : "paper";
-    snapshot.entry_check = { desk, min_score: entryRulesFor(config, desk).min_score,
-      reason: gateReason(snapshot, desk, entryRulesFor(config, desk)) };
+    const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
+    const rules = entryRulesFor(config, desk, btcChange);
+    snapshot.entry_check = { desk, min_score: rules.min_score,
+      reason: gateReason(snapshot, desk, rules) };
 
     const closes = candles.map((c) => c.c);
     const e20 = ema(closes, 20);

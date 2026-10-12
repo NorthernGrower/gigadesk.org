@@ -662,7 +662,14 @@ export function analyzeCoin(coin, candles, ctx = {}) {
     97,
   );
 
+  // conviction of the signal bar: body as a share of its full range (combo gate)
+  const lastCandle = candles[candles.length - 1];
+  const bodyRatio =
+    lastCandle && lastCandle.h > lastCandle.l
+      ? Math.abs(lastCandle.c - lastCandle.o) / (lastCandle.h - lastCandle.l)
+      : 0;
   return {
+    body_ratio: r2(bodyRatio),
     symbol: coin.symbol,
     name: coin.name,
     coingecko_id: coin.coingecko_id || "",

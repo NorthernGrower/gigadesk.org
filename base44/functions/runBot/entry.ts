@@ -36,6 +36,7 @@ const DEFAULT_CONFIG = {
   live_cap_usd: 0,
   trading_style: "mild",
   profit_mode: "compound",
+  combo_engine: true,
   sentiment_watch: true,
   confluence_v2: true,
   champion_engine: true,
@@ -114,6 +115,11 @@ export default async function (req) {
     // the shared managed policy, not the old optimizer/target vetoes.
     const engineV2 = config.engine_v2 !== false;
     const champion = config.champion_engine !== false;
+    // COMBO ENGINE (round 25-28 champion): the optimizer's tested stack governs
+    // entries when on - score bar 70, ADX 28, volume band 2x-4x, stochastic
+    // agreement, RSI chase block, conviction candles, BTC risk-off longs - and
+    // sets 4.5R targets with break-even at +1.2R instead of trailing stops.
+    const comboOn = config.combo_engine !== false;
 
     // entity reads cap each page, so a plain read silently missed open trades
     // once the desk held more than a page — the exact window that let already
@@ -345,9 +351,14 @@ export default async function (req) {
       // trailing follows the desk the position trades on: real positions
       // trail by the live rules, paper ones by the paper rules
       const isRealPos = (t.mode || "paper") === "real";
-      const trailingOn = isRealPos
-        ? lrVal("trailing_stop", true) !== false
-        : config.trailing_stop !== false;
+      // combo-managed trades (4.5R targets) exit by break-even and target only:
+      // the trailing stop is the old engine's exit, not part of the tested stack
+      const trailingOn =
+        (Number(t.target_r) || 0) >= 4
+          ? false
+          : isRealPos
+            ? lrVal("trailing_stop", true) !== false
+            : config.trailing_stop !== false;
       if (trailingOn) {
         if (side === "long" && price > peak) peak = price;
         if (side === "short" && price < peak) peak = price;
@@ -613,7 +624,12 @@ export default async function (req) {
       // accepts more setups and stakes more to reach the goal faster
       const style = config.trading_style || "mild";
       const styleRisk = style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1;
-      const rulesByDesk = { live: entryRulesFor(config, "live"), paper: entryRulesFor(config, "paper") };
+      // BTC's 24h tape drives the combo regime gate (risk-off longs, flat-tape skips)
+      const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
+      const rulesByDesk = {
+        live: entryRulesFor(config, "live", btcChange),
+        paper: entryRulesFor(config, "paper", btcChange),
+      };
       const entryGate = (r, desk) => gateReasonShared(r, desk, rulesByDesk[desk]);
       const liveSlots = Math.max(1, liveMaxOpen - liveOpenCount);
       const riskPct = Math.min(25, (Number(config.risk_per_trade_pct) || 4) * styleRisk);
@@ -649,13 +665,15 @@ export default async function (req) {
         return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
       });
 
-      // engine_v2 targets: 2.5R from entry, the optimizer winner
-      // 2.5R from entry, on the trade's own side: the stop sits opposite the
-      // target, so the distance is always |entry - stop| measured outward
+      // engine targets: 4.5R from entry with the combo stack on (the round 25-28
+      // champion), 2.5R under the old engine rules - always on the trade's own
+      // side, so the distance is |entry - stop| measured outward
+      const targetR = comboOn ? 4.5 : 2.5;
       const engineTarget = (r) => {
-        const dist = 2.5 * Math.abs(r.entry - r.stop);
+        const dist = targetR * Math.abs(r.entry - r.stop);
         return round(r.side === "long" ? r.entry + dist : r.entry - dist, 8);
       };
+      const useEngineTarget = comboOn || (engineV2 && champion);
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         return !blocked.has(r.symbol) && entryGate(r, desk) === null;
@@ -839,8 +857,8 @@ export default async function (req) {
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
-            target_price: engineV2 && champion ? engineTarget(rl) : r.target,
-            target_r: engineV2 && champion ? 2.5 : null,
+            target_price: useEngineTarget ? engineTarget(rl) : r.target,
+            target_r: comboOn ? 4.5 : engineV2 && champion ? 2.5 : null,
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -895,8 +913,8 @@ export default async function (req) {
           quantity: round(qty, 8),
           size_usd: round(sizeUsd),
           stop_price: r.stop,
-          target_price: engineV2 ? engineTarget(r) : r.target,
-          target_r: engineV2 ? 2.5 : null,
+          target_price: useEngineTarget ? engineTarget(r) : r.target,
+          target_r: comboOn ? 4.5 : engineV2 ? 2.5 : null,
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1106,7 +1124,7 @@ export default async function (req) {
         walletSync = await syncExchangePositions(base44, managed.conn, syncBalances, {
           ownerId: config.created_by_id,
           stopPct: Number(lrVal("default_stop_pct", 2.5)),
-          targetR: engineV2 && champion ? 2.5 : 0,
+          targetR: comboOn ? 4.5 : engineV2 && champion ? 2.5 : 0,
         });
         await base44.entities.BotConfig.update(config.id, { last_wallet_sync_at: Date.now() });
       }
@@ -1270,11 +1288,21 @@ export default async function (req) {
       opened,
       proposed,
       positions,
-      top: (board.rows || []).slice(0, 12).map((r) => ({
-        ...r,
-        pair: `${r.symbol}/${(managed.conn && (managed.conn.quoteAsset || QUOTE_ASSET[managed.conn.exchange])) || "USDT"}`,
-        exchange: managed.conn ? managed.conn.exchange : null,
-      })),
+      // the desk's top picks display the target the bot actually trades:
+      // 4.5R from entry with the combo stack on, not the scan's raw level
+      top: (board.rows || []).slice(0, 12).map((r) => {
+        const dist = 4.5 * Math.abs(r.entry - r.stop);
+        const target =
+          comboOn && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
+            ? round(r.side === "long" ? r.entry + dist : r.entry - dist, 8)
+            : r.target;
+        return {
+          ...r,
+          target,
+          pair: `${r.symbol}/${(managed.conn && (managed.conn.quoteAsset || QUOTE_ASSET[managed.conn.exchange])) || "USDT"}`,
+          exchange: managed.conn ? managed.conn.exchange : null,
+        };
+      }),
       scanned: board.scannedCount,
       scan_log: scanLog,
       rule_lock: deskDiag,
