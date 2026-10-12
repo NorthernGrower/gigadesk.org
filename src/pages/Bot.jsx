@@ -8,6 +8,7 @@ import LearnedPanel from '@/components/bot/LearnedPanel';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
+import useSavedBalance from '@/hooks/useSavedBalance';
 import { onTradesChange } from '@/lib/live';
 import { emitBotTick, ensureBotConfig, pageItems, runBot, tradeAction } from '@/lib/market';
 
@@ -22,6 +23,11 @@ export default function Bot() {
   const [closingId, setClosingId] = useState(null);
   const [closingAll, setClosingAll] = useState(false);
   const [error, setError] = useState(null);
+
+  // live-desk balance mechanism: the saved connection balance, re-read from
+  // the exchange every minute — light bot cycles never refresh it themselves
+  const connectionId = bot?.config?.real_connection_id || bot?.live?.connection?.id || null;
+  const savedBalance = useSavedBalance(connectionId, bot?.live?.connection?.status);
 
   const loadProposed = async () => {
     const rows = pageItems(await base44.entities.Trade.filter({ status: 'proposed' }, { sort: '-created_date', limit: 30 }));
@@ -180,8 +186,8 @@ export default function Bot() {
                 scanned: bot?.scanned,
               }
             : {
-                balance: bot?.live?.balance_usd,
-                balanceStale: bot?.live?.balance_stale,
+                balance: savedBalance?.usd != null ? savedBalance.usd : bot?.live?.balance_usd,
+                balanceStale: bot?.live?.balance_stale && savedBalance?.usd == null,
                 balanceError: bot?.live?.balance_error,
                 exposure: bot?.live?.exposure,
                 cap: bot?.live?.cap_usd,

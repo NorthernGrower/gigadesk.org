@@ -1,0 +1,38 @@
+import { useEffect, useRef, useState } from 'react';
+import { base44 } from '@/api/base44Client';
+
+// The desk-side balance mechanism, shared by the Live Desk and the Bot page:
+// the connection's saved balance is re-read from the exchange via
+// checkExchangeConnection every minute, so a figure stays on screen even when
+// a bot cycle skips (or fails) its own live read. An errored connection is
+// never re-polled — Kraken counts failed signed reads toward its lockout.
+export default function useSavedBalance(connectionId, status) {
+  const [savedBalance, setSavedBalance] = useState(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
+  useEffect(() => {
+    if (!connectionId) return undefined;
+    let alive = true;
+    const check = async () => {
+      if (statusRef.current && statusRef.current !== 'connected') return;
+      try {
+        const res = await base44.functions.invoke('checkExchangeConnection', { id: connectionId });
+        const conn = res.data?.connection;
+        if (alive && conn && conn.balance_usd != null) {
+          setSavedBalance({ usd: conn.balance_usd, asOf: conn.balance_updated_at });
+        }
+      } catch {
+        // a failed check keeps the last saved figure
+      }
+    };
+    check();
+    const timer = setInterval(check, 60000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [connectionId]);
+
+  return savedBalance;
+}

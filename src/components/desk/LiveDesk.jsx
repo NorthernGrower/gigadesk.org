@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -29,6 +29,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { base44 } from '@/api/base44Client';
+import useSavedBalance from '@/hooks/useSavedBalance';
 import { emitBotTick, runBot } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -67,13 +68,13 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
     };
   }, [bot?.top, heldSetup]);
   const topSetup = bot?.top?.[0] || heldSetup || fallbackSetup || null;
-  // a saved balance the desk keeps on the connection, refreshed every minute
-  // so a failed live read never blanks the figure
-  const [savedBalance, setSavedBalance] = useState(null);
   const live = bot?.live || {};
   const connection = live.connection;
   const staleScan = bot?.updated_at ? Date.now() - Date.parse(bot.updated_at) > 10 * 60000 : true;
   const connectionId = bot?.config?.real_connection_id || connection?.id || null;
+  // a saved balance the desk keeps on the connection, refreshed every minute
+  // so a failed live read never blanks the figure
+  const savedBalance = useSavedBalance(connectionId, connection?.status);
   const balanceUsd =
     live.balance_usd != null
       ? live.balance_usd
@@ -84,34 +85,6 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
           : null;
   const balanceAsOf =
     live.balance_as_of || savedBalance?.asOf || connection?.balance_updated_at || connection?.last_checked_at || null;
-
-  // an errored or locked key is checked on demand only: Kraken counts every
-  // failed signed read toward its temporary lockout, so a timer that keeps
-  // verifying a dead connection would keep re-arming the lock
-  const statusRef = useRef(connection?.status);
-  statusRef.current = connection?.status;
-  useEffect(() => {
-    if (!connectionId) return undefined;
-    let alive = true;
-    const check = async () => {
-      if (statusRef.current && statusRef.current !== 'connected') return;
-      try {
-        const res = await base44.functions.invoke('checkExchangeConnection', { id: connectionId });
-        const conn = res.data?.connection;
-        if (alive && conn && conn.balance_usd != null) {
-          setSavedBalance({ usd: conn.balance_usd, asOf: conn.balance_updated_at });
-        }
-      } catch {
-        // a failed check keeps the last saved figure
-      }
-    };
-    check();
-    const timer = setInterval(check, 60000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [connectionId, connection?.status]);
 
   useEffect(() => {
     let alive = true;
