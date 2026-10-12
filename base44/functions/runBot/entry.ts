@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, pickQuoteBalance } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
@@ -836,9 +836,7 @@ export default async function (req) {
         passphrase: managed.conn.passphrase || "",
       });
       if (acct.ok) {
-        const quote = QUOTE_ASSET[managed.conn.exchange] || "USDT";
-        const row = (acct.balances || []).find((b) => b.asset === quote);
-        exchangeBalance = row ? round(Number(row.total) || 0, 2) : 0;
+        exchangeBalance = await pickQuoteBalance(acct.balances, managed.conn.exchange);
         // keep the balance on the connection so a later failed read never
         // leaves the desk blank
         await base44.asServiceRole.entities.ExchangeConnection.update(managed.conn.id, {

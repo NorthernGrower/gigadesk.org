@@ -1,6 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount } from '../../shared/exchanges.ts';
-import { QUOTE_ASSET } from '../../shared/orders.ts';
+import { readAccount, pickQuoteBalance } from '../../shared/exchanges.ts';
 import { encryptSecret, decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -65,11 +64,7 @@ export default async function(req) {
       // read fails
       ...(account.ok
         ? {
-            balance_usd:
-              (() => {
-                const quoteRow = (account.balances || []).find((b) => b.asset === (QUOTE_ASSET[conn.exchange] || 'USDT'));
-                return quoteRow ? Math.round((Number(quoteRow.total) || 0) * 100) / 100 : 0;
-              })(),
+            balance_usd: await pickQuoteBalance(account.balances, conn.exchange),
             balance_updated_at: new Date().toISOString(),
           }
         : {}),

@@ -327,6 +327,8 @@ const KRAKEN_ASSETS = {
   XDG: "DOGE",
   ZUSD: "USD",
   ZEUR: "EUR",
+  ZCAD: "CAD",
+  ZGBP: "GBP",
   XXRP: "XRP",
   XLTC: "LTC",
   XXLM: "XLM",
@@ -404,3 +406,70 @@ async function krakenAccount(cfg) {
     balances: [],
   };
 }
+
+// Quote-currency variants an exchange may hold a cash balance in. The first
+// asset each exchange lists is its native quote; the rest are accepted
+// substitutes so a user funded in a different stable still gets a balance.
+export const QUOTE_ALIASES = {
+  binance_us: ["USD", "USDT", "USDC"],
+  binance: ["USDT", "USDC", "USD"],
+  bybit: ["USDT", "USDC", "USD"],
+  kucoin: ["USDT", "USDC", "USD"],
+  kraken: ["USD", "USDT", "USDC"],
+};
+
+/**
+ * Picks the quote balance from an account read and converts it to USD.
+ * Preference order: the exchange's native quote (e.g. USD on Kraken /
+ * Binance US), then the other dollar stables, then other fiat the account
+ * may be funded in (CAD, EUR, GBP — converted at the live rate). Returns
+ * 0 only when the account holds none of them.
+ */
+export async function pickQuoteBalance(balances = [], exchange) {
+  const list = (balances || []).map((b) => ({
+    asset: String(b.asset || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+    total: Number(b.total) || 0,
+  }));
+  const order = [
+    ...(QUOTE_ALIASES[exchange] || []),
+    "USDT", "USDC", "USD",
+    "CAD", "EUR", "GBP",
+  ];
+  const seen = new Set();
+  for (const asset of order) {
+    if (seen.has(asset)) continue;
+    seen.add(asset);
+    const row = list.find((b) => b.asset === asset && b.total > 0);
+    if (!row) continue;
+    const rate = await fiatToUsdRate(asset);
+    return Math.round(row.total * rate * 100) / 100;
+  }
+  // nothing named exactly like a known quote: accept a suffix variant so an
+  // unexpected naming (e.g. USDC_MERGED) still shows a balance
+  const fallback = list
+    .filter((b) => /^(USD|USDT|USDC|CAD|EUR|GBP)[0-9A-Z]*$/.test(b.asset) && b.total > 0)
+    .sort((a, b) => b.total - a.total)[0];
+  if (!fallback) return 0;
+  const rate = await fiatToUsdRate(fallback.asset.slice(0, 3));
+  return Math.round(fallback.total * rate * 100) / 100;
+}
+
+// USD conversion rate for fiat quote currencies, cached for an hour.
+const FIAT = new Set(["CAD", "EUR", "GBP"]);
+const fiatToUsdRate = async (asset) => {
+  if (!FIAT.has(asset)) return 1; // USD and dollar stables are 1:1
+  const key = `fx_${asset}`;
+  const cached = cacheGet(key);
+  if (cached != null) return cached;
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${asset}&to=USD`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    const data = await res.json();
+    const rate = Number(data?.rates?.USD);
+    if (rate > 0 && isFinite(rate)) return cacheSet(key, rate, 60 * 60 * 1000);
+  } catch {
+    // offline or blocked: fall through
+  }
+  return 1; // fail-open so a dead FX source never zeroes the balance
+};

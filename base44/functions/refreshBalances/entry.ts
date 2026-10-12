@@ -1,8 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { readAccount } from '../../shared/exchanges.ts';
 import { decryptSecret } from '../../shared/crypto.ts';
-import { QUOTE_ASSET } from '../../shared/orders.ts';
-import { round } from '../../shared/market.ts';
+import { pickQuoteBalance } from '../../shared/exchanges.ts';
 
 // Refreshes every connected exchange's quote balance and stores it on the
 // connection, so the desk always has a saved balance to show even when a
@@ -26,9 +25,7 @@ export default async function (req) {
             passphrase: await decryptSecret(conn.passphrase || ''),
           });
           if (!account.ok) return { id: conn.id, label: conn.label, ok: false, message: account.message };
-          const quote = QUOTE_ASSET[conn.exchange] || 'USDT';
-          const row = (account.balances || []).find((b) => b.asset === quote);
-          const balance = row ? round(Number(row.total) || 0, 2) : 0;
+          const balance = await pickQuoteBalance(account.balances, conn.exchange);
           await base44.asServiceRole.entities.ExchangeConnection.update(conn.id, {
             balance_usd: balance,
             balance_updated_at: new Date().toISOString(),
