@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, fetchCandles, chunk } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
+import { pickCandidates } from "../../shared/scan.ts";
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
@@ -23,9 +24,9 @@ export default async function (req) {
     const barsPerDay = timeframe === "1h" ? 24 : 6;
 
     const { coins } = await fetchMarkets();
-    const universe = coins
-      .filter((c) => (c.volume24h || 0) > 1_000_000 && (c.market_cap || 0) > 0)
-      .slice(0, maxSymbols);
+    // the same candidate ranking the bot's scan uses, so the backtest measures
+    // the engine on the setups it would actually see
+    const universe = pickCandidates(coins, maxSymbols);
 
     function simulate(candles, coin, variant) {
       let pos = null;
@@ -70,11 +71,16 @@ export default async function (req) {
         }
       }
       return {
+        // raw fields feed the cross-symbol aggregation; the derived ones are
+        // only for single-symbol use
         trades: res.trades,
+        wins: res.wins,
+        pnl_pct_sum: res.pnl_pct_sum,
+        max_dd: res.max_dd,
+        holds: res.holds,
         win_rate: res.trades ? Math.round((res.wins / res.trades) * 100) : 0,
         avg_net_pct: res.trades ? Math.round((res.pnl_pct_sum / res.trades) * 100) / 100 : 0,
         total_net_pct: Math.round(res.pnl_pct_sum * 10) / 10,
-        max_drawdown_pct: Math.round(res.max_dd * 10) / 10,
         avg_hold_bars: res.holds.length
           ? Math.round(res.holds.reduce((a, b) => a + b, 0) / res.holds.length)
           : 0,
