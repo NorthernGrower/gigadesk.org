@@ -20,7 +20,8 @@
         "bot_open",
         "bot_close",
         "daily_goal",
-        "order_failed"
+        "order_failed",
+        "rule_warning"
       ],
       "default": "new_setup"
     },

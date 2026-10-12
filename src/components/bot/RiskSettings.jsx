@@ -40,6 +40,43 @@ function Toggle({ label, hint, checked, onChange }) {
   );
 }
 
+// Save-time blocker check: flags settings whose maths makes fills near
+// impossible, so a desk can never silently stop trading again.
+const TYPICAL_STOP_PCT = 2.5; // the engine's structural stop, typical size
+
+function deskRuleWarnings(rules, championOn, desk) {
+  const w = [];
+  const target = Number(rules.daily_target_pct) || 0;
+  if (rules.require_daily_target) {
+    const reachable = championOn ? 2.5 * TYPICAL_STOP_PCT : 2 * TYPICAL_STOP_PCT;
+    if (target > reachable)
+      w.push(
+        `Target coverage gate: a typical 2.5% stop allows a ${reachable}% move, but the daily target is ${target}% — setups can never qualify. Lower the daily target or turn off "Require target coverage".`,
+      );
+  }
+  if ((Number(rules.min_score) || 0) > 85)
+    w.push(`Minimum score ${rules.min_score} sits above almost every scan result — fills will be rare to impossible.`);
+  if ((Number(rules.risk_per_trade_pct) || 0) > 15)
+    w.push(`Risk per trade ${rules.risk_per_trade_pct}% is very high — a short run of stops can halve the desk.`);
+  if (championOn && desk === 'live')
+    w.push("Champion rules open longs only while BTC's tape is risk-off, and real orders are longs only — in green tapes the live desk sits out by design.");
+  return w;
+}
+
+function WarningsBox({ warnings }) {
+  if (!warnings.length) return null;
+  return (
+    <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-400">Trading blocker check</p>
+      <ul className="mt-1.5 space-y-1.5">
+        {warnings.map((text, i) => (
+          <li key={i} className="text-[11px] leading-snug text-amber-200/90">{text}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // The rule fields both desks share: risk, slots, score bar, target, cooldown
 // and trailing. Live saves them into live_rules, paper into the desk fields.
 function sharedDeskFields(form, setNum, set) {
@@ -304,6 +341,10 @@ export default function RiskSettings({ config, onSaved }) {
     }
   };
 
+  const championOn = shared.engine_v2 !== false && shared.champion_engine !== false;
+  const liveWarnings = deskRuleWarnings(live, championOn, 'live');
+  const paperWarnings = deskRuleWarnings(paper, championOn, 'paper');
+
   const deskButton = (value) => `h-9 rounded-md border text-xs font-medium transition-colors ${
     desk === value
       ? 'border-primary bg-primary/15 text-primary'
@@ -370,6 +411,8 @@ export default function RiskSettings({ config, onSaved }) {
 
           {sharedDeskFields(live, setLiveNum, setLiveV)}
 
+          <WarningsBox warnings={liveWarnings} />
+
           <Button className="w-full" onClick={saveLive} disabled={saving === 'live'}>
             {saving === 'live' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save live rules
@@ -409,6 +452,8 @@ export default function RiskSettings({ config, onSaved }) {
             checked={paper.allow_shorts}
             onChange={setPaperV('allow_shorts')}
           />
+
+          <WarningsBox warnings={paperWarnings} />
 
           <Button className="w-full" onClick={savePaper} disabled={saving === 'paper'}>
             {saving === 'paper' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}

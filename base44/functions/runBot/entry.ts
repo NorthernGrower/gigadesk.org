@@ -5,6 +5,7 @@ import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, fetchListedSymbols, pickQuoteBalance, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
+import { gateReason as gateReasonShared, collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
 const DEFAULT_CONFIG = {
@@ -506,6 +507,7 @@ export default async function (req) {
     const opened = [];
     const proposed = [];
     let eligibleCount = null;
+    const deskDiag = {};
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
 
@@ -705,6 +707,17 @@ export default async function (req) {
       const paperWanted = tradable
         .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
         .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
+
+      const gateReason = (r, desk) =>
+        gateReasonShared(r, desk, {
+          min_score: desk === "live" ? liveMinScore : paperMinScore,
+          allow_shorts: allowShorts !== false,
+          engine_v2: engineV2,
+          champion,
+          btc_regime: btcRegime,
+          require_target: desk === "live" ? liveRequireTarget : paperRequireTarget,
+          target_pct: desk === "live" ? liveTargetPct : paperTargetPct,
+        });
       const takenSymbols = new Set([...liveWanted, ...paperWanted].map((r) => r.symbol));
       scanLog = {
         scanned: board.scannedCount,
@@ -888,7 +901,21 @@ export default async function (req) {
           });
         }
       }
+
+      Object.assign(
+        deskDiag,
+        collectGateLocks(tradable, gateReason, {
+          desks: live.conn ? ["live", "paper"] : ["paper"],
+          slots: { live: liveMaxOpen - liveOpenCount, paper: paperMaxOpen - paperOpenCount },
+          blocked: { live: blockedLive, paper: blockedPaper },
+          taken: { live: liveSymbols.size, paper: paperWanted.length },
+        }),
+      );
     }
+
+    // rule-lock alerts: one warning per desk per 6 hours when the desk's own
+    // rules rejected every candidate the scan produced
+    if (!light) await raiseGateLockAlerts(base44, deskDiag, config.created_by_id);
 
     // ---- daily goal check. "Today" follows the user's clock, not UTC: the
     // old UTC-midnight boundary bucketed an evening trader's results into
@@ -1177,6 +1204,7 @@ export default async function (req) {
       })),
       scanned: board.scannedCount,
       scan_log: scanLog,
+      rule_lock: deskDiag,
       universe: board.universeCount,
       summary: board.summary,
       median_change_24h: board.medianChange24h,
