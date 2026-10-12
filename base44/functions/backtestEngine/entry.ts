@@ -231,6 +231,105 @@ const ROUND19_VARIANTS = [
   }),
 ];
 
+// Round 20: pre-move detection on the settled round-19 stack. Professional
+// tells that a move is about to start: a quiet range the signal bar breaks
+// out of, volatility squeezed into the bottom of its own history, the entry
+// sitting low in the recent range (longs) rather than chasing, conviction
+// candles, liquid-session timing, and an upper volume band to avoid
+// blow-off exhaustion prints.
+const R19_BEST = { ...R18_BEST, be_stop_r: 2 };
+const ROUND20_VARIANTS = [
+  variantCfg("r19_best", "Reference: the round-19 winner", R19_BEST),
+  variantCfg("r20_volband", "Winner + volume band 2x-4x (skip blow-off exhaustion volume)", {
+    ...R19_BEST,
+    max_vol_ratio: 4,
+  }),
+  variantCfg("r20_lowrange", "Winner + longs only from the lower half of the 20-bar range", {
+    ...R19_BEST,
+    range_favorable: 0.5,
+  }),
+  variantCfg("r20_breakout", "Winner + the signal bar must close at a fresh 20-bar extreme", {
+    ...R19_BEST,
+    require_breakout: true,
+  }),
+  variantCfg("r20_squeeze", "Winner + volatility squeezed (Bollinger width in its bottom 40%)", {
+    ...R19_BEST,
+    max_bb_width_low: 40,
+  }),
+  variantCfg("r20_sqz_brk", "Winner + squeeze OR breakout: fresh 20-bar extreme with calm width", {
+    ...R19_BEST,
+    max_bb_width_low: 45,
+    require_breakout: true,
+  }),
+  variantCfg("r20_session", "Winner + entries only 13:00-21:00 UTC (liquid US hours)", {
+    ...R19_BEST,
+    entry_hours: [13, 21],
+  }),
+  variantCfg("r20_body", "Winner + conviction candles (body at least 60% of the bar's range)", {
+    ...R19_BEST,
+    min_body: 0.6,
+  }),
+  variantCfg("r20_value", "Winner + entry within 2% of the 20-bar EMA (no chasing)", {
+    ...R19_BEST,
+    max_stretch_pct: 2,
+  }),
+  variantCfg("r20_score70", "Winner + score bar 70", { ...R19_BEST, min_score: 70 }),
+];
+
+// Round 21: stacks the round-20 winners (conviction candles, the volatility
+// squeeze, the upper volume band) and probes the threshold edges of each.
+const R20_BEST = { ...R19_BEST, min_body: 0.6 };
+const ROUND21_VARIANTS = [
+  variantCfg("r20_body", "Reference: conviction candles (round-20 winner)", R20_BEST),
+  variantCfg("r21_body50", "Conviction threshold lowered to 50% (more trades)", { ...R20_BEST, min_body: 0.5 }),
+  variantCfg("r21_body70", "Conviction threshold raised to 70%", { ...R20_BEST, min_body: 0.7 }),
+  variantCfg("r21_body_sqz", "Conviction candles + volatility squeeze (bottom 40% width)", {
+    ...R20_BEST,
+    max_bb_width_low: 40,
+  }),
+  variantCfg("r21_body_sqz50", "Conviction candles + squeeze (bottom 50% width)", {
+    ...R20_BEST,
+    max_bb_width_low: 50,
+  }),
+  variantCfg("r21_body_volband", "Conviction candles + volume band (skip blow-off volume)", {
+    ...R20_BEST,
+    max_vol_ratio: 4,
+  }),
+  variantCfg("r21_body_t3", "Conviction candles + 3R targets", { ...R20_BEST, target_r: 3 }),
+];
+
+// Round 22: target distance on the conviction stack. With winners surviving
+// the conviction filter, larger targets and a trailing stop get retested —
+// and the upper volume band stacks on the round-21 winner.
+const R21_BEST = { ...R20_BEST, target_r: 3 };
+const ROUND22_VARIANTS = [
+  variantCfg("r21_body_t3", "Reference: conviction candles + 3R targets", R21_BEST),
+  variantCfg("r22_t3_volband", "3R stack + volume band (skip blow-off volume)", {
+    ...R21_BEST,
+    max_vol_ratio: 4,
+  }),
+  variantCfg("r22_t4", "Conviction candles + 4R targets", { ...R20_BEST, target_r: 4 }),
+  variantCfg("r22_t2p5", "Conviction candles + 2.5R targets", { ...R20_BEST, target_r: 2.5 }),
+  variantCfg("r22_t3_trail", "3R stack + ATR trailing stop after +1.5R", { ...R21_BEST, trail_r: 1.5 }),
+  variantCfg("r22_t3_be25", "3R stack + break-even later, at +2.5R", { ...R21_BEST, be_stop_r: 2.5 }),
+  variantCfg("r22_t3_nobe", "3R stack + break-even removed", { ...R21_BEST, be_stop_r: null }),
+];
+
+// Round 23: the 4R jump. Pushes the target further, retests the round-22
+// winners on top of it, and re-checks the squeeze now that entries are rare.
+const R22_BEST = { ...R20_BEST, target_r: 4 };
+const ROUND23_VARIANTS = [
+  variantCfg("r22_t4", "Reference: conviction candles + 4R targets", R22_BEST),
+  variantCfg("r23_t5", "Conviction candles + 5R targets", { ...R20_BEST, target_r: 5 }),
+  variantCfg("r23_t4_volband", "4R stack + volume band (skip blow-off volume)", {
+    ...R22_BEST,
+    max_vol_ratio: 4,
+  }),
+  variantCfg("r23_t4_trail", "4R stack + ATR trailing stop after +1.5R", { ...R22_BEST, trail_r: 1.5 }),
+  variantCfg("r23_t4_trail2", "4R stack + ATR trailing stop after +2.0R", { ...R22_BEST, trail_r: 2 }),
+  variantCfg("r23_t4_sqz50", "4R stack + squeeze (bottom 50% width)", { ...R22_BEST, max_bb_width_low: 50 }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -277,9 +376,17 @@ export default async function (req) {
       const result = await runOptimize(
         coins,
         months
-          ? Number(body.round) >= 19
-            ? ROUND19_VARIANTS
-            : Number(body.round) >= 18
+          ? Number(body.round) >= 23
+            ? ROUND23_VARIANTS
+            : Number(body.round) >= 22
+              ? ROUND22_VARIANTS
+              : Number(body.round) >= 21
+              ? ROUND21_VARIANTS
+              : Number(body.round) >= 20
+              ? ROUND20_VARIANTS
+              : Number(body.round) >= 19
+              ? ROUND19_VARIANTS
+              : Number(body.round) >= 18
               ? ROUND18_VARIANTS
               : Number(body.round) >= 17
               ? ROUND17_VARIANTS

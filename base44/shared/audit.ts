@@ -110,7 +110,22 @@ function prepSymbol(coin, candles, endBar, barsPerDay = BARS_PER_DAY, step = 1) 
       candles.slice(Math.max(0, j + 1 - PREP_WINDOW), j + 1),
       { medianChange24h: 0, dailyTargetPct: 2, barsPerDay, confluenceV2: true },
     );
-    if (row) rowsByJ.set(j, row);
+    if (row) {
+      // pre-move levers, computed straight off the candles so no shared engine
+      // code changes: position within the prior 20-bar range (0 = bottom),
+      // a fresh 20-bar high/low close on the signal bar, and the candle's
+      // conviction (body as a share of its full range)
+      const prior = candles.slice(Math.max(0, j - 20), j);
+      if (prior.length >= 10) {
+        const hi = Math.max(...prior.map((b) => b.h));
+        const lo = Math.min(...prior.map((b) => b.l));
+        row.range_pos = hi > lo ? (price - lo) / (hi - lo) : 0.5;
+        row.breakout_20 = price >= hi || price <= lo;
+      }
+      const bar = candles[j];
+      row.body_ratio = bar.h > bar.l ? Math.abs(bar.c - bar.o) / (bar.h - bar.l) : 0;
+      rowsByJ.set(j, row);
+    }
   }
   return { coin, candles, rowsByJ };
 }
@@ -453,6 +468,12 @@ export function variantCfg(id, description, over = {}) {
     entry_limit_pct: 0,
     limit_wait_bars: 8,
     skip_sideways: false,
+    max_vol_ratio: 0,
+    range_favorable: null,
+    require_breakout: false,
+    max_bb_width_low: null,
+    min_body: 0,
+    entry_hours: null,
     ...over,
   };
 }
@@ -526,6 +547,18 @@ function gateFor(cfg) {
       if (cfg.pattern_block_q && !supports && q >= cfg.pattern_block_q) return false;
     }
     if (cfg.pattern_min_quality && (Number(row.chart_pattern_quality) || 0) < cfg.pattern_min_quality) return false;
+    // pre-move levers, all computed off the raw candles at prep time
+    if (cfg.max_vol_ratio && (Number(ind.vol_ratio) || 0) > cfg.max_vol_ratio) return false;
+    if (cfg.range_favorable != null) {
+      const rp = Number(row.range_pos);
+      if (!Number.isFinite(rp)) return false;
+      const ok = row.side === "long" ? rp <= cfg.range_favorable : rp >= 1 - cfg.range_favorable;
+      if (!ok) return false;
+    }
+    if (cfg.require_breakout && !row.breakout_20) return false;
+    if (cfg.max_bb_width_low != null && (Number(ind.bb_width_percentile) || 100) > cfg.max_bb_width_low)
+      return false;
+    if (cfg.min_body && (Number(row.body_ratio) || 0) < cfg.min_body) return false;
     return true;
   };
 }
@@ -643,6 +676,14 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
           (cfg.skip_weekend && (at.getUTCDay() === 0 || at.getUTCDay() === 6)) ||
           (cfg.skip_overnight && (at.getUTCHours() >= 22 || at.getUTCHours() < 6))
         ) {
+          missed += 1;
+          continue;
+        }
+      }
+      // a liquid-session gate: only enter inside the stated UTC hour window
+      if (cfg.entry_hours) {
+        const h = new Date(bar.t).getUTCHours();
+        if (h < cfg.entry_hours[0] || h >= cfg.entry_hours[1]) {
           missed += 1;
           continue;
         }
