@@ -393,14 +393,19 @@ export default async function (req) {
       const exit = hitTarget || hitStop || stagnant;
 
       if (exit) {
-        const exitPrice = stagnant ? price : hitTarget ? target : stop;
-        const reason = stagnant
-          ? "time"
-          : hitTarget
-            ? "target"
-            : updates.stop_price
-              ? "trailing"
-              : "stop";
+        // the stop always wins: a breached stop fills at its level — the same
+        // fill the backtest assumes — even when the tape gapped past it, and
+        // never at the market price of a later stagnant cut. A bar that touched
+        // both levels fills the stop first, the backtest's own conservative
+        // rule, so a "target" exit can never book a loss.
+        const exitPrice = hitStop ? stop : hitTarget ? target : price;
+        const reason = hitStop
+          ? updates.stop_price
+            ? "trailing"
+            : "stop"
+          : stagnant
+            ? "time"
+            : "target";
         const ok = await closeOut(t, side, exitPrice, reason, updates, (pnl, pnlPct) => ({
           kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
           message: `${
