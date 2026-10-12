@@ -183,7 +183,7 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
     if (owned && owned.items && owned.items.length === 1) {
       stored = owned.items[0];
       const rulesPatch = { ...(config.live_rules || {}), real_connection_id: stored.id };
-      await base44.asServiceRole.entities.BotConfig
+      if (!opts.readOnly) await base44.asServiceRole.entities.BotConfig
         .update(config.id, { real_connection_id: stored.id, live_rules: rulesPatch })
         .catch(() => {});
       config.real_connection_id = stored.id;

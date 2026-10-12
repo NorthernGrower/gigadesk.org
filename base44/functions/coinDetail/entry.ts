@@ -2,6 +2,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, fetchCandles, round } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { ema, rsi, macd, bollinger } from "../../shared/indicators.ts";
+import { asArray } from "../../shared/market.ts";
+import { entryRulesFor, gateReason } from "../../shared/entryRules.ts";
 
 const CACHE = new Map();
 const AI_TTL = 10 * 60 * 1000;
@@ -92,6 +94,11 @@ export default async function (req) {
     if (!snapshot) {
       return Response.json({ error: "Not enough data to analyse this coin" }, { status: 422 });
     }
+
+    const config = asArray(await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }))[0];
+    const desk = config?.active_desk === "live" ? "live" : "paper";
+    snapshot.entry_check = { desk, min_score: entryRulesFor(config, desk).min_score,
+      reason: gateReason(snapshot, desk, entryRulesFor(config, desk)) };
 
     const closes = candles.map((c) => c.c);
     const e20 = ema(closes, 20);

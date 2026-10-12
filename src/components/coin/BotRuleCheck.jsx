@@ -1,19 +1,17 @@
 import React from 'react';
 import { CheckCircle2, MinusCircle } from 'lucide-react';
-import { fmtPct } from '@/lib/format';
 
 export default function BotRuleCheck({ snapshot, config }) {
   if (!snapshot || !config) return null;
 
-  const minScore = Number(config.min_score) || 62;
-  const target = Number(config.daily_target_pct) || 2;
-  const sideBlocked = snapshot.side === 'short' && config.allow_shorts === false;
+  const entryCheck = snapshot.entry_check;
+  if (!entryCheck) return null;
+  const qualifies = !entryCheck.reason;
   const checks = [
-    { label: `Score ${snapshot.score} ≥ ${minScore}`, pass: snapshot.score >= minScore },
-    { label: `Moves ${fmtPct(snapshot.required_move_pct, 1)} to target vs your ${target}% bar`, pass: !config.require_daily_target || snapshot.required_move_pct >= target },
-    { label: snapshot.side === 'short' ? 'Shorts allowed' : 'Long side', pass: !sideBlocked },
+    { label: `Score ${snapshot.score} ≥ ${entryCheck.min_score} (bot-managed)`, pass: snapshot.score >= entryCheck.min_score },
+    { label: 'Daily target is a progress goal, not an entry gate', pass: true },
+    { label: entryCheck.reason || `Managed ${entryCheck.desk} entry checks passed`, pass: qualifies },
   ];
-  const qualifies = checks.every((c) => c.pass);
 
   return (
     <div className="surface p-4">
@@ -33,7 +31,7 @@ export default function BotRuleCheck({ snapshot, config }) {
       <p className={`mt-2.5 text-[11px] ${qualifies ? 'text-primary' : 'text-muted-foreground'}`}>
         {qualifies
           ? config.mode === 'auto'
-            ? 'This setup clears your rules — the bot can open it on its next cycle.'
+            ? 'This setup clears entry checks — the bot can open it when funds, cooldown and a position slot allow.'
             : config.mode === 'approve'
               ? 'This setup clears your rules — it will come to you for approval.'
               : 'This setup clears your rules, but the bot is set to signals only.'

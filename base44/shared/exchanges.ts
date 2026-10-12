@@ -85,7 +85,7 @@ const sortBalances = (list) =>
  */
 export async function fetchListedSymbols(cfg, quotes = null) {
   try {
-    const key = `listed:${cfg.exchange}:${cfg.testnet ? "testnet" : "live"}`;
+    const key = `listed:${cfg.exchange}:${cfg.testnet ? "testnet" : "live"}:${(quotes || []).slice().sort().join(",")}`;
     const cached = cacheGet(key);
     if (cached) return cached;
 

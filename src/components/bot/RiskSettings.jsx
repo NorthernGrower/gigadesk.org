@@ -40,26 +40,11 @@ function Toggle({ label, hint, checked, onChange }) {
   );
 }
 
-// Save-time blocker check: flags settings whose maths makes fills near
-// impossible, so a desk can never silently stop trading again.
-const TYPICAL_STOP_PCT = 2.5; // the engine's structural stop, typical size
-
-function deskRuleWarnings(rules, championOn, desk) {
+// Entry gates are managed by the bot; only user-controlled risk is warned here.
+function deskRuleWarnings(rules) {
   const w = [];
-  const target = Number(rules.daily_target_pct) || 0;
-  if (rules.require_daily_target) {
-    const reachable = championOn ? 2.5 * TYPICAL_STOP_PCT : 2 * TYPICAL_STOP_PCT;
-    if (target > reachable)
-      w.push(
-        `Target coverage gate: a typical 2.5% stop allows a ${reachable}% move, but the daily target is ${target}% — setups can never qualify. Lower the daily target or turn off "Require target coverage".`,
-      );
-  }
-  if ((Number(rules.min_score) || 0) > 85)
-    w.push(`Minimum score ${rules.min_score} sits above almost every scan result — fills will be rare to impossible.`);
   if ((Number(rules.risk_per_trade_pct) || 0) > 15)
     w.push(`Risk per trade ${rules.risk_per_trade_pct}% is very high — a short run of stops can halve the desk.`);
-  if (championOn && desk === 'live')
-    w.push("Champion rules open longs only while BTC's tape is risk-off, and real orders are longs only — in green tapes the live desk sits out by design.");
   return w;
 }
 
@@ -88,21 +73,12 @@ function sharedDeskFields(form, setNum, set) {
       <Field label="Max open positions">
         <Input className="num" inputMode="numeric" value={form.max_open_positions} onChange={setNum('max_open_positions')} />
       </Field>
-      <Field label="Minimum score" hint="Only setups ranked at or above this score are taken.">
-        <Input className="num" inputMode="numeric" value={form.min_score} onChange={setNum('min_score')} />
-      </Field>
-      <Field label="Daily target %" hint="Setups must be able to move this much to qualify.">
+      <Field label="Daily target %" hint="Your daily progress goal. It does not block new entries.">
         <Input className="num" inputMode="decimal" value={form.daily_target_pct} onChange={setNum('daily_target_pct')} />
       </Field>
       <Field label="Cooldown (minutes)" hint="How long a coin is left alone after a trade closes.">
         <Input className="num" inputMode="numeric" value={form.cooldown_minutes} onChange={setNum('cooldown_minutes')} />
       </Field>
-      <Toggle
-        label="Require target coverage"
-        hint={`Only take setups that can move ${form.daily_target_pct}% to target.`}
-        checked={form.require_daily_target}
-        onChange={set('require_daily_target')}
-      />
       <Toggle
         label="Trailing stop"
         hint={`Locks in profit once a trade is up ${form.trailing_trigger_pct}%.`}
@@ -252,13 +228,11 @@ export default function RiskSettings({ config, onSaved }) {
           live_cap_usd: roundTo(Number(live.live_cap_usd) || 0, 2),
           risk_per_trade_pct: roundTo(live.risk_per_trade_pct, 2),
           max_open_positions: Math.max(1, Math.round(Number(live.max_open_positions) || 1)),
-          min_score: Math.round(Number(live.min_score) || 0),
           daily_target_pct: roundTo(live.daily_target_pct, 2),
           cooldown_minutes: Math.max(0, Math.round(Number(live.cooldown_minutes) || 0)),
           trailing_stop: live.trailing_stop,
           trailing_trigger_pct: roundTo(live.trailing_trigger_pct, 2),
           trailing_distance_pct: roundTo(live.trailing_distance_pct, 2),
-          require_daily_target: live.require_daily_target,
         },
       });
       toast({ title: 'Live rules saved', description: 'Real orders pick them up on the next cycle. Paper rules are untouched.' });
@@ -280,13 +254,11 @@ export default function RiskSettings({ config, onSaved }) {
         max_open_positions: Math.max(1, Math.round(Number(paper.max_open_positions) || 1)),
         daily_target_pct: roundTo(paper.daily_target_pct, 2),
         target_pct: roundTo(paper.daily_target_pct, 2),
-        min_score: Math.round(Number(paper.min_score) || 0),
         cooldown_minutes: Math.max(0, Math.round(Number(paper.cooldown_minutes) || 0)),
         trailing_trigger_pct: roundTo(paper.trailing_trigger_pct, 2),
         trailing_distance_pct: roundTo(paper.trailing_distance_pct, 2),
         trailing_stop: paper.trailing_stop,
         allow_shorts: paper.allow_shorts,
-        require_daily_target: paper.require_daily_target,
       });
       toast({ title: 'Paper rules saved', description: 'The paper desk picks them up on its next cycle. Live rules are untouched.' });
       if (onSaved) onSaved();
@@ -341,9 +313,8 @@ export default function RiskSettings({ config, onSaved }) {
     }
   };
 
-  const championOn = shared.engine_v2 !== false && shared.champion_engine !== false;
-  const liveWarnings = deskRuleWarnings(live, championOn, 'live');
-  const paperWarnings = deskRuleWarnings(paper, championOn, 'paper');
+  const liveWarnings = deskRuleWarnings(live);
+  const paperWarnings = deskRuleWarnings(paper);
 
   const deskButton = (value) => `h-9 rounded-md border text-xs font-medium transition-colors ${
     desk === value
@@ -469,7 +440,7 @@ export default function RiskSettings({ config, onSaved }) {
       <div className="space-y-3 border-t border-border/60 pt-4">
         <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Shared scan settings</p>
         <p className="text-[11px] leading-snug text-muted-foreground">
-          Both desks scan the same board with these — the per-desk rules above decide which setups each one takes.
+          Entry quality is managed automatically for both desks: score, momentum, three confirmations and no chasing. Daily goals never block trades. Position sizing respects your risk, available funds and exchange minimums.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Trading style">
@@ -527,14 +498,8 @@ export default function RiskSettings({ config, onSaved }) {
             onChange={setSharedV('confluence_v2')}
           />
           <Toggle
-            label="Optimizer entry rules"
-            hint="Structural entry rules: higher-timeframe confirmation, ADX 25 with the DI pair owned, 3 confluences, bounded stretch and no chasing. Turn off to revert to score-only entries."
-            checked={shared.engine_v2}
-            onChange={setSharedV('engine_v2')}
-          />
-          <Toggle
             label="Champion rules"
-            hint="The optimizer champion's refinements: 2.5R targets, break-even after +1.2R, 1.5x volume, and longs only while BTC's tape is risk-off. Governs both desks; turn off to trade the base entry rules."
+            hint="Keeps the champion target and break-even management. Entry quality is managed automatically, without a BTC-regime or volume-spike veto."
             checked={shared.champion_engine}
             onChange={setSharedV('champion_engine')}
           />

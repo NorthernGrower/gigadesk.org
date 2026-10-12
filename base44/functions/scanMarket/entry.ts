@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { scanBoard, persistSignals, raiseSetupAlerts } from "../../shared/scan.ts";
 import { asArray } from "../../shared/market.ts";
-import { fetchListedSymbols } from "../../shared/exchanges.ts";
+import { fetchListedSymbols, pickFundingQuote } from "../../shared/exchanges.ts";
 import { decryptSecret } from "../../shared/crypto.ts";
 
 const TIMEFRAMES = ["15m", "1h", "4h", "12h", "1d", "1w", "1M"];
@@ -31,9 +31,10 @@ export default async function (req) {
       await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
     );
     const cfg = configs[0];
-    if (cfg && cfg.real_connection_id) {
+    const connectionId = cfg?.live_rules?.real_connection_id || cfg?.real_connection_id;
+    if (cfg && connectionId) {
       const stored = await base44.asServiceRole.entities.ExchangeConnection
-        .get(cfg.real_connection_id)
+        .get(connectionId)
         .catch(() => null);
       if (
         stored &&
@@ -48,7 +49,8 @@ export default async function (req) {
           api_secret: await decryptSecret(stored.api_secret),
           passphrase: await decryptSecret(stored.passphrase || ""),
         };
-        const listed = await fetchListedSymbols(conn);
+        const funding = pickFundingQuote(stored.balances, stored.exchange);
+        const listed = await fetchListedSymbols(conn, funding ? [funding.asset] : null);
         if (listed && listed.size) {
           onlySymbols = listed;
           exchangeFilter = { exchange: stored.exchange, label: stored.label || stored.exchange, listed: listed.size };

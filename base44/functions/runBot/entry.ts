@@ -3,9 +3,10 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, pickQuoteBalance, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, fetchMarketConstraints, pickQuoteBalance, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
-import { gateReason as gateReasonShared, collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
+import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
+import { entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
 const DEFAULT_CONFIG = {
@@ -60,14 +61,16 @@ export default async function (req) {
 
     const body = await req.json().catch(() => ({}));
     const light = body.light === true;
+    const dryRun = body.dry_run === true;
 
     // one set of rules only: keep the freshest config and remove stray older
     // ones, so every cycle and screen agrees on a single balance
     const configs = asArray(
       await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 10 }),
     );
-    for (const extra of configs.slice(1)) await base44.entities.BotConfig.delete(extra.id);
+    if (!dryRun) for (const extra of configs.slice(1)) await base44.entities.BotConfig.delete(extra.id);
     let config = configs[0];
+    if (!config && dryRun) return Response.json({ error: "Save bot rules before checking entries" }, { status: 400 });
     if (!config) config = await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 
     // Live and paper desks keep separate rules: the paper rules stay on the
@@ -87,8 +90,8 @@ export default async function (req) {
       : 0;
     // only full cycles scan and trade, so only they share the single-flight
     // guard: a cheap light cycle must never block the desk's fresh scan
-    const cycleInFlight = !light && startedAt > 0 && Date.now() - startedAt < 45000;
-    if (!light)
+    const cycleInFlight = !dryRun && !light && startedAt > 0 && Date.now() - startedAt < 45000;
+    if (!light && !dryRun)
       await base44.entities.BotConfig.update(config.id, {
         last_cycle_started_at: new Date().toISOString(),
       });
@@ -96,15 +99,10 @@ export default async function (req) {
     const { coins } = await fetchMarkets();
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
-    // engine_v2: the optimizer-winning rules (seven Kraken rounds, recorded in
-    // AuditRun). BTC's 24h tape gates longs: risk-on and sideways entries
-    // measured the weakest in every round, so longs fire only in a risk-off tape.
+    // Existing exit management is preserved. Entry quality is governed by
+    // the shared managed policy, not the old optimizer/target vetoes.
     const engineV2 = config.engine_v2 !== false;
-    // champion refinements on top of the entry rules (toggleable): 2.5R
-    // targets with break-even after +1.2R, 1.5x volume and risk-off longs only
     const champion = config.champion_engine !== false;
-    const btcChange = Number(priceMap.get("BTC")?.change24h) || 0;
-    const btcRegime = btcChange > 1 ? "risk_on" : btcChange < -1 ? "risk_off" : "sideways";
 
     // entity reads cap each page, so a plain read silently missed open trades
     // once the desk held more than a page — the exact window that let already
@@ -130,7 +128,7 @@ export default async function (req) {
     const openTrades = await readAll({ status: "open" });
     // managing existing real positions must work even while new live entries
     // are paused — the pause gates entries, never risk management
-    const managed = await resolveLiveConnection(base44, liveConfigView, { manage: true });
+    const managed = await resolveLiveConnection(base44, liveConfigView, { manage: true, readOnly: dryRun });
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
@@ -148,6 +146,7 @@ export default async function (req) {
     // after a CAD (or EUR/GBP) balance was swapped on the USDT/fiat market
     const funding = connRow ? pickFundingQuote(connRow.balances, connRow.exchange) : null;
     const spendableQuote = funding ? funding.amount : 0;
+    let quoteLeft = spendableQuote;
     if (managed.conn && funding) managed.conn.quoteAsset = funding.asset;
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
@@ -290,7 +289,7 @@ export default async function (req) {
     }
 
     // ---- manage the positions already open
-    for (const t of openTrades) {
+    for (const t of dryRun ? [] : openTrades) {
       // a real fill the user logged by hand is theirs to manage — the bot only
       // touches its own real positions (those carry an exchange order id)
       if ((t.mode || "paper") === "real" && !t.exchange_order_id) continue;
@@ -414,7 +413,7 @@ export default async function (req) {
       await base44.entities.Trade.bulkUpdate(pendingMarks.slice(0, 500));
 
     // signals age out: a setup older than a day is no longer actionable
-    if (!light) {
+    if (!light && !dryRun) {
       await base44.asServiceRole.entities.Signal
         .updateMany(
           {
@@ -584,17 +583,9 @@ export default async function (req) {
       // timid waits for stronger setups with less at stake, aggressive
       // accepts more setups and stakes more to reach the goal faster
       const style = config.trading_style || "mild";
-      const styleScore = style === "timid" ? 6 : style === "aggressive" ? -5 : 0;
       const styleRisk = style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1;
-      // the engine's own verdict scale calls anything under 58 "avoid", so
-      // the bar can never drop into grades the engine itself would not take
-      const paperMinScore = Math.max(58, (Number(config.min_score) || 62) + styleScore);
-      const liveMinScore = Math.max(58, (Number(lrVal("min_score", 62)) || 62) + styleScore);
-      const allowShorts = config.allow_shorts !== false;
-      const paperRequireTarget = config.require_daily_target !== false;
-      const liveRequireTarget = lrVal("require_daily_target", true) !== false;
-      const paperTargetPct = Number(config.daily_target_pct) || 2;
-      const liveTargetPct = Number(lrVal("daily_target_pct", 2)) || 2;
+      const rulesByDesk = { live: entryRulesFor(config, "live"), paper: entryRulesFor(config, "paper") };
+      const entryGate = (r, desk) => gateReasonShared(r, desk, rulesByDesk[desk]);
       const liveSlots = Math.max(1, liveMaxOpen - liveOpenCount);
       const riskPct = Math.min(25, (Number(config.risk_per_trade_pct) || 4) * styleRisk);
 
@@ -638,42 +629,9 @@ export default async function (req) {
       };
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
-        const minScore = desk === "live" ? liveMinScore : paperMinScore;
-        const requireTarget = desk === "live" ? liveRequireTarget : paperRequireTarget;
-        const targetPct = desk === "live" ? liveTargetPct : paperTargetPct;
-        if (blocked.has(r.symbol) || r.score < minScore) return false;
-        // real orders are longs only — shorts stay paper
-        if (desk === "live" ? r.side !== "long" : !allowShorts && r.side !== "long") return false;
-        // engine_v2 entry quality: higher-timeframe confirmation, momentum
-        // strength, structure confluence, 1.5x volume, a bounded stretch and
-        // no chasing — the rule set that turned the 30-day Kraken backtest
-        // from -8.6% to +8.3% with a 1.6% max drawdown
-        if (engineV2) {
-          if (champion && r.side === "long" && btcRegime !== "risk_off") return false;
-          if (!r.htf_trend || r.htf_trend !== (r.side === "long" ? "up" : "down")) return false;
-          const ind = r.indicators || {};
-          if ((Number(ind.adx) || 0) < 25) return false;
-          const diOwned =
-            r.side === "long"
-              ? (Number(ind.plus_di) || 0) > (Number(ind.minus_di) || 0)
-              : (Number(ind.minus_di) || 0) > (Number(ind.plus_di) || 0);
-          if (!diOwned) return false;
-          if ((r.confluence || 0) < 3) return false;
-          if ((Number(ind.vol_ratio) || 0) < (champion ? 1.5 : 1.2)) return false;
-          if (ind.ema20) {
-            const stretch = ((r.price - ind.ema20) / ind.ema20) * 100 * (r.side === "long" ? 1 : -1);
-            if (stretch > 5) return false;
-          }
-          if (r.fib_phase === "chasing") return false;
-        }
-        if (!requireTarget) return true;
-        if (champion && engineV2) {
-          const stopPct = (Math.abs(r.entry - r.stop) / r.entry) * 100;
-          return 2.5 * stopPct >= targetPct && r.score >= 58;
-        }
-        return Number(r.required_move_pct) >= targetPct && r.score >= 58;
+        return !blocked.has(r.symbol) && entryGate(r, desk) === null;
       };
-      const liveWanted = live.conn
+      const liveWanted = live.conn && !isBackedOff(connRow)
         ? tradable
             .filter((r) => qualifies(r, "live"))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
@@ -681,7 +639,7 @@ export default async function (req) {
       // a desk with qualifying setups but nothing to pay with should say so
       // once (throttled), instead of firing order attempts into a wall of
       // exchange-side insufficient-funds failures every cycle
-      if (live.conn && liveWanted.length && spendableQuote < 10) {
+      if (!dryRun && live.conn && liveWanted.length && spendableQuote < 10) {
         const recent = asArray(
           await base44.entities.Alert.filter(
             {
@@ -708,16 +666,37 @@ export default async function (req) {
         .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
         .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
 
-      const gateReason = (r, desk) =>
-        gateReasonShared(r, desk, {
-          min_score: desk === "live" ? liveMinScore : paperMinScore,
-          allow_shorts: allowShorts !== false,
-          engine_v2: engineV2,
-          champion,
-          btc_regime: btcRegime,
-          require_target: desk === "live" ? liveRequireTarget : paperRequireTarget,
-          target_pct: desk === "live" ? liveTargetPct : paperTargetPct,
-        });
+      const gateReason = entryGate;
+      const constraints = live.conn ? await fetchMarketConstraints(live.conn) : null;
+      const minimumFor = (r) => {
+        const pair = `${r.symbol}${funding?.asset || QUOTE_ASSET[live.conn?.exchange] || "USDT"}`;
+        const m = constraints?.get(pair);
+        return Math.max(10, Number(m?.minNotional) || 0, (Number(m?.minQty) || 0) * r.entry * 1.01);
+      };
+      const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
+      const sizeLive = (r, slots) => liveEntrySize({ row: r, balance: quoteLeft, budget: liveBudget, slots,
+        riskPct: liveRiskPct, minimum: minimumFor(r) });
+      if (dryRun) {
+        const plans = [];
+        for (const r of liveWanted) {
+          if (stillOpen.some(t => t.symbol === r.symbol)) continue;
+          const size = sizeLive(r, Math.max(1, liveSlots - plans.length));
+          if (!size) continue;
+          plans.push({ symbol: r.symbol, side: r.side, score: r.score, size_usd: size,
+            entry: r.entry, stop: r.stop, target: engineV2 && champion ? engineTarget(r) : r.target });
+          quoteLeft -= size * 1.005;
+          liveBudget -= size;
+        }
+        return Response.json({ dry_run: true, mode: config.mode, scanned: board.scannedCount,
+          live: { entry_ready: live.conn != null && !isBackedOff(connRow), reason: live.reason,
+            spendable_quote: spendableQuote, budget_cap: liveBudgetCap, planned: plans },
+          paper: { qualifying: paperWanted.filter(r => !stillOpen.some(t => t.symbol === r.symbol))
+            .map(r => ({ symbol: r.symbol, side: r.side, score: r.score })) },
+          rule_lock: collectGateLocks(tradable, gateReason, { desks: ["live", "paper"],
+            slots: { live: liveMaxOpen - liveOpenCount, paper: paperMaxOpen - paperOpenCount },
+            blocked: { live: blockedLive, paper: blockedPaper },
+            taken: { live: plans.length, paper: paperWanted.length } }) });
+      }
       const takenSymbols = new Set([...liveWanted, ...paperWanted].map((r) => r.symbol));
       scanLog = {
         scanned: board.scannedCount,
@@ -762,15 +741,8 @@ export default async function (req) {
         let real = null;
         let realSizeUsd = 0;
         if (desk === "live" && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
-          const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
           const liveFreeSlots = Math.max(1, liveSlots - opened.filter((o) => o.mode === "real").length);
-          const liveRiskUsd = (spendableQuote * liveRiskPct) / 100;
-          realSizeUsd = Math.min(
-            (liveRiskUsd / stopDist) * r.entry,
-            spendableQuote / liveFreeSlots,
-            liveBudget,
-            spendableQuote,
-          );
+          realSizeUsd = sizeLive(r, liveFreeSlots);
           if (realSizeUsd >= 10) {
             real = await placeMarketOrder(live.conn, {
               symbol: r.symbol,
@@ -790,6 +762,7 @@ export default async function (req) {
               continue;
             }
             liveBudget -= realSizeUsd;
+            quoteLeft -= realSizeUsd * 1.005;
           }
         }
 
@@ -912,6 +885,10 @@ export default async function (req) {
         }),
       );
     }
+
+    if (dryRun) return Response.json({ dry_run: true, mode: config.mode, scanned: 0,
+      live: { entry_ready: live.conn != null && !isBackedOff(connRow), reason: live.reason, planned: [] },
+      paper: { qualifying: [] }, reason: config.mode === "off" ? "Signals only" : "No open position slots" });
 
     // rule-lock alerts: one warning per desk per 6 hours when the desk's own
     // rules rejected every candidate the scan produced

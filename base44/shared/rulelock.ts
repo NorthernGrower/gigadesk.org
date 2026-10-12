@@ -2,51 +2,7 @@
 // scan produces, these helpers name the gates doing the rejecting and warn —
 // instead of the desk silently sitting on its capital.
 import { asArray } from "./market.ts";
-
-/**
- * The same gate chain the bot's qualify() applies, but it names the FIRST
- * failing gate. `rules` carries the desk's resolved values:
- * { min_score, allow_shorts, engine_v2, champion, btc_regime,
- *   require_target, target_pct }
- */
-export function gateReason(r, desk, rules) {
-  if ((Number(r.score) || 0) < (Number(rules.min_score) || 0)) return "score under the minimum";
-  const shortBlocked =
-    desk === "live" ? r.side !== "long" : rules.allow_shorts === false && r.side !== "long";
-  if (shortBlocked)
-    return desk === "live" ? "short setup (real orders take longs only)" : "shorts are switched off";
-  if (rules.engine_v2 !== false) {
-    if (rules.champion !== false && r.side === "long" && rules.btc_regime !== "risk_off")
-      return "long gated: BTC tape not risk-off";
-    if (!r.htf_trend || r.htf_trend !== (r.side === "long" ? "up" : "down"))
-      return "higher timeframe disagrees";
-    const ind = r.indicators || {};
-    if ((Number(ind.adx) || 0) < 25) return "ADX under 25";
-    const diOwned =
-      r.side === "long"
-        ? (Number(ind.plus_di) || 0) > (Number(ind.minus_di) || 0)
-        : (Number(ind.minus_di) || 0) > (Number(ind.plus_di) || 0);
-    if (!diOwned) return "DI pair not owned";
-    if ((r.confluence || 0) < 3) return "under 3 confluences";
-    if ((Number(ind.vol_ratio) || 0) < (rules.champion !== false ? 1.5 : 1.2))
-      return "volume under the required multiple";
-    if (ind.ema20) {
-      const stretch = ((r.price - ind.ema20) / ind.ema20) * 100 * (r.side === "long" ? 1 : -1);
-      if (stretch > 5) return "stretch over 5%";
-    }
-    if (r.fib_phase === "chasing") return "entry is chasing";
-  }
-  if (rules.require_target) {
-    if (rules.champion !== false && rules.engine_v2 !== false) {
-      const stopPct = (Math.abs(r.entry - r.stop) / r.entry) * 100;
-      if (2.5 * stopPct < (Number(rules.target_pct) || 0))
-        return `2.5R move under the ${rules.target_pct}% target`;
-    } else if (Number(r.required_move_pct) < (Number(rules.target_pct) || 0)) {
-      return `required move under the ${rules.target_pct}% target`;
-    }
-  }
-  return null;
-}
+export { gateReason } from "./entryRules.ts";
 
 /**
  * Per-desk diagnostics: a desk with open slots that took nothing while
