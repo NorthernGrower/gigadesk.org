@@ -16,7 +16,7 @@ const scoreTone = (score) =>
       ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
       : 'bg-secondary text-muted-foreground ring-1 ring-border';
 
-export default function LiveSignals({ rows, exchange }) {
+export default function LiveSignals({ rows, exchange, held = false }) {
   const setups = (rows || []).slice(0, 1);
   return (
     <div className="surface p-4">
@@ -24,7 +24,7 @@ export default function LiveSignals({ rows, exchange }) {
         <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Top-ranked signals</p>
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <Radar className="h-3.5 w-3.5" />
-          {exchange ? `pairs on ${exchange}` : 'shared universe'}
+          {held ? 'held from the last qualifying scan' : exchange ? `pairs on ${exchange}` : 'shared universe'}
         </span>
       </div>
 

@@ -852,6 +852,25 @@ export default async function (req) {
       }
     }
 
+    // ---- live desk extras: the day's goal (the live target pct of the
+    // exchange balance, saved balance when the live read failed) plus the
+    // best and worst closed real trades of the day, so the desk can render
+    // its progress and day movers without a second read
+    const liveDayPct = Number(config.live_rules?.daily_target_pct ?? config.daily_target_pct) || 2;
+    const liveGoal = exchangeBalance != null ? round((exchangeBalance * liveDayPct) / 100) : null;
+    const liveDayTrades = todays
+      .filter((t) => (t.mode || "paper") === "real")
+      .map((t) => ({
+        symbol: t.symbol,
+        side: t.side === "short" ? "short" : "long",
+        pnl_usd: round(Number(t.pnl_usd) || 0),
+        pnl_pct: round(Number(t.pnl_pct) || 0),
+        exit_reason: t.exit_reason || null,
+        exchange: t.exchange || null,
+        closed_at: t.closed_at || null,
+      }))
+      .sort((a, b) => b.pnl_usd - a.pnl_usd);
+
     const exposure = positions.reduce((a, p) => a + p.size_usd, 0);
     const unrealized = positions.reduce((a, p) => a + p.pnl_usd, 0);
 
@@ -1026,6 +1045,10 @@ export default async function (req) {
         exposure: round(liveExposure),
         unrealized: round(liveUnrealized),
         realized_today: round(liveRealized),
+        daily_goal: liveGoal,
+        goal_hit: liveGoal != null ? liveRealized >= liveGoal : false,
+        day_best: liveDayTrades[0] || null,
+        day_worst: liveDayTrades.length > 1 ? liveDayTrades[liveDayTrades.length - 1] : null,
         positions: livePositions,
       },
       sentiment: {

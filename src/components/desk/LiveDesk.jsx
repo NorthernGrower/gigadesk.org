@@ -12,8 +12,10 @@ import {
 import StatCard from '@/components/common/StatCard';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import EquityPanel from '@/components/dashboard/EquityPanel';
+import TodayProgress from '@/components/dashboard/TodayProgress';
 import LiveSignals from '@/components/desk/LiveSignals';
 import ScannedCoins from '@/components/desk/ScannedCoins';
+import DayMovers from '@/components/desk/DayMovers';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -45,6 +47,27 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
   const { toast } = useToast();
   const [toggling, setToggling] = useState(false);
   const [recent, setRecent] = useState([]);
+  // the top setup stays on the desk at all times: hold the last one the scan
+  // ranked first, and on a fresh load fall back to the newest stored signal
+  const [heldSetup, setHeldSetup] = useState(null);
+  const [fallbackSetup, setFallbackSetup] = useState(null);
+  useEffect(() => {
+    const fresh = bot?.top?.[0];
+    if (fresh) setHeldSetup(fresh);
+  }, [bot?.top]);
+  useEffect(() => {
+    if (bot?.top?.length || heldSetup) return undefined;
+    let alive = true;
+    base44.entities.Signal.filter({ status: 'new' }, { sort: '-detected_at', limit: 1 })
+      .then((page) => {
+        if (alive && page.items?.[0]) setFallbackSetup(page.items[0]);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [bot?.top, heldSetup]);
+  const topSetup = bot?.top?.[0] || heldSetup || fallbackSetup || null;
   // a saved balance the desk keeps on the connection, refreshed every minute
   // so a failed live read never blanks the figure
   const [savedBalance, setSavedBalance] = useState(null);
@@ -287,9 +310,19 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
         </div>
       </div>
 
+      <TodayProgress
+        realizedToday={live.realized_today || 0}
+        dailyGoal={live.daily_goal ?? 0}
+        goalHit={live.goal_hit === true}
+        openCount={live.open_count ?? 0}
+        scanned={bot?.scanned || 0}
+        startingBalance={balanceUsd || 0}
+      />
+
       <LiveSignals
-        rows={bot?.top || []}
+        rows={topSetup ? [topSetup] : []}
         exchange={connection?.label}
+        held={!bot?.top?.length}
       />
 
       <ScannedCoins rows={bot?.top || []} scannedCount={bot?.scanned} />
@@ -302,6 +335,8 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
         closingAll={closingAll}
         hint="Your real positions on the exchange — each shows its exchange and pair. Closing sends a real sell order."
       />
+
+      <DayMovers best={live.day_best} worst={live.day_worst} />
 
       {recent.length ? (
         <div className="surface p-4">
