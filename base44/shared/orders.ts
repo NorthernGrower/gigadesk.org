@@ -1,7 +1,7 @@
 // Market order execution for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every request is bounded by
 // a 10s timeout and refusals are returned as values, never thrown.
-import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, KRAKEN_MESSAGES, fetchMarketConstraints } from "./exchanges.ts";
+import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, KRAKEN_MESSAGES, fetchMarketConstraints, readAccount } from "./exchanges.ts";
 import { decryptSecret } from "./crypto.ts";
 import { round } from "./market.ts";
 
@@ -51,8 +51,29 @@ async function guardConstraints(cfg, { usd, quantity, price, side, pair }) {
   return { ok: true, quantity: qty };
 }
 
-export async function placeMarketOrder(cfg, params) {
+export async function placeMarketOrder(cfg, paramsIn) {
+  let params = paramsIn;
   const side = params.side === "sell" ? "sell" : "buy";
+  // A close can never sell more than the account actually holds: exchanges
+  // that charge fees in the base asset (Kraken does) leave less than the
+  // recorded buy quantity, and selling the recorded amount is refused with
+  // EOrder:Insufficient funds — stranding the position. Cap the sell to the
+  // real holding, minus a small buffer so the fee never overshoots again.
+  if (side === "sell") {
+    const acct = await readAccount({
+      exchange: cfg.exchange,
+      testnet: Boolean(cfg.testnet),
+      api_key: cfg.api_key,
+      api_secret: cfg.api_secret,
+      passphrase: cfg.passphrase || "",
+    });
+    if (!acct.ok) return { ok: false, message: `Could not read the account before closing: ${acct.message}` };
+    const asset = String(params.symbol || "").toUpperCase();
+    const held = (acct.balances || []).find((b) => b && b.asset === asset);
+    const total = held ? Number(held.total) || 0 : 0;
+    if (!(total > 0)) return { ok: false, message: `The account holds no ${asset} to close` };
+    params = { ...params, quantity: Math.min(Number(params.quantity) || 0, total * 0.995) };
+  }
   // quoteAsset is the funding asset resolved from the account's balances
   // (USD or USDT on Kraken) — orders settle in the pair's quote currency
   const pair = `${String(params.symbol || "").toUpperCase()}${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
