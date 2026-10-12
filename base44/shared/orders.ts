@@ -98,6 +98,7 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
   }
   return {
     conn: {
+      id: stored.id,
       exchange: stored.exchange,
       label: info.label,
       testnet: Boolean(stored.testnet),
