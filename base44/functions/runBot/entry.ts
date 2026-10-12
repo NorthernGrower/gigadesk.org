@@ -857,7 +857,13 @@ export default async function (req) {
     // best and worst closed real trades of the day, so the desk can render
     // its progress and day movers without a second read
     const liveDayPct = Number(config.live_rules?.daily_target_pct ?? config.daily_target_pct) || 2;
-    const liveGoal = exchangeBalance != null ? round((exchangeBalance * liveDayPct) / 100) : null;
+    const liveGoalBase =
+      exchangeBalance != null
+        ? exchangeBalance
+        : managed.info?.balance_usd != null
+          ? Number(managed.info.balance_usd)
+          : null;
+    const liveGoal = liveGoalBase != null ? round((liveGoalBase * liveDayPct) / 100) : null;
     const liveDayTrades = todays
       .filter((t) => (t.mode || "paper") === "real")
       .map((t) => ({
