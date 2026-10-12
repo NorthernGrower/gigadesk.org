@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Bot, Radar, TrendingUp, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Image } from '@/components/ui/image';
+import FeaturedPick from '@/components/landing/FeaturedPick';
 // Ticker removed from the page for now; the TickerBox component, its stats
 // fetch and the gigaTicker function stay in place to bring it back later.
 // import TickerBox from '@/components/landing/TickerBox';
@@ -131,6 +132,9 @@ export default function Landing() {
             />
           </div>
         </section>
+
+        {/* featured call of the day */}
+        <FeaturedPick />
 
         {/* features */}
         <section className="grid gap-4 pb-14 md:grid-cols-3">

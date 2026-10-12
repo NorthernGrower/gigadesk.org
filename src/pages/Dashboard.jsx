@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Layers, Wallet } from 'lucide-react';
 import AlertsFeed from '@/components/dashboard/AlertsFeed';
-import BestBuyCard from '@/components/dashboard/BestBuyCard';
-import BestWorstPositions from '@/components/dashboard/BestWorstPositions';
+import TopPicks from '@/components/desk/TopPicks';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
@@ -247,16 +246,13 @@ export default function Dashboard() {
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-4">
-              {top ? (
-                <BestBuyCard
-                  row={top}
-                  targetPct={Number(config?.daily_target_pct) || 2}
-                  onOpenChart={() => navigate(`/coin/${top.symbol}`)}
-                  onAnalyze={() => navigate(`/coin/${top.symbol}?ai=1`)}
-                />
-              ) : (
-                <BestWorstPositions positions={bot?.positions || []} />
-              )}
+              <TopPicks
+                rows={bot.top}
+                positions={bot?.positions || []}
+                targetPct={Number(config?.daily_target_pct) || 2}
+                onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
+                onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
+              />
 
               <EquityPanel
                 startingBalance={Number(config?.starting_balance) || 10000}

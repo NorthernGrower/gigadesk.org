@@ -59,9 +59,11 @@ export default function BestBuyCard({ row, targetPct = 2, onOpenChart, onAnalyze
               <p className="font-heading text-lg font-semibold leading-tight">{row.symbol}</p>
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="num text-sm text-muted-foreground">{fmtPrice(row.price)}</span>
-                <span className={`num text-xs ${row.change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
-                  {fmtPct(row.change24h)}
-                </span>
+                {row.change24h != null ? (
+                  <span className={`num text-xs ${row.change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                    {fmtPct(row.change24h)}
+                  </span>
+                ) : null}
                 <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                   {TIER_LABEL[row.market_cap_bucket] || 'Tier'}
                 </span>
