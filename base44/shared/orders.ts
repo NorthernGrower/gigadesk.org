@@ -38,6 +38,12 @@ async function guardConstraints(cfg, { usd, quantity, price, side, pair }) {
     if (m.minNotional && spend < m.minNotional) {
       return { ok: false, message: `Order of ${round(spend, 2)} is below ${pair}'s minimum order value of ${m.minNotional}` };
     }
+    // the lot minimum applies to buys too: a buy sized below it is refused
+    // ('volume minimum not met') and every failed signed call counts toward
+    // the exchange's temporary lockout, so refuse it here without one
+    if (price && m.minQty && spend / price < m.minQty) {
+      return { ok: false, message: `Order of ${round(spend, 2)} buys less than ${pair}'s minimum of ${m.minQty} units at ${round(price, 8)}` };
+    }
     return { ok: true, usd: spend };
   }
   let qty = Number(quantity) || 0;

@@ -195,6 +195,34 @@ export default async function (req) {
             await base44.entities.Trade.update(t.id, extraUpdates);
           return false;
         }
+        // a locked key needs silence to clear: signed orders placed into a
+        // lockout count against it and extend the lock, so the close waits
+        // out the backoff instead of hammering the exchange each cycle
+        if (isBackedOff(connRow)) {
+          const lockAlert = asArray(
+            await base44.entities.Alert.filter(
+              {
+                trade_id: t.id,
+                kind: "order_failed",
+                created_date: { $gte: new Date(Date.now() - 30 * 60000).toISOString() },
+              },
+              { limit: 1 },
+            ),
+          );
+          if (!lockAlert.length)
+            await base44.entities.Alert.create({
+              symbol: t.symbol,
+              title: `${t.symbol} close waits out the exchange lockout`,
+              message: "The exchange key is temporarily locked after failed attempts — the position stays open and closes once the lock clears.",
+              mode: "live",
+              kind: "order_failed",
+              severity: "warning",
+              trade_id: t.id,
+            });
+          if (Object.keys(extraUpdates).length)
+            await base44.entities.Trade.update(t.id, extraUpdates);
+          return false;
+        }
         const sell = await placeMarketOrder(managed.conn, {
           symbol: t.symbol,
           side: "sell",
@@ -487,6 +515,20 @@ export default async function (req) {
       // scan only markets the account's funding currency can actually settle
       const listed = live.conn ? await fetchListedSymbols(live.conn, funding ? [funding.asset] : null) : null;
       if (listed) eligibleCount = listed.size;
+      // a symbol whose order just failed is left alone for an hour: every
+      // refused signed order still counts toward the exchange's temporary
+      // lockout, so re-firing into the same refusal each cycle never happens
+      const failedRecently = asArray(
+        await base44.entities.Alert.filter(
+          {
+            created_by_id: config.created_by_id,
+            kind: "order_failed",
+            mode: "live",
+            created_date: { $gte: new Date(Date.now() - 60 * 60000).toISOString() },
+          },
+          { limit: 50 },
+        ),
+      ).map((a) => a.symbol);
       board = await scanBoard({
         timeframe: config.timeframe || "1h",
         scope: config.market_cap_scope || "all",
@@ -517,6 +559,7 @@ export default async function (req) {
           })
           .map((t) => t.symbol),
         ...pending.map((t) => t.symbol),
+        ...failedRecently,
       ]);
       const blockedPaper = new Set([
         ...stillOpen.filter((t) => (t.mode || "paper") === "paper").map((t) => t.symbol),
