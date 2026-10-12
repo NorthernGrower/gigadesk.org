@@ -1,0 +1,44 @@
+{
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "position_sync",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "sync": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "refreshBalances"
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Sync balances and positions",
+            "description": "Reads the wallet and reconciles the desk's open positions with what the exchange holds"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "2-59/5 * * * *",
+      "one_time_date": null,
+      "timezone": "America/Edmonton",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "name": "Position Sync",
+  "description": "Every 5 minutes, offset from Balance Saver: reads Kraken balances and reconciles the live desk's open positions with what the exchange actually holds. Paired with Balance Saver this lands a full sync roughly every 2.5 minutes."
+}
