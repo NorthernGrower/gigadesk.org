@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/market.ts";
+import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
@@ -126,6 +126,15 @@ export default async function (req) {
     // from this list and the live block filters out the real ones, instead of
     // paying for a second identical read that only doubled entity traffic
     const openTrades = await readAll({ status: "open" });
+
+    // live prices for every symbol with an open position: one batched public
+    // call keeps exits (stop/target/trailing) on the real tape instead of the
+    // up-to-a-minute-old market snapshot, without per-symbol API calls
+    const livePrices = await fetchLivePrices(openTrades.map((t) => t.symbol));
+    for (const [sym, px] of livePrices) {
+      const coin = priceMap.get(sym);
+      if (coin && px > 0) coin.price = px;
+    }
     // managing existing real positions must work even while new live entries
     // are paused — the pause gates entries, never risk management
     const managed = await resolveLiveConnection(base44, liveConfigView, { manage: true, readOnly: dryRun });
@@ -668,6 +677,16 @@ export default async function (req) {
 
       const gateReason = entryGate;
       const constraints = live.conn ? await fetchMarketConstraints(live.conn) : null;
+      // trade from the live tape: refresh the wanted symbols' prices so real
+      // order sizing and target placement use the current price, not the
+      // snapshot the scan ran on
+      const livePx = await fetchLivePrices([
+        ...new Set([...liveWanted, ...paperWanted].map((r) => r.symbol)),
+      ]);
+      const atLive = (r) => {
+        const px = Number(livePx.get(r.symbol)) || 0;
+        return px > 0 ? { ...r, entry: px } : r;
+      };
       const minimumFor = (r) => entryMinimum(constraints, r.symbol, funding?.asset || QUOTE_ASSET[live.conn?.exchange] || "USDT", r.entry);
       const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
       const sizeLive = (r, slots) => liveEntrySize({ row: r, balance: quoteLeft, budget: liveBudget, slots,
@@ -676,10 +695,11 @@ export default async function (req) {
         const plans = [];
         for (const r of liveWanted) {
           if (stillOpen.some(t => t.symbol === r.symbol)) continue;
-          const size = sizeLive(r, Math.max(1, liveSlots - plans.length));
+          const rl = atLive(r);
+          const size = sizeLive(rl, Math.max(1, liveSlots - plans.length));
           if (!size) continue;
           plans.push({ symbol: r.symbol, side: r.side, score: r.score, size_usd: size,
-            entry: r.entry, stop: r.stop, target: engineV2 && champion ? engineTarget(r) : r.target });
+            entry: rl.entry, stop: r.stop, target: engineV2 && champion ? engineTarget(rl) : r.target });
           quoteLeft -= size * 1.005;
           liveBudget -= size;
         }
@@ -738,13 +758,14 @@ export default async function (req) {
         let realSizeUsd = 0;
         if (desk === "live" && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
           const liveFreeSlots = Math.max(1, liveSlots - opened.filter((o) => o.mode === "real").length);
-          realSizeUsd = sizeLive(r, liveFreeSlots);
+          const rl = atLive(r);
+          realSizeUsd = sizeLive(rl, liveFreeSlots);
           if (realSizeUsd >= 10) {
             real = await placeMarketOrder(live.conn, {
               symbol: r.symbol,
               side: "buy",
               usd: round(realSizeUsd, 2),
-              price: r.entry,
+              price: rl.entry,
             });
             if (!real.ok) {
               await base44.entities.Alert.create({
@@ -770,13 +791,13 @@ export default async function (req) {
             side: r.side,
             mode: "real",
             status: config.mode === "auto" ? "open" : "proposed",
-            entry_price: round(real.avg_price || r.entry, 8),
+            entry_price: round(real.avg_price || rl.entry, 8),
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
-            target_price: engineV2 && champion ? engineTarget(r) : r.target,
+            target_price: engineV2 && champion ? engineTarget(rl) : r.target,
             target_r: engineV2 && champion ? 2.5 : null,
-            peak_price: r.entry,
+            peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
             exchange: live.conn.exchange,

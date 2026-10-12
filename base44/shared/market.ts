@@ -228,6 +228,60 @@ export async function fetchCandles(symbol, interval = "1h", limit = 300) {
   return cacheSet(key, candles, 45000);
 }
 
+const KRAKEN_PUBLIC = "https://api.kraken.com/0/public";
+
+/**
+ * Live last prices for the handful of symbols the bot is acting on. One
+ * batched public call covers up to 100 symbols (weight 2), a single Kraken
+ * call covers pairs the US feed does not list, and a 5-second cache keeps
+ * overlapping cycles from repeating the calls — so tracking stays live
+ * without denting either exchange's rate limits.
+ */
+export async function fetchLivePrices(symbols, quoteAsset = "USDT") {
+  const wanted = [...new Set((symbols || []).filter(Boolean).map((s) => String(s).toUpperCase()))];
+  const map = new Map();
+  if (!wanted.length) return map;
+  const key = `live:${quoteAsset}:${wanted.slice().sort().join(",")}`;
+  const cached = cacheGet(key);
+  if (cached) return cached;
+
+  try {
+    for (const group of chunk(wanted, 100)) {
+      const qs = encodeURIComponent(JSON.stringify(group.map((s) => `${s}${quoteAsset}`)));
+      const rows = await fetchJson(`${BASE}/ticker/price?symbols=${qs}`, 8000);
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const px = Number(r.price) || 0;
+        if (px > 0) map.set(String(r.symbol).slice(0, -quoteAsset.length), px);
+      }
+    }
+  } catch (err) {
+    console.log(`live prices failed: ${err && err.message}`);
+  }
+
+  // pairs the US feed does not list (real positions can sit on other
+  // exchanges): one best-effort Kraken public call, no keys involved
+  const missing = wanted.filter((s) => !map.has(s));
+  if (missing.length) {
+    try {
+      const res = await fetchJson(
+        `${KRAKEN_PUBLIC}/Ticker?pair=${missing.map((s) => `${s}USD`).join(",")}`,
+        8000,
+      );
+      const rows = (res && res.result) || {};
+      for (const sym of missing) {
+        const pairKey = rows[`${sym}USD`]
+          ? `${sym}USD`
+          : Object.keys(rows).find((k) => k.toUpperCase().startsWith(sym));
+        const px = pairKey ? Number(rows[pairKey].c && rows[pairKey].c[0]) || 0 : 0;
+        if (px > 0) map.set(sym, px);
+      }
+    } catch (err) {
+      console.log(`kraken live prices failed: ${err && err.message}`);
+    }
+  }
+  return cacheSet(key, map, 5000);
+}
+
 export function chunk(items, size) {
   const out = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
