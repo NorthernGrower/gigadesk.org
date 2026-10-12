@@ -619,7 +619,7 @@ export default async function (req) {
               await base44.entities.Alert.create({
                 symbol: r.symbol,
                 title: `Real order failed on ${r.symbol}`,
-                message: `${live.conn.label} said: ${real.message}`,
+                message: real.message,
                 kind: "order_failed",
                 severity: "danger",
               });

@@ -229,7 +229,7 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
 }
 
 // ---- Kraken (HMAC-SHA512 over path + sha256(nonce + body)) ----
-async function krakenOrder(cfg, { symbol, usd, quantity, price }, side, pair, idem) {
+async function krakenOrder(cfg, { symbol, usd, quantity, price, validate }, side, pair, idem) {
   const px = Number(price) || 0;
   const guard = await guardConstraints(cfg, { usd, quantity, price, side, pair });
   if (!guard.ok) return { ok: false, message: guard.message };
@@ -240,7 +240,9 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price }, side, pair, id
   if (!(vol > 0)) return { ok: false, message: "No usable price to size a market order on Kraken" };
   const path = "/0/private/AddOrder";
   const nonce = String(Date.now() * 1000);
-  const body = `nonce=${nonce}&pair=${pair}&type=market&ordertype=market&side=${side}&volume=${vol}`;
+  // Kraken's `type` is the direction (buy/sell) and `ordertype` is market —
+  // anything else comes back as EGeneral:Invalid arguments:type
+  const body = `nonce=${nonce}&pair=${pair}&type=${side}&ordertype=market&volume=${vol}${validate ? "&validate=true" : ""}`;
   const sign = await krakenSign(cfg.api_secret, path, nonce, body);
   const res = await callJson(`https://api.kraken.com${path}`, {
     method: "POST",
@@ -253,13 +255,15 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price }, side, pair, id
   });
   const data = res.data || {};
   const failed = Array.isArray(data.error) ? data.error : [];
-  const first = Object.values(((data.result || {}).orders) || {})[0];
-  if (!failed.length && first) {
+  // AddOrder answers with result.txid (an array of order ids), not an orders map
+  const result = data.result || {};
+  const txid = Array.isArray(result.txid) ? result.txid[0] : result.txid;
+  if (!failed.length && txid) {
     return {
       ok: true,
-      order_id: String(first.txid || first.orderid || ""),
-      filled_qty: round(Number(first.vol_exec || first.vol) || 0, 8),
-      avg_price: Number(first.price) ? round(Number(first.price), 6) : null,
+      order_id: String(txid),
+      filled_qty: vol,
+      avg_price: null,
       message: `Market ${side} sent to Kraken`,
     };
   }
