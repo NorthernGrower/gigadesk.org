@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { readAccount } from '../../shared/exchanges.ts';
+import { QUOTE_ASSET } from '../../shared/orders.ts';
 import { encryptSecret, decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -13,6 +14,8 @@ const SAFE_FIELDS = [
   "can_trade",
   "last_checked_at",
   "balances",
+  "balance_usd",
+  "balance_updated_at",
 ];
 
 export default async function(req) {
@@ -58,6 +61,18 @@ export default async function(req) {
       can_trade: account.canTrade,
       last_checked_at: new Date().toISOString(),
       balances: account.balances.slice(0, 10),
+      // save the fresh balance so the desk keeps a figure when a later
+      // read fails
+      ...(account.ok
+        ? {
+            balance_usd:
+              (() => {
+                const quoteRow = (account.balances || []).find((b) => b.asset === (QUOTE_ASSET[conn.exchange] || 'USDT'));
+                return quoteRow ? Math.round((Number(quoteRow.total) || 0) * 100) / 100 : 0;
+              })(),
+            balance_updated_at: new Date().toISOString(),
+          }
+        : {}),
     };
     await base44.entities.ExchangeConnection.update(id, patch);
 

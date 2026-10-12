@@ -44,9 +44,38 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
   const { toast } = useToast();
   const [toggling, setToggling] = useState(false);
   const [recent, setRecent] = useState([]);
+  // a saved balance the desk keeps on the connection, refreshed every minute
+  // so a failed live read never blanks the figure
+  const [savedBalance, setSavedBalance] = useState(null);
   const live = bot?.live || {};
   const connection = live.connection;
   const staleScan = bot?.updated_at ? Date.now() - Date.parse(bot.updated_at) > 10 * 60000 : true;
+  const connectionId = bot?.config?.real_connection_id || connection?.id || null;
+  const balanceUsd =
+    live.balance_usd != null ? live.balance_usd : savedBalance?.usd != null ? savedBalance.usd : null;
+  const balanceAsOf = live.balance_as_of || savedBalance?.asOf || connection?.last_checked_at || null;
+
+  useEffect(() => {
+    if (!connectionId) return undefined;
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await base44.functions.invoke('checkExchangeConnection', { id: connectionId });
+        const conn = res.data?.connection;
+        if (alive && conn && conn.balance_usd != null) {
+          setSavedBalance({ usd: conn.balance_usd, asOf: conn.balance_updated_at });
+        }
+      } catch {
+        // a failed check keeps the last saved figure
+      }
+    };
+    check();
+    const timer = setInterval(check, 60000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [connectionId]);
 
   useEffect(() => {
     let alive = true;
@@ -168,21 +197,27 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
 
       {live.balance_stale ? (
         <div className="rounded-xl border border-rose-400/30 bg-rose-400/5 p-3 text-[12px] text-rose-300">
-          The last balance read failed — figures below may be out of date. {live.balance_error || ''}
+          The last balance read failed — showing the saved balance
+          {balanceAsOf ? ` from ${ago(balanceAsOf)}` : ''}
+          . Figures below may be out of date. {live.balance_error || ''}
         </div>
       ) : null}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard
           label="Equity"
-          value={live.balance_usd != null ? fmtUsd((live.balance_usd || 0) + (live.unrealized || 0)) : '—'}
+          value={balanceUsd != null ? fmtUsd((balanceUsd || 0) + (live.unrealized || 0)) : '—'}
           sub="exchange balance plus unrealised P&L"
           icon={Wallet}
         />
         <StatCard
           label="Exchange balance"
-          value={live.balance_usd != null ? fmtUsd(live.balance_usd) : '—'}
-          sub={live.balance_usd != null ? 'exchange-reported quote balance' : 'unavailable — verify the connection'}
+          value={balanceUsd != null ? fmtUsd(balanceUsd) : '—'}
+          sub={
+            balanceUsd != null
+              ? `exchange-reported · saved ${ago(balanceAsOf)}`
+              : 'unavailable — verify the connection'
+          }
           icon={Landmark}
         />
         <StatCard

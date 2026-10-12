@@ -814,6 +814,7 @@ export default async function (req) {
 
     // the exchange's own quote-currency balance, refreshed on full cycles only
     let exchangeBalance = null;
+    let balanceAsOf = null;
     let balanceStale = false;
     let balanceError = null;
     if (managed.conn && !light) {
@@ -828,10 +829,23 @@ export default async function (req) {
         const quote = QUOTE_ASSET[managed.conn.exchange] || "USDT";
         const row = (acct.balances || []).find((b) => b.asset === quote);
         exchangeBalance = row ? round(Number(row.total) || 0, 2) : 0;
+        // keep the balance on the connection so a later failed read never
+        // leaves the desk blank
+        await base44.asServiceRole.entities.ExchangeConnection.update(managed.conn.id, {
+          balance_usd: exchangeBalance,
+          balance_updated_at: new Date().toISOString(),
+          balances: (acct.balances || []).slice(0, 10),
+        });
+        balanceAsOf = new Date().toISOString();
       } else {
         // never treat a failed read as current: the desk shows the failure
         balanceStale = true;
         balanceError = acct.message;
+        // but the last saved balance still beats a blank figure
+        if (managed.conn.balance_usd != null) {
+          exchangeBalance = round(Number(managed.conn.balance_usd) || 0, 2);
+          balanceAsOf = managed.conn.balance_updated_at || null;
+        }
       }
     }
 
@@ -998,6 +1012,7 @@ export default async function (req) {
           : null,
         eligible_markets: eligibleCount,
         balance_usd: exchangeBalance,
+        balance_as_of: balanceAsOf,
         balance_stale: balanceStale,
         balance_error: balanceError,
         open_count: livePositions.length,

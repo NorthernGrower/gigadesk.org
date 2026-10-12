@@ -71,6 +71,15 @@
         "type": "object",
         "additionalProperties": true
       }
+    },
+    "balance_usd": {
+      "type": "number",
+      "description": "Last saved quote-currency balance, kept on the connection so the desk never goes blank"
+    },
+    "balance_updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the saved balance was last read from the exchange"
     }
   },
   "required": [
