@@ -6,6 +6,7 @@
 import { fetchCandles, chunk } from "./market.ts";
 import { analyzeCoin } from "./strategy.ts";
 import { pickCandidates } from "./scan.ts";
+import { KRAKEN_PAIRS, fetchKrakenCandles } from "./kraken.ts";
 
 const WARMUP = 300;
 const FETCH_LIMIT = 500;
@@ -86,10 +87,10 @@ function btcRegimeMap(btcCandles) {
  * 24h volume are reconstructed from the candles themselves, so no current-day
  * ticker value leaks into historical bars.
  */
-function prepSymbol(coin, candles) {
+function prepSymbol(coin, candles, endBar) {
   if (!candles || candles.length < WARMUP + AUDIT_DAYS * BARS_PER_DAY + 2) return null;
   const rowsByJ = new Map();
-  const end = Math.min(candles.length - 1, WARMUP + AUDIT_DAYS * BARS_PER_DAY);
+  const end = endBar != null ? endBar : Math.min(candles.length - 1, WARMUP + AUDIT_DAYS * BARS_PER_DAY);
   for (let j = WARMUP; j < end; j++) {
     const price = candles[j].c;
     const back = candles[j - BARS_PER_DAY];
@@ -384,5 +385,288 @@ export async function runAudit(coins, opts = {}) {
     iterations,
     per_coin: perCoin,
     notes: ITERATION_NOTES,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Kraken optimizer: a month of Kraken candles, fetched once per round, with
+// many rule variants simulated over the same prepared signals. Kraken taker
+// fees are higher than Binance US, so costs stay conservative at 0.5% round
+// trip - a variant must survive realistic fees to be called profitable.
+// ---------------------------------------------------------------------------
+
+const OPT_COST_PCT = 0.5;
+const TRAIL_ATR = 1.5;
+
+/**
+ * Variant knob set. Defaults are the existing engine rules; each candidate
+ * change turns specific knobs on. A variant is a pure config - no engine code
+ * changes until a winner is found.
+ */
+export function variantCfg(id, description, over = {}) {
+  return {
+    id,
+    description,
+    min_score: 62,
+    require_daily_target: true,
+    htf_must_agree: false,
+    htf_must_confirm: false,
+    min_adx: 0,
+    require_di_owned: false,
+    min_confluence: 0,
+    min_vol_ratio: 0,
+    max_stretch_pct: 0,
+    no_chasing: false,
+    require_fib_pullback: false,
+    min_rr: 0,
+    min_stop_pct: 0,
+    max_stop_pct: 0,
+    skip_riskon_long: false,
+    skip_sideways_long: false,
+    cooldown_bars: 6,
+    target_r: null,
+    be_stop_r: null,
+    trail_r: null,
+    time_underwater_bars: 0,
+    time_flat_bars: 48,
+    long_only: false,
+    ...over,
+  };
+}
+
+function gateFor(cfg) {
+  return (row) => {
+    if (!row || row.score < cfg.min_score) return false;
+    if (cfg.long_only && row.side !== "long") return false;
+    if (cfg.require_daily_target) {
+      if (cfg.target_r != null) {
+        const move = cfg.target_r * (Number(row.stop_pct) || 2);
+        if (move < 2) return false;
+      } else if (!row.meets_daily_target) return false;
+    }
+    if (cfg.htf_must_agree && htfOpposes(row)) return false;
+    if (cfg.htf_must_confirm) {
+      const dir = row.side === "long" ? "up" : "down";
+      if (!row.htf_trend || row.htf_trend !== dir) return false;
+    }
+    const ind = row.indicators || {};
+    if (cfg.min_adx && (Number(ind.adx) || 0) < cfg.min_adx) return false;
+    if (cfg.require_di_owned) {
+      const owned =
+        row.side === "long"
+          ? (Number(ind.plus_di) || 0) > (Number(ind.minus_di) || 0)
+          : (Number(ind.minus_di) || 0) > (Number(ind.plus_di) || 0);
+      if (!owned) return false;
+    }
+    if (cfg.min_confluence && (row.confluence || 0) < cfg.min_confluence) return false;
+    if (cfg.min_vol_ratio && (Number(ind.vol_ratio) || 0) < cfg.min_vol_ratio) return false;
+    if (cfg.max_stretch_pct && ind.ema20) {
+      const stretch = ((row.price - ind.ema20) / ind.ema20) * 100 * (row.side === "long" ? 1 : -1);
+      if (stretch > cfg.max_stretch_pct) return false;
+    }
+    if (cfg.no_chasing && row.fib_phase === "chasing") return false;
+    if (cfg.require_fib_pullback) {
+      // true pullback phases only: shallow, golden, deep
+      if (!["shallow", "golden", "deep"].includes(row.fib_phase || "")) return false;
+    }
+    if (cfg.min_stop_pct && (Number(row.stop_pct) || 0) < cfg.min_stop_pct) return false;
+    if (cfg.max_stop_pct && (Number(row.stop_pct) || 0) > cfg.max_stop_pct) return false;
+    if (cfg.min_rr && (Number(row.risk_reward) || 0) < cfg.min_rr) return false;
+    return true;
+  };
+}
+
+function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
+  const gate = gateFor(cfg);
+  const trades = [];
+  let missed = 0;
+  let pos = null;
+  let cooldownUntil = 0;
+  const end = candles.length - 1;
+  for (let j = WARMUP; j < end; j++) {
+    const bar = candles[j];
+    if (pos) {
+      const long = pos.side === "long";
+      const hitStop = long ? bar.l <= pos.stop : bar.h >= pos.stop;
+      const hitTarget = long ? bar.h >= pos.target : bar.l <= pos.target;
+      const held = j - pos.j;
+      let exitPx = null;
+      let reason = null;
+      if (hitStop) {
+        exitPx = pos.stop;
+        reason = "stop";
+      } else if (hitTarget) {
+        exitPx = pos.target;
+        reason = "target";
+      } else {
+        const prevClose = candles[j - 1].c;
+        const underwater = long ? prevClose < pos.entry : prevClose > pos.entry;
+        if (cfg.time_underwater_bars && held >= cfg.time_underwater_bars && underwater) {
+          exitPx = bar.o;
+          reason = "time";
+        } else if (cfg.time_flat_bars && held >= cfg.time_flat_bars) {
+          exitPx = bar.c;
+          reason = "time";
+        }
+      }
+      if (exitPx != null) {
+        const raw =
+          long ? ((exitPx - pos.entry) / pos.entry) * 100 : ((pos.entry - exitPx) / pos.entry) * 100;
+        trades.push({
+          symbol: pos.symbol,
+          side: pos.side,
+          entry_time: pos.entryTime,
+          exit_time: bar.t,
+          raw_pct: Math.round(raw * 100) / 100,
+          net_pct: Math.round((raw - OPT_COST_PCT) * 100) / 100,
+          stop_pct: pos.stopPct,
+          hold_bars: held,
+          reason,
+          regime: regimeLabel(btcByTime.get(pos.entryTime)),
+        });
+        pos = null;
+        cooldownUntil = j + (Number(cfg.cooldown_bars) || COOLDOWN_BARS);
+      } else if (cfg.be_stop_r != null || cfg.trail_r != null) {
+        const prevClose = candles[j - 1].c;
+        const gainR = long ? (prevClose - pos.entry) / pos.unit : (pos.entry - prevClose) / pos.unit;
+        if (cfg.be_stop_r != null && gainR >= cfg.be_stop_r) {
+          const be = long ? pos.entry * 1.0005 : pos.entry * 0.9995;
+          pos.stop = long ? Math.max(pos.stop, be) : Math.min(pos.stop, be);
+        }
+        if (cfg.trail_r != null && gainR >= cfg.trail_r) {
+          const trail = long ? prevClose - TRAIL_ATR * pos.atr : prevClose + TRAIL_ATR * pos.atr;
+          pos.stop = long ? Math.max(pos.stop, trail) : Math.min(pos.stop, trail);
+        }
+        if (gate(rowsByJ.get(j))) missed += 1;
+      }
+      continue;
+    }
+    if (j < cooldownUntil) {
+      if (gate(rowsByJ.get(j))) missed += 1;
+      continue;
+    }
+    const row = rowsByJ.get(j);
+    if (gate(row)) {
+      // regime gates: BTC's 24h tape at entry time. Risk-on longs measured the
+      // weakest in every round - a moon-chasing tape is where this engine's
+      // entries are least reliable - and sideways longs second weakest.
+      if (row.side === "long" && (cfg.skip_riskon_long || cfg.skip_sideways_long)) {
+        const regime = regimeLabel(btcByTime.get(bar.t));
+        if (
+          (cfg.skip_riskon_long && regime === "risk_on") ||
+          (cfg.skip_sideways_long && regime === "sideways")
+        ) {
+          missed += 1;
+          continue;
+        }
+      }
+      const unit = Math.abs(bar.c - Number(row.stop));
+      if (unit > 0) {
+        const target =
+          cfg.target_r != null
+            ? row.side === "long"
+              ? bar.c + cfg.target_r * unit
+              : bar.c - cfg.target_r * unit
+            : Number(row.target);
+        pos = {
+          symbol: row.symbol,
+          side: row.side,
+          entry: bar.c,
+          stop: Number(row.stop),
+          target,
+          stopPct: (unit / bar.c) * 100,
+          atr: Number(row.indicators && row.indicators.atr) || bar.c * 0.02,
+          unit,
+          j,
+          entryTime: bar.t,
+        };
+      }
+    }
+  }
+  return { trades, missed };
+}
+
+/**
+ * One optimizer round: fetches a month of Kraken candles once, prepares the
+ * engine's signal for every bar, and simulates every variant over it. The
+ * signal pass is shared, so the variants differ only by their rules.
+ */
+export async function runOptimize(coins, variants, opts = {}) {
+  const capMap = new Map((coins || []).map((c) => [c.symbol, c]));
+  const maxSymbols = opts.maxSymbols || 12;
+  const universe = [];
+  for (const { pair, symbol } of KRAKEN_PAIRS) {
+    const cap = capMap.get(symbol);
+    if (!cap) continue;
+    universe.push({ ...cap, kraken_pair: pair });
+    if (universe.length >= maxSymbols) break;
+  }
+  const btcByTime = btcRegimeMap(await fetchKrakenCandles("XBTUSDT"));
+
+  const fetched = [];
+  for (const group of chunk(universe, 6)) {
+    const settled = await Promise.allSettled(
+      group.map((c) => fetchKrakenCandles(c.kraken_pair)),
+    );
+    settled.forEach((res, i) => {
+      if (res.status === "fulfilled" && res.value) fetched.push({ coin: group[i], candles: res.value });
+    });
+  }
+  const staleSymbols = [];
+  const eligible = fetched.filter((f) => {
+    const stale = Date.now() - f.candles[f.candles.length - 1].t > 4 * 3600000;
+    if (stale) staleSymbols.push(f.coin.symbol);
+    return !stale && f.candles.length >= WARMUP + AUDIT_DAYS * BARS_PER_DAY + 2;
+  });
+
+  const slots = {};
+  const perCoin = {};
+  const symbolsUsed = [];
+  for (const { coin, candles } of eligible) {
+    const ready = prepSymbol(coin, candles, candles.length - 1);
+    if (!ready) continue;
+    symbolsUsed.push(coin.symbol);
+    for (const cfg of variants) {
+      const slot = (slots[cfg.id] = slots[cfg.id] || { trades: [], missed: 0 });
+      const sim = simulateCfg(candles, ready.rowsByJ, cfg, btcByTime);
+      slot.trades.push(...sim.trades);
+      slot.missed += sim.missed;
+      for (const t of sim.trades) {
+        const pc = (perCoin[t.symbol] = perCoin[t.symbol] || {});
+        const v = (pc[cfg.id] = pc[cfg.id] || { trades: 0, net_pct: 0, wins: 0 });
+        v.trades += 1;
+        if (t.net_pct > 0) v.wins += 1;
+        v.net_pct = Math.round((v.net_pct + t.net_pct) * 100) / 100;
+      }
+    }
+  }
+
+  const variantsOut = {};
+  for (const cfg of variants) {
+    const slot = slots[cfg.id] || { trades: [], missed: 0 };
+    const { description, ...knobs } = cfg;
+    variantsOut[cfg.id] = {
+      ...metricsFor(slot.trades, slot.missed),
+      description,
+      knobs,
+    };
+  }
+  return {
+    timeframe: "1h",
+    days: 30,
+    source: "kraken",
+    symbols: symbolsUsed.length,
+    symbols_used: symbolsUsed,
+    stale_symbols_excluded: staleSymbols,
+    universe: universe.map((u) => u.symbol),
+    costs: { round_trip_pct: OPT_COST_PCT, note: "Kraken taker fees plus slippage, charged on every simulated trade" },
+    sizing: {
+      starting_balance: STARTING_BALANCE,
+      risk_per_trade_pct: RISK_PCT,
+      position_cap_pct: SIZE_CAP_PCT,
+      cooldown_bars: COOLDOWN_BARS,
+    },
+    variants: variantsOut,
+    per_coin: perCoin,
   };
 }
