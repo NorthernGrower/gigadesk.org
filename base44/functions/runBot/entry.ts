@@ -6,7 +6,7 @@ import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shar
 import { readAccount, fetchListedSymbols, fetchMarketConstraints, pickQuoteBalance, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
-import { entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
+import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
 const DEFAULT_CONFIG = {
@@ -668,11 +668,7 @@ export default async function (req) {
 
       const gateReason = entryGate;
       const constraints = live.conn ? await fetchMarketConstraints(live.conn) : null;
-      const minimumFor = (r) => {
-        const pair = `${r.symbol}${funding?.asset || QUOTE_ASSET[live.conn?.exchange] || "USDT"}`;
-        const m = constraints?.get(pair);
-        return Math.max(10, Number(m?.minNotional) || 0, (Number(m?.minQty) || 0) * r.entry * 1.01);
-      };
+      const minimumFor = (r) => entryMinimum(constraints, r.symbol, funding?.asset || QUOTE_ASSET[live.conn?.exchange] || "USDT", r.entry);
       const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
       const sizeLive = (r, slots) => liveEntrySize({ row: r, balance: quoteLeft, budget: liveBudget, slots,
         riskPct: liveRiskPct, minimum: minimumFor(r) });

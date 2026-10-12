@@ -1,7 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, pickFundingQuote } from "../../shared/exchanges.ts";
+import { readAccount, pickFundingQuote, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
+import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
 import { recordLesson } from "../../shared/learn.ts";
 
 /** Exit maths shared by the single close and the close-everything action. */
@@ -162,25 +163,53 @@ export default async function (req) {
         });
         const funding = acct.ok ? pickFundingQuote(acct.balances, live.conn.exchange) : null;
         const balance = funding ? funding.amount : 0;
+        const entry = Number(trade.entry_price) || 0;
+        // only fire a buy in a market the account can actually settle —
+        // ordering an unlisted symbol is a refused signed call and can lock
+        // the key, so it is answered here without one
+        const listed = await fetchListedSymbols(live.conn, funding ? [funding.asset] : null);
+        if (listed && !listed.has(trade.symbol)) {
+          return Response.json(
+            { error: `${trade.symbol} is not listed on ${live.conn.label} in your funding currency (${funding?.asset || "quote"})` },
+            { status: 409 },
+          );
+        }
         const LR = config.live_rules || {};
         const liveRiskPct = Math.min(25, Number(LR.risk_per_trade_pct ?? config.risk_per_trade_pct ?? 4) || 4);
-        const entry = Number(trade.entry_price) || 0;
-        const stopDist =
-          Math.abs(entry - (Number(trade.stop_price) || 0)) ||
-          entry * ((Number(config.default_stop_pct) || 2.5) / 100);
-        realSize =
-          balance >= 10 && stopDist > 0
-            ? Math.min(((balance * liveRiskPct) / 100 / stopDist) * entry, balance)
-            : size;
+        // the same sizing the bot entries use: risked between entry and stop,
+        // a fee buffer under the spendable balance, and at or above the
+        // pair's exchange minimum so Kraken accepts the volume
+        const constraints = await fetchMarketConstraints(live.conn);
+        const stop = Number(trade.stop_price) || entry * (1 - (Number(config.default_stop_pct) || 2.5) / 100);
+        const capUsd = Number(LR.live_cap_usd ?? config.live_cap_usd ?? 0) || 0;
+        const openReal = asArray(
+          await base44.entities.Trade.filter({ status: "open", mode: "real" }, { limit: 200 }),
+        )
+          .filter((t) => t.created_by_id === trade.created_by_id)
+          .reduce((a, t) => a + (Number(t.size_usd) || 0), 0);
+        realSize = liveEntrySize({
+          row: { entry, stop },
+          balance,
+          budget: capUsd > 0 ? capUsd - openReal : balance,
+          slots: 1,
+          riskPct: liveRiskPct,
+          minimum: entryMinimum(constraints, trade.symbol, funding?.asset, entry),
+        });
         real =
           realSize >= 10
             ? await placeMarketOrder(live.conn, {
                 symbol: trade.symbol,
                 side: "buy",
                 usd: round(realSize, 2),
-                price: Number(trade.entry_price) || 0,
+                price: entry,
               })
-            : { ok: false, message: "The real order size is below the $10 minimum" };
+            : {
+                ok: false,
+                message:
+                  balance < 10
+                    ? `No spendable ${funding?.asset || "quote currency"} on ${live.conn.label} to fund the order`
+                    : `After the risk rules the order sits below ${trade.symbol}'s exchange minimum — raise risk per trade or the budget cap`,
+              };
         if (!real.ok) {
           return Response.json({ error: `The exchange refused the order: ${real.message}` }, { status: 502 });
         }

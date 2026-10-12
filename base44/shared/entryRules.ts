@@ -34,6 +34,13 @@ export function gateReason(row, desk, rules) {
   return null;
 }
 
+/** The smallest USD order a pair will accept on this exchange, or $10. */
+export function entryMinimum(constraints, symbol, quoteAsset, entry) {
+  const pair = `${String(symbol || "").toUpperCase()}${quoteAsset || "USDT"}`;
+  const m = constraints ? constraints.get(pair) : null;
+  return Math.max(10, Number(m?.minNotional) || 0, (Number(m?.minQty) || 0) * entry * 1.01);
+}
+
 export function liveEntrySize({ row, balance, budget, slots, riskPct, minimum = 10 }) {
   const available = Math.min(Math.max(0, balance) * 0.995, Math.max(0, budget));
   const minOrder = Math.max(10, Number(minimum) || 10);
