@@ -15,7 +15,7 @@ export default function ConnectionCard({ conn, busy, onCheck, onRemove, onConver
   const ok = conn.status === 'connected';
   const balances = Array.isArray(conn.balances) ? conn.balances.slice(0, 5) : [];
   // cash held in a currency the bot cannot trade with — Kraken has no
-  // fiat-to-fiat route, so it swaps into USDT on the USDT/fiat market
+  // fiat-to-fiat route, so it buys USD on the USD/fiat market
   const fiat = (conn.balances || []).find((b) => ['CAD', 'EUR', 'GBP'].includes(b.asset) && (Number(b.total) || 0) >= 1);
 
   return (
@@ -87,8 +87,8 @@ export default function ConnectionCard({ conn, busy, onCheck, onRemove, onConver
                 Confirm convert
               </Button>
             ) : (
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmConvert(true)} title="Swaps this cash into USDT on the USDT market so the bot can trade it">
-                Convert {fiat.asset} to USDT
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmConvert(true)} title="Buys USD with this cash on the USD market so the bot can trade it">
+                Convert {fiat.asset} to USD
               </Button>
             )
           )}

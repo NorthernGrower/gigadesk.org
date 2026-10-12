@@ -58,7 +58,7 @@ export default function ConnectionsManager({ showSafety = false }) {
       const res = await base44.functions.invoke('convertToUsdt', { id: conn.id, action: 'execute' });
       const data = res && res.data ? res.data : res;
       toast({
-        title: data && data.ok ? 'Converted to USDT' : 'Convert failed',
+        title: data && data.ok ? 'Converted to USD' : 'Convert failed',
         description: (data && data.message) || '',
         variant: data && data.ok ? undefined : 'destructive',
       });

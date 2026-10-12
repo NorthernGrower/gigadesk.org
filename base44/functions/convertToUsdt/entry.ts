@@ -6,12 +6,12 @@ import {
   isBackedOff,
 } from "../../shared/exchanges.ts";
 import { decryptSecret } from "../../shared/crypto.ts";
-import { convertToUsdt } from "../../shared/orders.ts";
+import { convertFiatToUsd } from "../../shared/orders.ts";
 import { round } from "../../shared/market.ts";
 
-// Kraken offers no fiat-to-fiat conversion through its API and no fiat/fiat
-// market, but it lists USDT/fiat pairs — so non-USD cash (CAD, EUR, GBP) is
-// swapped into USDT, which the bot then spends on USDT-settled pairs.
+// Kraken offers no fiat-to-fiat conversion UI, but it lists USD/fiat markets —
+// so non-USD cash (CAD, EUR, GBP) is swapped into USD, the currency the bot's
+// orders settle in. (USDT is restricted in some Canadian provinces, e.g. CA:SK.)
 
 export default async function (req) {
   try {
@@ -70,7 +70,7 @@ export default async function (req) {
       });
     }
 
-    const res = await convertToUsdt(cfg, { amount: fiat.total, currency: fiat.asset });
+    const res = await convertFiatToUsd(cfg, { amount: fiat.total, currency: fiat.asset });
     // refresh the saved balances either way so the card shows the new state
     const after = await readAccount(cfg);
     if (after.ok) await saveBalance(base44, conn, after, after.balances);
