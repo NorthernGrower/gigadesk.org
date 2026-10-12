@@ -63,7 +63,11 @@ function tierFor(index) {
 /**
  * Symbol -> market cap map from free feeds (15 min cache). The scan runtime is
  * blocked by some providers, so sources are tried in order until one answers.
+ * Whichever source answered last is tried first next time: coingecko and
+ * coincap sit down for days (429s, 530s), and re-probing them before a working
+ * source burns tens of seconds of every caps refresh.
  */
+let lastGoodCapSource = null;
 async function loadCaps() {
   const cached = cacheGet("caps");
   if (cached) return cached;
@@ -99,6 +103,11 @@ async function loadCaps() {
     },
   ];
 
+  if (lastGoodCapSource) {
+    const idx = sources.findIndex((s) => s.name === lastGoodCapSource);
+    if (idx > 0) sources.unshift(...sources.splice(idx, 1));
+  }
+
   for (const src of sources) {
     try {
       const lists = await Promise.all(
@@ -123,6 +132,7 @@ async function loadCaps() {
       }
       if (caps.size) {
         console.log(`caps loaded from ${src.name}: ${caps.size} symbols`);
+        lastGoodCapSource = src.name;
         return cacheSet("caps", caps, 15 * 60 * 1000);
       }
     } catch (err) {

@@ -82,7 +82,9 @@ export async function scanBoard({
   const candidates = pickCandidates(scoped, count, extraSymbols);
 
   const rows = [];
-  for (const group of chunk(candidates, 6)) {
+  // kline requests are cheap (weight 2 each, far under the limit), so a
+  // wider batch shortens the scan's serial rounds from ~10 to ~6
+  for (const group of chunk(candidates, 10)) {
     const settled = await Promise.allSettled(
       group.map((c) => fetchCandles(c.symbol, timeframe, 300)),
     );
