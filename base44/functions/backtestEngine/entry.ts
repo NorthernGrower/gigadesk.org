@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, fetchCandles, chunk } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { pickCandidates } from "../../shared/scan.ts";
+import { runAudit } from "../../shared/audit.ts";
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
@@ -18,6 +19,29 @@ export default async function (req) {
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
+
+    // one-time audit session: three engine iterations (baseline / A / B) over
+    // one fixed historical window, identical markets, sizing, costs and
+    // execution rules across all three. Results are saved to AuditRun.
+    if (body.mode === "audit") {
+      const { coins } = await fetchMarkets();
+      const result = await runAudit(coins, {
+        timeframe: body.timeframe === "4h" ? "4h" : "1h",
+        maxSymbols: Math.min(Number(body.max_symbols) || 12, 20),
+      });
+      const saved = await base44.asServiceRole.entities.AuditRun
+        .create({
+          label: `Trade engine audit - ${result.timeframe}, ${result.days}d, ${result.symbols} symbols`,
+          ran_at: new Date().toISOString(),
+          timeframe: result.timeframe,
+          window_days: result.days,
+          symbols: result.symbols,
+          results: result,
+        })
+        .catch(() => null);
+      return Response.json({ run_id: saved ? saved.id : null, ...result });
+    }
+
     const timeframe = body.timeframe === "4h" ? "4h" : "1h";
     const maxSymbols = Math.min(Number(body.max_symbols) || 12, 40);
     const minScore = Number(body.min_score) || 62;

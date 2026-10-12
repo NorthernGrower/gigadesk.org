@@ -1,0 +1,54 @@
+{
+  "name": "AuditRun",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string",
+      "description": "What this run covered, e.g. the timeframe, window length and symbol count"
+    },
+    "ran_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timeframe": {
+      "type": "string"
+    },
+    "window_days": {
+      "type": "number"
+    },
+    "symbols": {
+      "type": "number"
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The full comparison result of the audit session"
+    },
+    "verdict": {
+      "type": "string",
+      "description": "The recommended iteration and the reasoning, filled in after review"
+    }
+  },
+  "required": [
+    "label",
+    "ran_at"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
