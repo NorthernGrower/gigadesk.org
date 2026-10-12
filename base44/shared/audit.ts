@@ -70,12 +70,12 @@ function regimeLabel(change) {
   return "sideways";
 }
 
-/** BTC's 24h move at each hourly timestamp - the market-condition proxy. */
-function btcRegimeMap(btcCandles) {
+/** BTC's 24h move at each candle timestamp - the market-condition proxy. */
+function btcRegimeMap(btcCandles, barsPerDay = BARS_PER_DAY) {
   const map = new Map();
   if (!btcCandles) return map;
-  for (let i = BARS_PER_DAY; i < btcCandles.length; i++) {
-    const back = btcCandles[i - BARS_PER_DAY];
+  for (let i = barsPerDay; i < btcCandles.length; i++) {
+    const back = btcCandles[i - barsPerDay];
     if (back && back.c) map.set(btcCandles[i].t, ((btcCandles[i].c - back.c) / back.c) * 100);
   }
   return map;
@@ -87,20 +87,21 @@ function btcRegimeMap(btcCandles) {
  * 24h volume are reconstructed from the candles themselves, so no current-day
  * ticker value leaks into historical bars.
  */
-function prepSymbol(coin, candles, endBar) {
-  if (!candles || candles.length < WARMUP + AUDIT_DAYS * BARS_PER_DAY + 2) return null;
+function prepSymbol(coin, candles, endBar, barsPerDay = BARS_PER_DAY) {
+  if (!candles || candles.length < WARMUP + AUDIT_DAYS * barsPerDay + 2) return null;
   const rowsByJ = new Map();
-  const end = endBar != null ? endBar : Math.min(candles.length - 1, WARMUP + AUDIT_DAYS * BARS_PER_DAY);
+  const end = endBar != null ? endBar : Math.min(candles.length - 1, WARMUP + AUDIT_DAYS * barsPerDay);
   for (let j = WARMUP; j < end; j++) {
     const price = candles[j].c;
-    const back = candles[j - BARS_PER_DAY];
+    const back = candles[j - barsPerDay];
     const change24h = back && back.c ? ((price - back.c) / back.c) * 100 : 0;
+    // a rolling day of volume, in the timeframe's own bars
     let v24 = 0;
-    for (let k = Math.max(0, j - 23); k <= j; k++) v24 += candles[k].v || 0;
+    for (let k = Math.max(0, j - (barsPerDay - 1)); k <= j; k++) v24 += candles[k].v || 0;
     const row = analyzeCoin(
       { ...coin, change24h, volume24h: v24 * price },
       candles.slice(0, j + 1),
-      { medianChange24h: 0, dailyTargetPct: 2, barsPerDay: BARS_PER_DAY, confluenceV2: true },
+      { medianChange24h: 0, dailyTargetPct: 2, barsPerDay, confluenceV2: true },
     );
     if (row) rowsByJ.set(j, row);
   }
@@ -594,6 +595,11 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
 export async function runOptimize(coins, variants, opts = {}) {
   const capMap = new Map((coins || []).map((c) => [c.symbol, c]));
   const maxSymbols = opts.maxSymbols || 12;
+  // bar geometry: 1h candles give the last 30 tradable days; 4h candles give
+  // the same 720-candle fetch as ~70 tradable days — a far bigger sample
+  const timeframe = opts.timeframe === "4h" ? "4h" : "1h";
+  const barsPerDay = timeframe === "4h" ? 6 : BARS_PER_DAY;
+  const interval = timeframe === "4h" ? 240 : 60;
   const universe = [];
   for (const { pair, symbol } of KRAKEN_PAIRS) {
     const cap = capMap.get(symbol);
@@ -601,12 +607,12 @@ export async function runOptimize(coins, variants, opts = {}) {
     universe.push({ ...cap, kraken_pair: pair });
     if (universe.length >= maxSymbols) break;
   }
-  const btcByTime = btcRegimeMap(await fetchKrakenCandles("XBTUSDT"));
+  const btcByTime = btcRegimeMap(await fetchKrakenCandles("XBTUSDT", interval), barsPerDay);
 
   const fetched = [];
   for (const group of chunk(universe, 6)) {
     const settled = await Promise.allSettled(
-      group.map((c) => fetchKrakenCandles(c.kraken_pair)),
+      group.map((c) => fetchKrakenCandles(c.kraken_pair, interval)),
     );
     settled.forEach((res, i) => {
       if (res.status === "fulfilled" && res.value) fetched.push({ coin: group[i], candles: res.value });
@@ -616,14 +622,14 @@ export async function runOptimize(coins, variants, opts = {}) {
   const eligible = fetched.filter((f) => {
     const stale = Date.now() - f.candles[f.candles.length - 1].t > 4 * 3600000;
     if (stale) staleSymbols.push(f.coin.symbol);
-    return !stale && f.candles.length >= WARMUP + AUDIT_DAYS * BARS_PER_DAY + 2;
+    return !stale && f.candles.length >= WARMUP + AUDIT_DAYS * barsPerDay + 2;
   });
 
   const slots = {};
   const perCoin = {};
   const symbolsUsed = [];
   for (const { coin, candles } of eligible) {
-    const ready = prepSymbol(coin, candles, candles.length - 1);
+    const ready = prepSymbol(coin, candles, candles.length - 1, barsPerDay);
     if (!ready) continue;
     symbolsUsed.push(coin.symbol);
     for (const cfg of variants) {
@@ -651,9 +657,12 @@ export async function runOptimize(coins, variants, opts = {}) {
       knobs,
     };
   }
+  const sampleDays = eligible.length
+    ? Math.round(Math.min(...eligible.map((f) => (f.candles.length - WARMUP) / barsPerDay)))
+    : 0;
   return {
-    timeframe: "1h",
-    days: 30,
+    timeframe,
+    days: sampleDays,
     source: "kraken",
     symbols: symbolsUsed.length,
     symbols_used: symbolsUsed,

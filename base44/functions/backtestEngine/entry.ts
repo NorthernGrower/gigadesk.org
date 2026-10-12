@@ -14,19 +14,27 @@ const BASE = { ...CG2, cooldown_bars: 24 };
 // Final check: the round-7 winner and runner-up against the round-2 deep
 // selection baseline, over a wider 20-symbol universe for stability.
 const WIDE = { ...BASE, target_r: 2.5, be_stop_r: 1.2, skip_riskon_long: true, min_vol_ratio: 1.5, skip_sideways_long: true };
-// Round 9: everything builds on the round-8 champion (wide universe, risk-off
-// longs only, 1.5x volume, 72-bar cooldown) — the live engine's current rules.
-// Each candidate is the champion plus exactly one new idea, so results name
-// the rule that helped or hurt.
+// Round 10 + 11: experiments on the champion (wide universe, risk-off longs
+// only, 1.5x volume, 72-bar cooldown) — the live engine's current rules.
+// Each candidate is the champion plus one change, so results name the rule
+// that helped or hurt. Cooldowns are in bars: 72 on 1h, 18 on 4h = 3 days.
 const CHAMPION = { ...WIDE, cooldown_bars: 72 };
-const OPTIMIZE_VARIANTS = [
-  variantCfg("champ_r8", "Reference: round-8 champion as the live engine runs today", CHAMPION),
-  variantCfg("champ_trail15", "Champion + ATR trail after +1.5R", { ...CHAMPION, trail_r: 1.5 }),
-  variantCfg("champ_early_be", "Champion + break-even stop at +1.0R (locks winners sooner)", { ...CHAMPION, be_stop_r: 1.0 }),
-  variantCfg("champ_pullback", "Champion + true pullback phases only (no breakout chasing)", { ...CHAMPION, require_fib_pullback: true }),
-  variantCfg("champ_bounded_stop", "Champion + stops between 1.2% and 2.5% (skip wide, risky stops)", { ...CHAMPION, min_stop_pct: 1.2, max_stop_pct: 2.5 }),
-  variantCfg("champ_cut_stalls", "Champion + underwater trades cut after 24 bars", { ...CHAMPION, time_underwater_bars: 24 }),
+const ROUND11_VARIANTS = [
+  variantCfg("champ_r8", "Reference: the live engine's rules as they run today", CHAMPION),
+  variantCfg("r11_score68", "Champion + score bar 68 (round-10 candidate, retest)", { ...CHAMPION, min_score: 68 }),
+  variantCfg("r11_s68_adx28", "Champion + score bar 68 + ADX 28 (quality stacked)", { ...CHAMPION, min_score: 68, min_adx: 28 }),
+  variantCfg("r11_s68_stretch3", "Champion + score bar 68 + 3% max stretch", { ...CHAMPION, min_score: 68, max_stretch_pct: 3 }),
+  variantCfg("r11_s68_cool96", "Champion + score bar 68 + 96-bar cooldown", { ...CHAMPION, min_score: 68, cooldown_bars: 96 }),
+  variantCfg("r11_s68_rr18", "Champion + score bar 68 + minimum 1.8R setups", { ...CHAMPION, min_score: 68, min_rr: 1.8 }),
 ];
+const CHAMPION_4H = { ...CHAMPION, cooldown_bars: 18 };
+const ROUND11_4H_VARIANTS = [
+  variantCfg("champ4h", "Reference: the live engine's rules on 4h candles", CHAMPION_4H),
+  variantCfg("r11_4h_score68", "4h champion + score bar 68", { ...CHAMPION_4H, min_score: 68 }),
+  variantCfg("r11_4h_s68_adx28", "4h champion + score bar 68 + ADX 28", { ...CHAMPION_4H, min_score: 68, min_adx: 28 }),
+  variantCfg("r11_4h_cool36", "4h champion + 6-day cooldown", { ...CHAMPION_4H, cooldown_bars: 36 }),
+];
+const OPTIMIZE_VARIANTS = ROUND11_VARIANTS;
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
@@ -70,9 +78,11 @@ export default async function (req) {
     // variant simulated over the same prepared signals
     if (body.mode === "optimize") {
       const { coins } = await fetchMarkets();
-      const result = await runOptimize(coins, OPTIMIZE_VARIANTS, {
-        maxSymbols: Math.min(Number(body.max_symbols) || 12, 20),
-      });
+      const result = await runOptimize(
+        coins,
+        body.timeframe === "4h" ? ROUND11_4H_VARIANTS : OPTIMIZE_VARIANTS,
+        { maxSymbols: Math.min(Number(body.max_symbols) || 12, 20), timeframe: body.timeframe },
+      );
       const saved = await base44.asServiceRole.entities.AuditRun
         .create({
           label: `Kraken optimizer round - ${result.days}d, ${result.symbols} symbols`,
