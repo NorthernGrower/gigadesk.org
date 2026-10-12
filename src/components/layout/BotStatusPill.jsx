@@ -12,8 +12,8 @@ export default function BotStatusPill({ config, running }) {
   const navigate = useNavigate();
   const [lastRun, setLastRun] = useState(config?.last_run_at || null);
   const [override, setOverride] = useState(null);
-  // which desk the user is on: the pill always shows the OTHER desk, so
-  // clicking it takes you there instead of touching live trading
+  // which desk the user is on: the pill names the CURRENT desk, and clicking
+  // it swaps to the other one without touching live trading
   const [desk, setDesk] = useState(config?.active_desk === 'live' ? 'live' : 'paper');
 
   useEffect(() => {
@@ -82,14 +82,14 @@ export default function BotStatusPill({ config, running }) {
       <button
         type="button"
         onClick={() => navigate(`/dashboard?desk=${desk === 'paper' ? 'live' : 'paper'}`)}
-        title={desk === 'paper' ? 'Open the Live Desk' : 'Back to the Paper Desk'}
+        title={desk === 'paper' ? 'You are on the Paper Desk — switch to Live' : 'You are on the Live Desk — switch to Paper'}
         className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
-          desk === 'paper'
+          desk === 'live'
             ? 'border-amber-400/30 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20'
             : 'border-border/70 bg-secondary/40 text-muted-foreground hover:text-foreground'
         }`}
       >
-        {desk === 'paper' ? 'Live' : 'Paper'}
+        {desk === 'live' ? 'Live' : 'Paper'}
       </button>
 
       <button
