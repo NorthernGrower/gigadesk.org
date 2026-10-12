@@ -267,13 +267,35 @@ const KRAKEN_ASSETS = {
 
 const krakenAsset = (a) => KRAKEN_ASSETS[a] || a;
 
+// Kraken's signature is HMAC-SHA512 over the URI path plus the RAW bytes of
+// sha256(nonce + post body). Encoding the digest as a hex string made every
+// signed request fail (EAPI:Invalid key), and the desk's repeated connection
+// checks then piled the failures into EGeneral:Temporary lockout.
+export async function krakenSign(secretB64, path, nonce, body) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(nonce + body)));
+  const pathBytes = enc.encode(path);
+  const msg = new Uint8Array(pathBytes.length + digest.length);
+  msg.set(pathBytes);
+  msg.set(digest, pathBytes.length);
+  const key = await crypto.subtle.importKey("raw", b64ToBytes(secretB64), { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  return toBase64(await crypto.subtle.sign("HMAC", key, msg));
+}
+
+// Kraken's raw error codes are terse; map the common ones to plain advice.
+export const KRAKEN_MESSAGES = {
+  "EAPI:Invalid key": "Kraken rejected the API key — check it was copied in full",
+  "EAPI:Invalid signature": "Kraken rejected the signature — the API secret looks wrong or incomplete",
+  "EAPI:Invalid nonce": "Kraken rejected the request as repeated or too old — try again in a moment",
+  "EAPI:Invalid permission": "The key is missing the permission to read account funds (enable Query Funds on the key)",
+  "EGeneral:Permission denied": "The key is missing permission to read the account balance",
+  "EGeneral:Temporary lockout": "Kraken temporarily locked this key after repeated failed attempts — wait about 15 minutes, then reconnect",
+};
+
 async function krakenAccount(cfg) {
   const path = "/0/private/Balance";
   const nonce = String(Date.now() * 1000);
   const body = `nonce=${nonce}`;
-  const inner = await sha256Hex(nonce + body);
-  const key = await crypto.subtle.importKey("raw", b64ToBytes(cfg.api_secret), { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
-  const sign = toBase64(await crypto.subtle.sign("HMAC", key, enc.encode(path + inner)));
+  const sign = await krakenSign(cfg.api_secret, path, nonce, body);
   const res = await callJson(`https://api.kraken.com${path}`, {
     method: "POST",
     headers: {
@@ -297,10 +319,11 @@ async function krakenAccount(cfg) {
       ),
     };
   }
+  const code = failed[0] || "";
   return {
     ok: false,
     canTrade: null,
-    message: `Kraken error: ${failed[0] || res.text || "no response from the exchange"}`,
+    message: `Kraken error: ${KRAKEN_MESSAGES[code] || code || res.text || "no response from the exchange"}`,
     balances: [],
   };
 }

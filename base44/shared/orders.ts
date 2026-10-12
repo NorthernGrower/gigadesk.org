@@ -1,7 +1,7 @@
 // Market order execution for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every request is bounded by
 // a 10s timeout and refusals are returned as values, never thrown.
-import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64 } from "./exchanges.ts";
+import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, KRAKEN_MESSAGES } from "./exchanges.ts";
 import { decryptSecret } from "./crypto.ts";
 import { round } from "./market.ts";
 
@@ -173,9 +173,7 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price }, side) {
   const nonce = String(Date.now() * 1000);
   const pair = `${String(symbol || "").toUpperCase()}USDT`;
   const body = `nonce=${nonce}&pair=${pair}&type=market&ordertype=market&side=${side}&volume=${vol}`;
-  const inner = await sha256Hex(nonce + body);
-  const key = await crypto.subtle.importKey("raw", b64ToBytes(cfg.api_secret), { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
-  const sign = toBase64(await crypto.subtle.sign("HMAC", key, enc.encode(path + inner)));
+  const sign = await krakenSign(cfg.api_secret, path, nonce, body);
   const res = await callJson(`https://api.kraken.com${path}`, {
     method: "POST",
     headers: {
@@ -197,5 +195,5 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price }, side) {
       message: `Market ${side} sent to Kraken`,
     };
   }
-  return { ok: false, message: `Kraken said: ${failed[0] || res.text || "no response from Kraken"}` };
+  return { ok: false, message: `Kraken said: ${KRAKEN_MESSAGES[failed[0] || ""] || failed[0] || res.text || "no response from Kraken"}` };
 }
