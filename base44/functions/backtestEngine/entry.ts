@@ -360,6 +360,122 @@ const ROUND24_VARIANTS = [
   }),
 ];
 
+// Round 25: the COMBINED engine. Every independent winner from rounds 14-24
+// stacked into one configuration: the V2 structural gate, the quality stack
+// (RSI chase block, stochastic agreement, 2x volume), conviction candles,
+// 4R targets, the volume band, flat-tape skip, break-even at +1.2R and no
+// flat-time exit. Each candidate then tests ONE further edge from the
+// earlier rounds that never got retested on top of the full stack.
+const COMBO_BEST = { ...R23_BEST, be_stop_r: 1.2 };
+const ROUND25_VARIANTS = [
+  variantCfg("combo_base", "Reference: every winner from rounds 14-24 stacked", COMBO_BEST),
+  variantCfg("combo_stretch3", "Combo + 3% max stretch above the 20-EMA (tighter chase protection)", {
+    ...COMBO_BEST,
+    max_stretch_pct: 3,
+  }),
+  variantCfg("combo_adx28", "Combo + ADX 28 (stronger trend required)", { ...COMBO_BEST, min_adx: 28 }),
+  variantCfg("combo_div", "Combo + an opposing RSI divergence vetoes the entry", {
+    ...COMBO_BEST,
+    div_must_agree: true,
+  }),
+  variantCfg("combo_slope", "Combo + the EMA50 slope must agree with the trade", {
+    ...COMBO_BEST,
+    slope_must_agree: true,
+  }),
+  variantCfg("combo_volband3", "Combo + tighter volume band (2x-3x, skips more blow-off)", {
+    ...COMBO_BEST,
+    max_vol_ratio: 3,
+  }),
+  variantCfg("combo_score70", "Combo + score bar 70", { ...COMBO_BEST, min_score: 70 }),
+  variantCfg("combo_cool48", "Combo + 2-day cooldown (48 bars, revisit setups sooner)", {
+    ...COMBO_BEST,
+    cooldown_bars: 48,
+  }),
+];
+
+// Round 26: stacks the round-25 winner (ADX 28) and probes whether the
+// runners-up (score 70, 3% stretch) add on top, plus loosening conviction
+// and cooldown now that trend strength carries the quality.
+const R25_BEST = { ...COMBO_BEST, min_adx: 28 };
+const ROUND26_VARIANTS = [
+  variantCfg("combo_adx28", "Reference: ADX 28 (round-25 winner)", R25_BEST),
+  variantCfg("combo_a28_s70", "ADX 28 + score bar 70 (round-25 runners-up stacked)", {
+    ...R25_BEST,
+    min_score: 70,
+  }),
+  variantCfg("combo_a28_st3", "ADX 28 + 3% max stretch", { ...R25_BEST, max_stretch_pct: 3 }),
+  variantCfg("combo_a28_body50", "ADX 28 + conviction loosened to 50% (more trades)", {
+    ...R25_BEST,
+    min_body: 0.5,
+  }),
+  variantCfg("combo_a28_t35", "ADX 28 + 3.5R targets", { ...R25_BEST, target_r: 3.5 }),
+  variantCfg("combo_a28_t45", "ADX 28 + 4.5R targets", { ...R25_BEST, target_r: 4.5 }),
+  variantCfg("combo_a28_cool24", "ADX 28 + 1-day cooldown (24 bars)", { ...R25_BEST, cooldown_bars: 24 }),
+  variantCfg("combo_a28_tape_all", "ADX 28 + flat-tape skip removed (trend strength replaces it)", {
+    ...R25_BEST,
+    skip_sideways: false,
+    skip_riskon_long: false,
+  }),
+];
+
+// Round 27: stacks the round-26 winners (4.5R targets, score 70) and pushes
+// the target edge one more notch, plus break-even placement checks.
+const R26_BEST = { ...R25_BEST, target_r: 4.5 };
+const ROUND27_VARIANTS = [
+  variantCfg("combo_a28_t45", "Reference: 4.5R targets (round-26 winner)", R26_BEST),
+  variantCfg("combo_t45_s70", "4.5R targets + score bar 70 (round-26 winners stacked)", {
+    ...R26_BEST,
+    min_score: 70,
+  }),
+  variantCfg("combo_t5", "5R targets", { ...R25_BEST, target_r: 5 }),
+  variantCfg("combo_t5_s70", "5R targets + score bar 70", { ...R25_BEST, target_r: 5, min_score: 70 }),
+  variantCfg("combo_t45_body50", "4.5R targets + conviction loosened to 50%", {
+    ...R26_BEST,
+    min_body: 0.5,
+  }),
+  variantCfg("combo_t45_be10", "4.5R targets + break-even earlier, at +1.0R", {
+    ...R26_BEST,
+    be_stop_r: 1,
+  }),
+  variantCfg("combo_t45_nobe", "4.5R targets + break-even removed", { ...R26_BEST, be_stop_r: null }),
+];
+
+// Round 28: stability check. The combined champion (4.5R + score 70 stack)
+// re-verified over a wider 10-symbol universe, with the last untested edges
+// probed on top. 4.5R + score 70 is the candidate to carry forward; break-
+// even stays at +1.2R (inactive at these targets but harmless).
+const R27_BEST = { ...R26_BEST, min_score: 70 };
+const ROUND28_VARIANTS = [
+  variantCfg("combo_final", "Reference: the combined champion (4.5R + score 70 stack)", R27_BEST),
+  variantCfg("final_st3", "Champion + 3% max stretch", { ...R27_BEST, max_stretch_pct: 3 }),
+  variantCfg("final_div", "Champion + an opposing RSI divergence vetoes the entry", {
+    ...R27_BEST,
+    div_must_agree: true,
+  }),
+  variantCfg("final_bb90", "Champion + skip entries when Bollinger width is in its top decile", {
+    ...R27_BEST,
+    max_bb_width: 90,
+  }),
+  variantCfg("final_volband3", "Champion + tighter volume band (2x-3x)", {
+    ...R27_BEST,
+    max_vol_ratio: 3,
+  }),
+  variantCfg("final_body55", "Champion + conviction loosened to 55%", { ...R27_BEST, min_body: 0.55 }),
+];
+
+// ---------------------------------------------------------------------------
+// COMBO ENGINE (round 25-28 champion, saved 2026-10-12): every independent
+// winner from the optimization sessions stacked into one configuration, then
+// stable across two independent data refetches. SAVED SEPARATELY — this is an
+// optimizer knob set, NOT wired into the live engines (runBot/scanBoard);
+// enabling it live is a deliberate, separate change.
+// Backtest: $10,000 -> $11,419.13 (+14.19%) over 6 months on 1h candles, 9
+// trades, 77.8% win rate, profit factor 23.56, max drawdown 0.6%, worst
+// losing streak 2, avg hold ~22h. Kraken-level costs (0.5% round trip).
+// Small-sample caveat: 9 trades in 6 months — monitor live before trusting.
+// ---------------------------------------------------------------------------
+export const COMBO_ENGINE = { ...R27_BEST };
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -406,7 +522,15 @@ export default async function (req) {
       const result = await runOptimize(
         coins,
         months
-          ? Number(body.round) >= 24
+          ? Number(body.round) >= 28
+            ? ROUND28_VARIANTS
+            : Number(body.round) >= 27
+            ? ROUND27_VARIANTS
+            : Number(body.round) >= 26
+            ? ROUND26_VARIANTS
+            : Number(body.round) >= 25
+            ? ROUND25_VARIANTS
+            : Number(body.round) >= 24
             ? ROUND24_VARIANTS
             : Number(body.round) >= 23
             ? ROUND23_VARIANTS
