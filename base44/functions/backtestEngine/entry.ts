@@ -330,6 +330,36 @@ const ROUND23_VARIANTS = [
   variantCfg("r23_t4_sqz50", "4R stack + squeeze (bottom 50% width)", { ...R22_BEST, max_bb_width_low: 50 }),
 ];
 
+// Round 24: the go-live check. Does the round-23 stack stay profitable when
+// it runs WITH the live engine's champion refinements and V2 structural gate
+// (it always did — both are baked into the stack), and how much do the live
+// engine's own hardcoded levels (2.5R target, break-even at +1.2R) matter?
+const R23_BEST = { ...R22_BEST, max_vol_ratio: 4 };
+const ROUND24_VARIANTS = [
+  variantCfg("champ_live", "Reference: the live engine's rules as they run today (2.5R targets, break-even at +1.2R, 1.5x volume, risk-off longs only)", CHAMPION),
+  variantCfg("r24_new_stack", "Reference: the round-23 champion with the V2 structural gate and champion regime rules active (as built)", R23_BEST),
+  variantCfg("r24_v2_off", "Round-23 champion with the V2 structural gate and champion regime rules stripped off", {
+    ...R23_BEST,
+    htf_must_agree: false,
+    htf_must_confirm: false,
+    min_adx: 0,
+    require_di_owned: false,
+    min_confluence: 0,
+    no_chasing: false,
+    max_stretch_pct: 0,
+    skip_riskon_long: false,
+    skip_sideways_long: false,
+  }),
+  variantCfg("r24_be12", "Round-23 champion + break-even moved to +1.2R (the live engine's current placement)", {
+    ...R23_BEST,
+    be_stop_r: 1.2,
+  }),
+  variantCfg("r24_t25", "Round-23 champion + 2.5R targets (the live engine's current target)", {
+    ...R23_BEST,
+    target_r: 2.5,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -376,7 +406,9 @@ export default async function (req) {
       const result = await runOptimize(
         coins,
         months
-          ? Number(body.round) >= 23
+          ? Number(body.round) >= 24
+            ? ROUND24_VARIANTS
+            : Number(body.round) >= 23
             ? ROUND23_VARIANTS
             : Number(body.round) >= 22
               ? ROUND22_VARIANTS
