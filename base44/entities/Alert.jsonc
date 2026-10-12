@@ -34,6 +34,14 @@
       ],
       "default": "info"
     },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "live"
+      ],
+      "description": "Which desk the alert belongs to \u2014 paper bot results or live exchange trading"
+    },
     "read": {
       "type": "boolean",
       "default": false
@@ -49,9 +57,7 @@
     "title"
   ],
   "rls": {
-    "read": {
-      "created_by_id": "{{user.id}}"
-    },
+    "read": {},
     "create": {
       "created_by_id": "{{user.id}}"
     },
