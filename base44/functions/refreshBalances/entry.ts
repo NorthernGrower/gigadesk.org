@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, isBackedOff, backoffUntil } from '../../shared/exchanges.ts';
+import { readAccount, isBackedOff, backoffUntil, balanceJustRead } from '../../shared/exchanges.ts';
 import { decryptSecret } from '../../shared/crypto.ts';
 import { pickQuoteBalance } from '../../shared/exchanges.ts';
 
@@ -12,7 +12,7 @@ export default async function (req) {
     const conns = await base44.asServiceRole.entities.ExchangeConnection.filter({ status: 'connected' });
     // a connection in backoff is left alone: its key failed a signed read
     // recently and retrying keeps the exchange-side lockout alive
-    const usable = (conns || []).filter((c) => c.api_key && !isBackedOff(c));
+    const usable = (conns || []).filter((c) => c.api_key && !isBackedOff(c) && !balanceJustRead(c));
 
     const results = [];
     for (let i = 0; i < usable.length; i += 6) {

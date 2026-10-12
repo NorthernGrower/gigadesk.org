@@ -26,8 +26,11 @@ export default async function(req) {
     const meta = EXCHANGES[exchange];
     if (!meta) return Response.json({ error: 'Pick one of the supported exchanges' }, { status: 400 });
 
-    const apiKey = String(body.api_key || '').trim();
-    const apiSecret = String(body.api_secret || '').trim();
+    // pasted credentials often carry stray whitespace or line breaks — a
+    // break inside the secret makes the signature fail every time, so strip
+    // all whitespace before anything signs with it
+    const apiKey = String(body.api_key || '').replace(/\s+/g, '');
+    const apiSecret = String(body.api_secret || '').replace(/\s+/g, '');
     const passphrase = String(body.passphrase || '').trim();
     if (!apiKey || !apiSecret) return Response.json({ error: 'Both the API key and the secret are required' }, { status: 400 });
     if (meta.needsPassphrase && !passphrase) {

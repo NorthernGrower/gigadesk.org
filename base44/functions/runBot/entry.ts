@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, pickQuoteBalance, isBackedOff, backoffUntil } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, pickQuoteBalance, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
@@ -837,7 +837,7 @@ export default async function (req) {
         exchangeBalance = round(Number(managed.conn.balance_usd) || 0, 2);
         balanceAsOf = managed.conn.balance_updated_at || null;
       }
-    } else if (managed.conn && !light) {
+    } else if (managed.conn && !light && !balanceJustRead(managed.conn)) {
       const acct = await readAccount({
         exchange: managed.conn.exchange,
         testnet: managed.conn.testnet,

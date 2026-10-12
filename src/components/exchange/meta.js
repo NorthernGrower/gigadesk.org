@@ -27,7 +27,7 @@ export const EXCHANGE_META = {
     name: 'Kraken',
     testnet: false,
     needsPassphrase: false,
-    note: 'Long-standing US-friendly venue with HMAC-SHA512 signing.',
+    note: 'Create the key with "Query Funds" enabled — the desk reads balances with it.',
   },
 };
 

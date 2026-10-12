@@ -62,6 +62,10 @@ export const isBackedOff = (conn) =>
   Boolean(conn && conn.backoff_until && Date.parse(conn.backoff_until) > Date.now());
 export const backoffUntil = (message) =>
   new Date(Date.now() + backoffMinutes(message) * 60000).toISOString();
+// Two readers hitting the same key within seconds can trip the exchange's
+// rate limiter, so a balance read that just happened is good enough
+export const balanceJustRead = (conn) =>
+  Boolean(conn && conn.balance_updated_at && Date.now() - Date.parse(conn.balance_updated_at) < 10000);
 
 export async function readAccount(cfg) {
   if (cfg.exchange === "bybit") return bybitAccount(cfg);
@@ -380,12 +384,11 @@ export const KRAKEN_MESSAGES = {
   "EGeneral:Temporary lockout": "Kraken temporarily locked this key after repeated failed attempts — wait about 15 minutes, then reconnect",
 };
 
-async function krakenAccount(cfg) {
+async function krakenCall(cfg, nonce) {
   const path = "/0/private/Balance";
-  const nonce = String(krakenNonce());
   const body = `nonce=${nonce}`;
   const sign = await krakenSign(cfg.api_secret, path, nonce, body);
-  const res = await callJson(`https://api.kraken.com${path}`, {
+  return callJson(`https://api.kraken.com${path}`, {
     method: "POST",
     headers: {
       "API-Key": cfg.api_key,
@@ -394,8 +397,20 @@ async function krakenAccount(cfg) {
     },
     body,
   });
-  const data = res.data || {};
-  const failed = Array.isArray(data.error) ? data.error : [];
+}
+
+async function krakenAccount(cfg) {
+  // two server processes can mint the same millisecond nonce and Kraken
+  // rejects the second as repeated (and counts it toward the lockout), so a
+  // nonce rejection is retried once with a strictly higher value
+  let res = await krakenCall(cfg, String(krakenNonce()));
+  let data = res.data || {};
+  let failed = Array.isArray(data.error) ? data.error : [];
+  if (failed.includes("EAPI:Invalid nonce")) {
+    res = await krakenCall(cfg, String(krakenNonce() + 1000000));
+    data = res.data || {};
+    failed = Array.isArray(data.error) ? data.error : [];
+  }
   if (res.data && data.result && failed.length === 0) {
     return {
       ok: true,
