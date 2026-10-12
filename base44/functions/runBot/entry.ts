@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, chunk, asArray, round } from "../../shared/
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, pickQuoteBalance } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, pickQuoteBalance, isBackedOff, backoffUntil } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 
@@ -827,7 +827,17 @@ export default async function (req) {
     let balanceAsOf = null;
     let balanceStale = false;
     let balanceError = null;
-    if (managed.conn && !light) {
+    if (managed.conn && !light && isBackedOff(managed.conn)) {
+      // the key failed a signed read recently — do not touch it: every failed
+      // attempt keeps the exchange-side lockout alive. The saved balance and
+      // the stale flag carry the desk through until the backoff expires.
+      balanceStale = true;
+      balanceError = `Retrying ${managed.conn.label} after the last failed read — paused until ${managed.conn.backoff_until}`;
+      if (managed.conn.balance_usd != null) {
+        exchangeBalance = round(Number(managed.conn.balance_usd) || 0, 2);
+        balanceAsOf = managed.conn.balance_updated_at || null;
+      }
+    } else if (managed.conn && !light) {
       const acct = await readAccount({
         exchange: managed.conn.exchange,
         testnet: managed.conn.testnet,
@@ -849,6 +859,11 @@ export default async function (req) {
         // never treat a failed read as current: the desk shows the failure
         balanceStale = true;
         balanceError = acct.message;
+        // and every background reader backs the key off, so a failed read is
+        // never retried straight into an exchange-side lockout
+        await base44.asServiceRole.entities.ExchangeConnection.update(managed.conn.id, {
+          backoff_until: backoffUntil(acct.message),
+        });
         // but the last saved balance still beats a blank figure
         if (managed.conn.balance_usd != null) {
           exchangeBalance = round(Number(managed.conn.balance_usd) || 0, 2);

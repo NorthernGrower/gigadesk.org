@@ -65,6 +65,11 @@
       "type": "string",
       "format": "date-time"
     },
+    "backoff_until": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Background balance reads pause until this moment after a failed read, so an exchange-side lockout can clear"
+    },
     "balances": {
       "type": "array",
       "items": {

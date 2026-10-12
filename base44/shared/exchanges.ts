@@ -53,6 +53,16 @@ export const EXCHANGES = {
   kraken: { name: "Kraken", needsPassphrase: false, testnet: false },
 };
 
+// ---- Failure backoff: a failed signed read counts toward Kraken's lockout
+// counter, so every background reader must leave the key alone for a while
+// after a failure instead of retrying it into a longer lock
+export const backoffMinutes = (message) =>
+  /Temporary lockout/i.test(String(message || "")) ? 16 : 3;
+export const isBackedOff = (conn) =>
+  Boolean(conn && conn.backoff_until && Date.parse(conn.backoff_until) > Date.now());
+export const backoffUntil = (message) =>
+  new Date(Date.now() + backoffMinutes(message) * 60000).toISOString();
+
 export async function readAccount(cfg) {
   if (cfg.exchange === "bybit") return bybitAccount(cfg);
   if (cfg.exchange === "kucoin") return kucoinAccount(cfg);

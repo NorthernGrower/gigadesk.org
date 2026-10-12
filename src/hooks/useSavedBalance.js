@@ -9,6 +9,7 @@ import { base44 } from '@/api/base44Client';
 export default function useSavedBalance(connectionId, status) {
   const [savedBalance, setSavedBalance] = useState(null);
   const statusRef = useRef(status);
+  const backoffRef = useRef(0);
   statusRef.current = status;
 
   useEffect(() => {
@@ -16,9 +17,13 @@ export default function useSavedBalance(connectionId, status) {
     let alive = true;
     const check = async () => {
       if (statusRef.current && statusRef.current !== 'connected') return;
+      // a failed read backs the key off exchange-side; retrying during the
+      // backoff keeps the lockout alive, so the desk waits it out
+      if (backoffRef.current && Date.now() < backoffRef.current) return;
       try {
         const res = await base44.functions.invoke('checkExchangeConnection', { id: connectionId });
         const conn = res.data?.connection;
+        if (conn?.backoff_until) backoffRef.current = Date.parse(conn.backoff_until);
         if (alive && conn && conn.balance_usd != null) {
           setSavedBalance({ usd: conn.balance_usd, asOf: conn.balance_updated_at });
         }

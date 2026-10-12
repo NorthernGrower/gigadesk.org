@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, pickQuoteBalance } from '../../shared/exchanges.ts';
+import { readAccount, pickQuoteBalance, backoffUntil } from '../../shared/exchanges.ts';
 import { encryptSecret, decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -12,6 +12,7 @@ const SAFE_FIELDS = [
   "status_message",
   "can_trade",
   "last_checked_at",
+  "backoff_until",
   "balances",
   "balance_usd",
   "balance_updated_at",
@@ -61,13 +62,17 @@ export default async function(req) {
       last_checked_at: new Date().toISOString(),
       balances: account.balances.slice(0, 10),
       // save the fresh balance so the desk keeps a figure when a later
-      // read fails
+      // read fails; a failed read backs the key off so the saver and the
+      // desk stop retrying it into a longer exchange-side lockout
       ...(account.ok
         ? {
             balance_usd: await pickQuoteBalance(account.balances, conn.exchange),
             balance_updated_at: new Date().toISOString(),
+            backoff_until: null,
           }
-        : {}),
+        : {
+            backoff_until: backoffUntil(account.message),
+          }),
     };
     await base44.entities.ExchangeConnection.update(id, patch);
 
