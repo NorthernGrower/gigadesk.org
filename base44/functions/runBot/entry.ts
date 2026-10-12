@@ -68,6 +68,15 @@ export default async function (req) {
     let config = configs[0];
     if (!config) config = await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 
+    // Live and paper desks keep separate rules: the paper rules stay on the
+    // config itself, the live rules sit in live_rules and fall back to the
+    // paper value when a live rule was never set. Everything the live leg
+    // decides — sizing, slots, score bar, trailing, cooldown, budget —
+    // reads these, never the paper rules.
+    const LR = config.live_rules || {};
+    const lrVal = (key, fb) => (LR[key] != null ? LR[key] : config[key] != null ? config[key] : fb);
+    const liveConfigView = { ...config, real_connection_id: lrVal("real_connection_id", "") || "" };
+
     // single-flight: a cycle that started moments ago is still scanning, and
     // two overlapping cycles read the same empty state and opened the same
     // position twice. A fresh start timestamp makes later cycles stagger.
@@ -106,14 +115,14 @@ export default async function (req) {
     const openTrades = await readAll({ status: "open" });
     // managing existing real positions must work even while new live entries
     // are paused — the pause gates entries, never risk management
-    const managed = await resolveLiveConnection(base44, config, { manage: true });
+    const managed = await resolveLiveConnection(base44, liveConfigView, { manage: true });
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
     // gone, qualifying setups stay paper instead of breaching the cap
-    const liveBudgetCap = Number(config.live_cap_usd) || 0;
+    const liveBudgetCap = Number(lrVal("live_cap_usd", 0)) || 0;
     let liveBudget = liveBudgetCap > 0
       ? liveBudgetCap -
         openTrades
@@ -168,7 +177,7 @@ export default async function (req) {
         if (!sell.ok) {
           await base44.entities.Alert.create({
             symbol: t.symbol,
-            title: `Could not close ${t.symbol} on ${live.conn.label}`,
+            title: `Could not close ${t.symbol} on ${managed.conn.label}`,
             message: sell.message,
             kind: "order_failed",
             severity: "danger",
@@ -238,11 +247,18 @@ export default async function (req) {
       let peak = prevPeak;
       const updates = {};
 
-      if (config.trailing_stop) {
+      // trailing follows the desk the position trades on: real positions
+      // trail by the live rules, paper ones by the paper rules
+      const isRealPos = (t.mode || "paper") === "real";
+      const trailingOn = isRealPos
+        ? lrVal("trailing_stop", true) !== false
+        : config.trailing_stop !== false;
+      if (trailingOn) {
         if (side === "long" && price > peak) peak = price;
         if (side === "short" && price < peak) peak = price;
-        if (gainPct >= Number(config.trailing_trigger_pct ?? 3)) {
-          const dist = Number(config.trailing_distance_pct ?? 1.5) / 100;
+        if (gainPct >= Number(isRealPos ? lrVal("trailing_trigger_pct", 3) : (config.trailing_trigger_pct ?? 3))) {
+          const dist =
+            Number(isRealPos ? lrVal("trailing_distance_pct", 1.5) : (config.trailing_distance_pct ?? 1.5)) / 100;
           const trail = side === "long" ? peak * (1 - dist) : peak * (1 + dist);
           if (side === "long" && trail > stop) stop = trail;
           if (side === "short" && trail < stop) stop = trail;
@@ -405,16 +421,27 @@ export default async function (req) {
       }
     }
 
-    // ---- look for new entries
-    const openCount = openTrades.length - closed.length;
-    const maxOpen = Math.max(1, Number(config.max_open_positions) || 8);
+    // ---- look for new entries. The two desks qualify setups by their own
+    // rules: the live leg scores against the live rules and fires real
+    // orders, the paper leg trades the paper rules with paper cash. The
+    // scan itself stays shared — one board, two rule sets read from it.
+    const closedIds = new Set(closed.map((c) => c.id));
+    const stillOpen = openTrades.filter((t) => !closedIds.has(t.id));
+    const liveOpenCount = stillOpen.filter((t) => (t.mode || "paper") === "real").length;
+    const paperOpenCount = stillOpen.filter((t) => (t.mode || "paper") === "paper").length;
+    const openCount = stillOpen.length;
+    const paperMaxOpen = Math.max(1, Number(config.max_open_positions) || 8);
+    const liveMaxOpen = Math.max(1, Number(lrVal("max_open_positions", 8)) || 8);
     const opened = [];
     const proposed = [];
     let eligibleCount = null;
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
 
-    if (!light && config.mode !== "off" && openCount < maxOpen && !cycleInFlight) {
+    const scanGateOpen =
+      paperOpenCount < paperMaxOpen || (live.conn != null && liveOpenCount < liveMaxOpen);
+
+    if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
       // when real orders are on, only scan coins the connected exchange
       // actually lists — anything else could never be bought there
@@ -430,21 +457,34 @@ export default async function (req) {
         confluenceV2: config.confluence_v2 !== false,
       });
 
-      const cooldownMs = (Number(config.cooldown_minutes) || 120) * 60000;
-      // churn floor: a trade the stagnant rule just cut cannot be re-entered
-      // for at least 30 minutes, however tight the configured cooldown is —
-      // cutting a stale trade and instantly re-opening it was the loop
-      // behind most of the desk's dead round-trips
+      // cooldowns are per desk: each desk leaves its own closed trades alone
+      // for its own cooldown, both with the 30-minute churn floor that keeps
+      // a trade the stagnant rule just cut from being re-entered at once
       const reentryMs = 30 * 60000;
-      const since = new Date(Date.now() - Math.max(cooldownMs, reentryMs)).toISOString();
+      const paperCooldownMs = (Number(config.cooldown_minutes) || 120) * 60000;
+      const liveCooldownMs = (Number(lrVal("cooldown_minutes", 120)) || 120) * 60000;
+      const since = new Date(Date.now() - Math.max(paperCooldownMs, liveCooldownMs, reentryMs)).toISOString();
       const recent = await readAll({ closed_at: { $gte: since } });
       const pending = await readAll({ status: "proposed" });
-      const blocked = new Set([
-        ...openTrades.map((t) => t.symbol),
+      const blockedLive = new Set([
+        ...stillOpen.filter((t) => (t.mode || "paper") === "real").map((t) => t.symbol),
         ...recent
           .filter((t) => {
+            if ((t.mode || "paper") !== "real") return false;
             const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
-            const window = t.exit_reason === "time" ? reentryMs : cooldownMs;
+            const window = t.exit_reason === "time" ? reentryMs : liveCooldownMs;
+            return Date.now() - closedMs < window;
+          })
+          .map((t) => t.symbol),
+        ...pending.map((t) => t.symbol),
+      ]);
+      const blockedPaper = new Set([
+        ...stillOpen.filter((t) => (t.mode || "paper") === "paper").map((t) => t.symbol),
+        ...recent
+          .filter((t) => {
+            if ((t.mode || "paper") === "real") return false;
+            const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
+            const window = t.exit_reason === "time" ? reentryMs : paperCooldownMs;
             return Date.now() - closedMs < window;
           })
           .map((t) => t.symbol),
@@ -453,22 +493,22 @@ export default async function (req) {
 
       // trading style bends the rules without touching what the user saved:
       // timid waits for stronger setups with less at stake, aggressive
-      // accepts more setups and stakes more to reach the daily goal faster
+      // accepts more setups and stakes more to reach the goal faster
       const style = config.trading_style || "mild";
+      const styleScore = style === "timid" ? 6 : style === "aggressive" ? -5 : 0;
+      const styleRisk = style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1;
       // the engine's own verdict scale calls anything under 58 "avoid", so
       // the bar can never drop into grades the engine itself would not take
-      const minScore = Math.max(
-        58,
-        (Number(config.min_score) || 62) + (style === "timid" ? 6 : style === "aggressive" ? -5 : 0),
-      );
+      const paperMinScore = Math.max(58, (Number(config.min_score) || 62) + styleScore);
+      const liveMinScore = Math.max(58, (Number(lrVal("min_score", 62)) || 62) + styleScore);
       const allowShorts = config.allow_shorts !== false;
-      const requireTarget = config.require_daily_target !== false;
-      const riskPct = Math.min(
-        25,
-        (Number(config.risk_per_trade_pct) || 4) *
-          (style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1),
-      );
-      const slots = maxOpen - openCount;
+      const paperRequireTarget = config.require_daily_target !== false;
+      const liveRequireTarget = lrVal("require_daily_target", true) !== false;
+      const paperTargetPct = Number(config.daily_target_pct) || 2;
+      const liveTargetPct = Number(lrVal("daily_target_pct", 2)) || 2;
+      const liveSizingMode = lrVal("real_sizing_mode", "paper");
+      const liveFixedUsd = Number(lrVal("fixed_order_usd", 100)) || 100;
+      const riskPct = Math.min(25, (Number(config.risk_per_trade_pct) || 4) * styleRisk);
 
       // self-teaching: past results per pattern (side x cap tier) nudge scores
       const lessons = await loadLessons(base44);
@@ -478,45 +518,61 @@ export default async function (req) {
       // scores the same way — aligned with their flow, capped at +-5 points
       const smartBias = await loadSmartBias(base44);
 
-      const tradable = board.rows
-        .map((r) => {
-          const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
-          let smartAdj = 0;
-          let smartNote = null;
-          const smart = smartBias.get(r.symbol);
-          if (smart) {
-            const total = (smart.long_usd || 0) + (smart.short_usd || 0);
-            if (total > 0) {
-              const longShare = (smart.long_usd || 0) / total;
-              smartAdj = Math.max(-5, Math.min(5, Math.round((longShare - 0.5) * 20)));
-              if (r.side !== "long") smartAdj = -smartAdj;
-              if (Math.abs(smartAdj) >= 2) {
-                const sharePct = Math.round(Math.max(longShare, 1 - longShare) * 100);
-                const dir = longShare >= 0.5 ? "long" : "short";
-                smartNote = `Smart money net ${dir}: ${sharePct}% of top-trader open size`;
-              }
+      const tradable = board.rows.map((r) => {
+        const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
+        let smartAdj = 0;
+        let smartNote = null;
+        const smart = smartBias.get(r.symbol);
+        if (smart) {
+          const total = (smart.long_usd || 0) + (smart.short_usd || 0);
+          if (total > 0) {
+            const longShare = (smart.long_usd || 0) / total;
+            smartAdj = Math.max(-5, Math.min(5, Math.round((longShare - 0.5) * 20)));
+            if (r.side !== "long") smartAdj = -smartAdj;
+            if (Math.abs(smartAdj) >= 2) {
+              const sharePct = Math.round(Math.max(longShare, 1 - longShare) * 100);
+              const dir = longShare >= 0.5 ? "long" : "short";
+              smartNote = `Smart money net ${dir}: ${sharePct}% of top-trader open size`;
             }
           }
-          const scoreAdj = adj + smartAdj;
-          const reasons = smartNote && (r.reasons || []).length ? [...r.reasons, smartNote] : r.reasons;
-          return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
-        })
-        .filter(
-          (r) =>
-            !blocked.has(r.symbol) &&
-            (allowShorts || r.side === "long") &&
-            (!requireTarget || r.meets_daily_target),
-        );
-      const candidates = tradable.filter((r) => r.score >= minScore).slice(0, slots);
-      // why the desk traded or skipped: one line per cycle in the response
+        }
+        const scoreAdj = adj + smartAdj;
+        const reasons = smartNote && (r.reasons || []).length ? [...r.reasons, smartNote] : r.reasons;
+        return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
+      });
+
+      const qualifies = (r, desk) => {
+        const blocked = desk === "live" ? blockedLive : blockedPaper;
+        const minScore = desk === "live" ? liveMinScore : paperMinScore;
+        const requireTarget = desk === "live" ? liveRequireTarget : paperRequireTarget;
+        const targetPct = desk === "live" ? liveTargetPct : paperTargetPct;
+        if (blocked.has(r.symbol) || r.score < minScore) return false;
+        // real orders are longs only — shorts stay paper
+        if (desk === "live" ? r.side !== "long" : !allowShorts && r.side !== "long") return false;
+        if (!requireTarget) return true;
+        return Number(r.required_move_pct) >= targetPct && r.score >= 58;
+      };
+      const liveWanted = live.conn
+        ? tradable
+            .filter((r) => qualifies(r, "live"))
+            .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
+        : [];
+      const liveSymbols = new Set(liveWanted.map((r) => r.symbol));
+      const paperWanted = tradable
+        .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
+        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
+      const takenSymbols = new Set([...liveWanted, ...paperWanted].map((r) => r.symbol));
       scanLog = {
         scanned: board.scannedCount,
-        blocked: board.rows.length - tradable.length,
-        below_score: tradable.filter((r) => r.score < minScore).length,
-        taken: candidates.length,
+        blocked: 0,
+        below_score: tradable.filter((r) => !takenSymbols.has(r.symbol)).length,
+        taken: takenSymbols.size,
       };
 
-      for (const r of candidates) {
+      for (const { r, desk } of [
+        ...liveWanted.map((row) => ({ r: row, desk: "live" })),
+        ...paperWanted.map((row) => ({ r: row, desk: "paper" })),
+      ]) {
         // final guard: even if a paged read missed it, never open a second
         // position in a symbol that already has one open
         const alreadyOpen = await base44.entities.Trade.count({
@@ -526,27 +582,30 @@ export default async function (req) {
         if (alreadyOpen) continue;
         const stopDist = Math.abs(r.entry - r.stop);
         if (!(stopDist > 0)) continue;
+
+        // paper sizing — also what "match paper" live sizing spends
+        const freeSlots = Math.max(
+          1,
+          paperMaxOpen - paperOpenCount - opened.filter((o) => o.mode === "paper").length - proposed.length,
+        );
+        const cap = cash / freeSlots;
         const riskUsd = (cash * riskPct) / 100;
         let qty = riskUsd / stopDist;
         let sizeUsd = qty * r.entry;
-        const freeSlots = Math.max(1, maxOpen - openCount - opened.length - proposed.length);
-        const cap = cash / freeSlots;
         if (sizeUsd > cap) {
           sizeUsd = cap;
           qty = sizeUsd / r.entry;
         }
-        if (sizeUsd < 10) continue;
 
-        // real orders: when enabled, a qualifying long is sent to the chosen
-        // exchange as a market buy; shorts stay paper and a refused order is
-        // alerted rather than silently paper-traded
+        // live leg: a market buy on the exchange, sized by the live rules —
+        // "match paper" spends the paper sizing, "fixed" spends fixed_order_usd,
+        // both within the live budget. A refused order is alerted and a
+        // live-qualified setup never falls back to paper silently.
         let real = null;
         let realSizeUsd = 0;
-        if (live.conn && r.side === "long" && liveBudget >= 10) {
+        if (desk === "live" && live.conn && liveBudget >= 10) {
           realSizeUsd = Math.min(
-            config.real_sizing_mode === "fixed"
-              ? Math.min(Number(config.fixed_order_usd) || 100, cap)
-              : sizeUsd,
+            liveSizingMode === "fixed" ? Math.min(liveFixedUsd, cap) : sizeUsd,
             liveBudget,
           );
           if (realSizeUsd >= 10) {
@@ -570,41 +629,93 @@ export default async function (req) {
           }
         }
 
+        if (real) {
+          const created = await base44.entities.Trade.create({
+            symbol: r.symbol,
+            name: r.name,
+            image: r.image,
+            side: r.side,
+            mode: "real",
+            status: config.mode === "auto" ? "open" : "proposed",
+            entry_price: round(real.avg_price || r.entry, 8),
+            quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
+            size_usd: round(realSizeUsd),
+            stop_price: r.stop,
+            target_price: r.target,
+            peak_price: r.entry,
+            score: r.score,
+            pattern: `${r.side}/${r.market_cap_bucket}`,
+            exchange: live.conn.exchange,
+            exchange_order_id: real.order_id,
+            rationale: (r.reasons || []).join(" • "),
+            opened_at: new Date().toISOString(),
+          });
+          if (config.mode === "auto") {
+            opened.push({
+              id: created.id,
+              symbol: r.symbol,
+              side: r.side,
+              entry: r.entry,
+              size_usd: round(realSizeUsd),
+              mode: "real",
+            });
+            await base44.entities.Alert.create({
+              symbol: r.symbol,
+              title: `Bot opened a ${r.side} on ${r.symbol}`,
+              message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}. Real order placed on ${live.conn.label}.`,
+              kind: "bot_open",
+              severity: "info",
+              trade_id: created.id,
+            });
+          } else {
+            proposed.push({
+              id: created.id,
+              symbol: r.symbol,
+              side: r.side,
+              entry: r.entry,
+              target: r.target,
+              stop: r.stop,
+              score: r.score,
+              size_usd: round(realSizeUsd),
+            });
+          }
+          continue;
+        }
+
+        // paper leg: booked against the paper cash balance only
+        if (desk !== "paper" || sizeUsd < 10) continue;
         const created = await base44.entities.Trade.create({
           symbol: r.symbol,
           name: r.name,
           image: r.image,
           side: r.side,
-          mode: real ? "real" : "paper",
+          mode: "paper",
           status: config.mode === "auto" ? "open" : "proposed",
-          entry_price: round(real ? real.avg_price || r.entry : r.entry, 8),
-          quantity: round(real ? real.filled_qty || realSizeUsd / r.entry : qty, 8),
-          size_usd: round(real ? realSizeUsd : sizeUsd),
+          entry_price: round(r.entry, 8),
+          quantity: round(qty, 8),
+          size_usd: round(sizeUsd),
           stop_price: r.stop,
           target_price: r.target,
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
-          exchange: real ? live.conn.exchange : undefined,
-          exchange_order_id: real ? real.order_id : undefined,
           rationale: (r.reasons || []).join(" • "),
           opened_at: new Date().toISOString(),
         });
-
         if (config.mode === "auto") {
-          if (!real) cash -= sizeUsd;
+          cash -= sizeUsd;
           opened.push({
             id: created.id,
             symbol: r.symbol,
             side: r.side,
             entry: r.entry,
-            size_usd: round(real ? realSizeUsd : sizeUsd),
-            mode: real ? "real" : "paper",
+            size_usd: round(sizeUsd),
+            mode: "paper",
           });
           await base44.entities.Alert.create({
             symbol: r.symbol,
             title: `Bot opened a ${r.side} on ${r.symbol}`,
-            message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}.${real ? ` Real order placed on ${live.conn.label}.` : ""}`,
+            message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}.`,
             kind: "bot_open",
             severity: "info",
             trade_id: created.id,

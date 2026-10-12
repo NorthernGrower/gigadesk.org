@@ -152,7 +152,7 @@ export default function Bot() {
     }
   };
 
-  if (loading && !bot) return <LoadingBlock label="Loading your bot rules and positions" />;
+  if (loading && !bot) return <LoadingBlock label="Loading live bot stats and rules" />;
 
   return (
     <div className="space-y-4">
@@ -165,18 +165,17 @@ export default function Bot() {
         onToggleAutoRun={toggleAutoRun}
         onRunNow={() => cycle(false)}
         stats={{
-          equity: bot?.equity,
-          cash: bot?.cash,
-          exposure: bot?.exposure,
-          profitMode: bot?.profit_mode,
-          stacked: bot?.stacked,
-          unrealized: bot?.unrealized,
-          realizedToday: bot?.realized_today,
-          dailyGoal: bot?.daily_goal,
-          goalHit: bot?.goal_hit,
-          openCount: bot?.open_count,
+          balance: bot?.live?.balance_usd,
+          balanceStale: bot?.live?.balance_stale,
+          balanceError: bot?.live?.balance_error,
+          exposure: bot?.live?.exposure,
+          cap: bot?.live?.cap_usd,
+          budget: bot?.live?.budget_left,
+          unrealized: bot?.live?.unrealized,
+          realizedToday: bot?.live?.realized_today,
+          openCount: bot?.live?.open_count,
           scanned: bot?.scanned,
-          startingBalance: config?.starting_balance,
+          enabled: bot?.live?.enabled,
         }}
       />
 
@@ -184,12 +183,13 @@ export default function Bot() {
         <div className="space-y-4">
           <ProposedTrades trades={proposed} onAction={handleProposal} busyId={busyId} />
           <PositionsPanel
-            positions={bot?.positions || []}
+            title="Live positions"
+            positions={bot?.live?.positions || []}
             onClose={closePosition}
             onCloseAll={closeAll}
             closingId={closingId}
             closingAll={closingAll}
-            hint="Marked to market on every cycle."
+            hint="Exchange-reported live positions, marked to market every cycle."
           />
           <AlertsFeed limit={12} />
         </div>

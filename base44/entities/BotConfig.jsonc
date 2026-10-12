@@ -21,6 +21,11 @@
       "default": "paper",
       "description": "Which desk the dashboard opens on; switching desks never touches the other one's data"
     },
+    "live_rules": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Rules that govern live trading only \u2014 sizing, slots, score bar, trailing, cooldown and the live budget. The paper desk trades by the desk-level rules"
+    },
     "profit_mode": {
       "type": "string",
       "enum": [
