@@ -1,6 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { readAccount, accountValueUsd, isBackedOff, backoffUntil, balanceJustRead } from '../../shared/exchanges.ts';
 import { decryptSecret } from '../../shared/crypto.ts';
+import { syncExchangePositions } from '../../shared/reconcile.ts';
+import { asArray } from '../../shared/market.ts';
 
 // Refreshes every connected exchange's quote balance and stores it on the
 // connection, so the desk always has a saved balance to show even when a
@@ -17,6 +19,14 @@ export default async function (req) {
     const usable = (conns || []).filter(
       (c) => c.api_key && !isBackedOff(c) && !balanceJustRead(c) && (c.status === 'connected' || c.balance_updated_at != null),
     );
+    // per-owner bot rules, so imported positions carry the desk's own risk
+    // levels (stop and target)
+    const configs = asArray(
+      await base44.asServiceRole.entities.BotConfig.filter({}, { sort: '-updated_date', limit: 50 }),
+    );
+    const rulesByOwner = new Map();
+    for (const c of configs)
+      if (!rulesByOwner.has(c.created_by_id)) rulesByOwner.set(c.created_by_id, c);
 
     const results = [];
     for (let i = 0; i < usable.length; i += 6) {
@@ -52,7 +62,22 @@ export default async function (req) {
             last_checked_at: new Date().toISOString(),
             backoff_until: null,
           });
-          return { id: conn.id, label: conn.label, ok: true, balance };
+          // wallet sync: reconcile the desk's open real positions with what
+          // this exchange actually holds — imports untracked holdings, closes
+          // sold ones. Runs here so the sync also happens while the app is
+          // closed, not only inside bot cycles.
+          let wallet_sync = null;
+          try {
+            const rules = rulesByOwner.get(conn.created_by_id) || null;
+            wallet_sync = await syncExchangePositions(base44, { ...cfg, label: conn.label }, account.balances, {
+              ownerId: conn.created_by_id,
+              stopPct: rules ? (rules.live_rules?.default_stop_pct ?? rules.default_stop_pct) : undefined,
+              targetR: rules && rules.engine_v2 !== false && rules.champion_engine !== false ? 2.5 : 0,
+            });
+          } catch (e) {
+            wallet_sync = { reason: (e && e.message) || 'sync failed' };
+          }
+          return { id: conn.id, label: conn.label, ok: true, balance, wallet_sync };
         }),
       );
       for (const r of settled) {

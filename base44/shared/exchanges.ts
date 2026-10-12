@@ -358,7 +358,7 @@ const KRAKEN_ASSETS = {
   SOL: "SOL",
 };
 
-const krakenAsset = (a) => KRAKEN_ASSETS[a] || a;
+export const krakenAsset = (a) => KRAKEN_ASSETS[a] || a;
 
 // Kraken rejects any request whose nonce is not strictly above the previous
 // one — two signed calls landing in the same millisecond would collide, and
@@ -392,7 +392,7 @@ export const KRAKEN_MESSAGES = {
   "EGeneral:Temporary lockout": "Kraken temporarily locked this key after repeated failed attempts — wait about 15 minutes, then reconnect",
 };
 
-async function krakenSignedCall(cfg, path, extraBody = "") {
+export async function krakenSignedCall(cfg, path, extraBody = "") {
   const nonce = krakenNonce();
   const body = `nonce=${nonce}${extraBody}`;
   const sign = await krakenSign(cfg.api_secret, path, String(nonce), body);

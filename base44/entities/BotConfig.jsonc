@@ -154,6 +154,10 @@
       "format": "date-time",
       "description": "When the current cycle began; keeps overlapping cycles from double-opening positions"
     },
+    "last_wallet_sync_at": {
+      "type": "number",
+      "description": "When the wallet reconciliation last ran, so it stays throttled to one sync per 10 minutes"
+    },
     "real_orders_enabled": {
       "type": "boolean",
       "default": false,

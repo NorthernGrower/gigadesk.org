@@ -8,6 +8,7 @@ import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
+import { syncExchangePositions } from "../../shared/reconcile.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -144,6 +145,10 @@ export default async function (req) {
     for (const [sym, px] of livePrices) {
       const coin = priceMap.get(sym);
       if (coin && px > 0) coin.price = px;
+      // wallet-imported positions can sit on coins the US feed does not list:
+      // give them a live-priced row so the bot still manages them
+      if (!coin && px > 0)
+        priceMap.set(sym, { symbol: sym, name: sym, coingecko_id: "", image: "", price: px, market_cap: 0, volume24h: 0, change24h: 0, rank: 0 });
     }
     // managing existing real positions must work even while new live entries
     // are paused — the pause gates entries, never risk management
@@ -1030,6 +1035,7 @@ export default async function (req) {
 
     // the exchange's own quote-currency balance, refreshed on full cycles only
     let exchangeBalance = null;
+    let freshBalances = null;
     let balanceAsOf = null;
     let balanceStale = false;
     let balanceError = null;
@@ -1052,6 +1058,7 @@ export default async function (req) {
         passphrase: managed.conn.passphrase || "",
       });
       if (acct.ok) {
+        freshBalances = acct.balances;
         // total account value (every holding priced) — the funding cash the
         // bot sizes with is read separately from the balances list
         exchangeBalance = await accountValueUsd(managed.conn, acct.balances);
@@ -1077,6 +1084,31 @@ export default async function (req) {
           exchangeBalance = round(Number(managed.conn.balance_usd) || 0, 2);
           balanceAsOf = managed.conn.balance_updated_at || null;
         }
+      }
+    }
+
+    // ---- wallet sync: reconcile the desk's open real positions with what
+    // the exchange actually holds. Untracked holdings are imported as
+    // positions the bot then manages, positions sold off on the exchange are
+    // closed on the desk, partial differences are reconciled. This runs on
+    // every full cycle (throttled to one sync per 10 minutes) so the desk and
+    // the wallet stay reconciled permanently.
+    let walletSync = null;
+    if (
+      managed.conn &&
+      !light &&
+      !dryRun &&
+      !isBackedOff(connRow) &&
+      Date.now() - (Number(config.last_wallet_sync_at) || 0) > 10 * 60000
+    ) {
+      const syncBalances = freshBalances || (connRow && Array.isArray(connRow.balances) ? connRow.balances : null);
+      if (syncBalances && syncBalances.length) {
+        walletSync = await syncExchangePositions(base44, managed.conn, syncBalances, {
+          ownerId: config.created_by_id,
+          stopPct: Number(lrVal("default_stop_pct", 2.5)),
+          targetR: engineV2 && champion ? 2.5 : 0,
+        });
+        await base44.entities.BotConfig.update(config.id, { last_wallet_sync_at: Date.now() });
       }
     }
 
@@ -1297,6 +1329,9 @@ export default async function (req) {
         flips: closed.filter((c) => c.exit_reason === "flipped").length,
         weakened: closed.filter((c) => c.exit_reason === "weakened").length,
       },
+      wallet_sync: walletSync
+        ? { imported: walletSync.imported.length, closed: walletSync.closed.length, adjusted: walletSync.adjusted.length, reason: walletSync.reason }
+        : null,
       open_count: positions.length,
       config,
       updated_at: new Date().toISOString(),
