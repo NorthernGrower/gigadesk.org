@@ -14,11 +14,18 @@ const BASE = { ...CG2, cooldown_bars: 24 };
 // Final check: the round-7 winner and runner-up against the round-2 deep
 // selection baseline, over a wider 20-symbol universe for stability.
 const WIDE = { ...BASE, target_r: 2.5, be_stop_r: 1.2, skip_riskon_long: true, min_vol_ratio: 1.5, skip_sideways_long: true };
+// Round 9: everything builds on the round-8 champion (wide universe, risk-off
+// longs only, 1.5x volume, 72-bar cooldown) — the live engine's current rules.
+// Each candidate is the champion plus exactly one new idea, so results name
+// the rule that helped or hurt.
+const CHAMPION = { ...WIDE, cooldown_bars: 72 };
 const OPTIMIZE_VARIANTS = [
-  variantCfg("deep_base_wide", "Reference: deep selection + 24-bar cooldown + engine targets", BASE),
-  variantCfg("sideskip_cool48_wide", "Round 6 winner over the wider universe", WIDE),
-  variantCfg("sideskip_cool72_wide", "Round 7 winner (72-bar cooldown) over the wider universe", { ...WIDE, cooldown_bars: 72 }),
-  variantCfg("sideskip_cool48_v2_wide", "Round 7 runner-up (2x volume) over the wider universe", { ...WIDE, min_vol_ratio: 2 }),
+  variantCfg("champ_r8", "Reference: round-8 champion as the live engine runs today", CHAMPION),
+  variantCfg("champ_trail15", "Champion + ATR trail after +1.5R", { ...CHAMPION, trail_r: 1.5 }),
+  variantCfg("champ_early_be", "Champion + break-even stop at +1.0R (locks winners sooner)", { ...CHAMPION, be_stop_r: 1.0 }),
+  variantCfg("champ_pullback", "Champion + true pullback phases only (no breakout chasing)", { ...CHAMPION, require_fib_pullback: true }),
+  variantCfg("champ_bounded_stop", "Champion + stops between 1.2% and 2.5% (skip wide, risky stops)", { ...CHAMPION, min_stop_pct: 1.2, max_stop_pct: 2.5 }),
+  variantCfg("champ_cut_stalls", "Champion + underwater trades cut after 24 bars", { ...CHAMPION, time_underwater_bars: 24 }),
 ];
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
