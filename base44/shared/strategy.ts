@@ -18,6 +18,7 @@ import {
   percentileRank,
 } from "./indicators.ts";
 import { fibRead, elliottRead, zoneRead, breakoutAge } from "./confluence.ts";
+import { chartPattern } from "./patterns.ts";
 
 const last = (arr) => (arr && arr.length ? arr[arr.length - 1] : null);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -549,6 +550,9 @@ export function analyzeCoin(coin, candles, ctx = {}) {
   const ema50Slope = ((ema50 - (ema50s[n - 11] ?? ema50)) / ema50) * 100;
   const pattern = candlePattern(candles);
   const div = divergence(pivotList, rsiSeries);
+  // classic swing-chart patterns (double/triple tops and bottoms, head and
+  // shoulders, diamonds, triangles, wedges, cups, flags) — gate-level input
+  const chart = chartPattern(pivotList, candles, price);
 
   const change24h = Number(coin.change24h) || 0;
   const barsAgo = Math.min(n - 2, Math.max(1, Math.round(barsPerDay * 7)));
@@ -689,6 +693,9 @@ export function analyzeCoin(coin, candles, ctx = {}) {
     htf_trend: htfTrend,
     pattern: pattern.name,
     pattern_bias: pattern.bias,
+    chart_pattern: chart.name,
+    chart_pattern_bias: chart.bias,
+    chart_pattern_quality: chart.quality,
     rsi_divergence: div.kind,
     fib_phase: chosen.fib && chosen.fib.phase !== "none" ? chosen.fib.phase : null,
     elliott: chosen.elliott && chosen.elliott.scenario ? chosen.elliott.scenario : null,

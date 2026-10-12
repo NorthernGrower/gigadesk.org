@@ -431,6 +431,10 @@ export function variantCfg(id, description, over = {}) {
     time_underwater_bars: 0,
     time_flat_bars: 48,
     long_only: false,
+    pattern_must_agree: false,
+    pattern_must_support: false,
+    pattern_block_q: 0,
+    pattern_min_quality: 0,
     ...over,
   };
 }
@@ -473,6 +477,16 @@ function gateFor(cfg) {
     if (cfg.min_stop_pct && (Number(row.stop_pct) || 0) < cfg.min_stop_pct) return false;
     if (cfg.max_stop_pct && (Number(row.stop_pct) || 0) > cfg.max_stop_pct) return false;
     if (cfg.min_rr && (Number(row.risk_reward) || 0) < cfg.min_rr) return false;
+    // chart-pattern gates: the detected swing pattern's bias versus the trade side
+    const pBias = row.chart_pattern_bias;
+    if (pBias && pBias !== "neutral") {
+      const supports = row.side === "long" ? pBias === "bullish" : pBias === "bearish";
+      const q = Number(row.chart_pattern_quality) || 0;
+      if (cfg.pattern_must_agree && !supports) return false;
+      if (cfg.pattern_must_support && !supports) return false;
+      if (cfg.pattern_block_q && !supports && q >= cfg.pattern_block_q) return false;
+    }
+    if (cfg.pattern_min_quality && (Number(row.chart_pattern_quality) || 0) < cfg.pattern_min_quality) return false;
     return true;
   };
 }

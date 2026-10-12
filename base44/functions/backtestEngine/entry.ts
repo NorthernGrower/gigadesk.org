@@ -34,7 +34,31 @@ const ROUND11_4H_VARIANTS = [
   variantCfg("r11_4h_s68_adx28", "4h champion + score bar 68 + ADX 28", { ...CHAMPION_4H, min_score: 68, min_adx: 28 }),
   variantCfg("r11_4h_cool36", "4h champion + 6-day cooldown", { ...CHAMPION_4H, cooldown_bars: 36 }),
 ];
-const OPTIMIZE_VARIANTS = ROUND11_VARIANTS;
+// Round 12: chart-pattern recognition. The engine now reads classic swing
+// patterns (double/triple tops and bottoms, head and shoulders, diamond tops
+// and bottoms, triangles, wedges, cups, flags) off the pivot structure, and
+// each candidate tests a way of letting the pattern gate entries.
+const ROUND12_VARIANTS = [
+  variantCfg("champ_r8", "Reference: the live engine's rules as they run today", CHAMPION),
+  variantCfg("r12_block_opp", "Champion + skip trades a detected chart pattern opposes", {
+    ...CHAMPION,
+    pattern_must_agree: true,
+  }),
+  variantCfg("r12_block_opp_q3", "Champion + skip trades opposed by a strong (3+) chart pattern", {
+    ...CHAMPION,
+    pattern_block_q: 3,
+  }),
+  variantCfg("r12_require_support", "Champion + only trade when a chart pattern supports the side", {
+    ...CHAMPION,
+    pattern_must_support: true,
+  }),
+  variantCfg("r12_support_q2", "Champion + only trade with a supportive pattern of quality 2+", {
+    ...CHAMPION,
+    pattern_must_support: true,
+    pattern_min_quality: 2,
+  }),
+];
+const OPTIMIZE_VARIANTS = ROUND12_VARIANTS;
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
