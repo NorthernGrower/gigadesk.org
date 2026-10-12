@@ -73,19 +73,43 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
   if (!manage && config.real_orders_enabled !== true) {
     return { conn: null, reason: "Live trading is paused", info: null };
   }
-  if (!config.real_connection_id) {
+  let stored = null;
+  if (config.real_connection_id) {
+    // credential fields are hidden from every client-side read, so this read
+    // goes through the service role — with an owner check, since the row rules
+    // no longer apply here
+    stored = await base44.asServiceRole.entities.ExchangeConnection
+      .get(config.real_connection_id)
+      .catch(() => null);
+  } else if (config.id && config.created_by_id) {
+    // no account picked yet: with exactly one verified, trading-enabled
+    // connection of the owner's, the choice is unambiguous — select it (and
+    // remember the pick) instead of leaving the desk dark despite a key that
+    // verified fine
+    const owned = await base44.asServiceRole.entities.ExchangeConnection
+      .filter(
+        { created_by_id: config.created_by_id, status: "connected", allow_trading: true },
+        { limit: 2 },
+      )
+      .catch(() => null);
+    if (owned && owned.items && owned.items.length === 1) {
+      stored = owned.items[0];
+      const rulesPatch = { ...(config.live_rules || {}), real_connection_id: stored.id };
+      await base44.asServiceRole.entities.BotConfig
+        .update(config.id, { real_connection_id: stored.id, live_rules: rulesPatch })
+        .catch(() => {});
+      config.real_connection_id = stored.id;
+      if (config.live_rules) config.live_rules.real_connection_id = stored.id;
+    }
+  }
+  if (!stored) {
     return { conn: null, reason: "No exchange account is selected for real orders", info: null };
   }
-  // credential fields are hidden from every client-side read, so this read
-  // goes through the service role — with an owner check, since the row rules
-  // no longer apply here
-  const stored = await base44.asServiceRole.entities.ExchangeConnection
-    .get(config.real_connection_id)
-    .catch(() => null);
-  if (!stored || (config.created_by_id && stored.created_by_id !== config.created_by_id)) {
+  if (config.created_by_id && stored.created_by_id !== config.created_by_id) {
     return { conn: null, reason: "The selected exchange account is missing", info: null };
   }
   const info = {
+    id: stored.id,
     label: stored.label || stored.exchange,
     exchange: stored.exchange,
     status: stored.status,
