@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, BellRing, CheckCheck, Target, TrendingDown, TrendingUp, Zap } from 'lucide-react';
+import { Bell, BellRing, CheckCheck, Target, Trash2, TrendingDown, TrendingUp, X, Zap } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -103,6 +103,17 @@ export default function AlertsBell() {
     setAlerts((prev) => prev.map((a) => ({ ...a, read: true })));
   };
 
+  const deleteAlert = async (id) => {
+    await base44.entities.Alert.delete(id);
+    setAlerts((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const deleteAll = async () => {
+    if (!alerts.length) return;
+    await Promise.all(alerts.map((a) => base44.entities.Alert.delete(a.id)));
+    setAlerts([]);
+  };
+
   const unreadCount = alerts.filter((a) => !a.read).length;
 
   return (
@@ -131,6 +142,18 @@ export default function AlertsBell() {
                 Mark all read
               </Button>
             ) : null}
+            {alerts.length ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                onClick={deleteAll}
+                title="Delete every alert"
+              >
+                <Trash2 className="h-3 w-3" />
+                Clear
+              </Button>
+            ) : null}
           </div>
         </div>
         <div className="max-h-[400px] overflow-y-auto p-2">
@@ -156,7 +179,17 @@ export default function AlertsBell() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-xs font-medium leading-snug">{alert.title}</p>
-                          <DeskBadge mode={alert.mode} />
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <DeskBadge mode={alert.mode} />
+                            <button
+                              type="button"
+                              title="Delete this alert"
+                              className="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => deleteAlert(alert.id)}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
                         </div>
                         {alert.message ? (
                           <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{alert.message}</p>
