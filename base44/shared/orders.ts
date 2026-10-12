@@ -81,7 +81,11 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
     stored = await base44.asServiceRole.entities.ExchangeConnection
       .get(config.real_connection_id)
       .catch(() => null);
-  } else if (config.id && config.created_by_id) {
+    // the saved account was deleted (e.g. the key was re-added): fall back to
+    // the owner's auto-select instead of leaving the desk dark on a dead id
+    if (!stored && config.id && config.created_by_id) config.real_connection_id = "";
+  }
+  if (!stored && config.id && config.created_by_id) {
     // no account picked yet: with exactly one verified, trading-enabled
     // connection of the owner's, the choice is unambiguous — select it (and
     // remember the pick) instead of leaving the desk dark despite a key that
