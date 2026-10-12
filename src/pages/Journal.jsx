@@ -10,7 +10,8 @@ import { onTradesChange } from '@/lib/live';
 import { ensureBotConfig } from '@/lib/market';
 
 export default function Journal() {
-  const [mode, setMode] = useState('all');
+  const [mode, setMode] = useState('paper');
+  const [desk, setDesk] = useState(null);
   const [status, setStatus] = useState('all');
   const [result, setResult] = useState('all');
   const [trades, setTrades] = useState([]);
@@ -55,21 +56,40 @@ export default function Journal() {
     }
   };
 
+  // the journal follows the active desk: live shows real money fills, paper
+  // shows the bot's simulated trades
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const config = await ensureBotConfig();
-        if (alive) setBase(Number(config.starting_balance) || 10000);
+        if (alive) {
+          setBase(Number(config.starting_balance) || 10000);
+          setDesk(config.active_desk === 'live' ? 'live' : 'paper');
+        }
       } catch {
-        // the performance panel falls back to the default base
+        if (alive) setDesk('paper');
       }
     })();
-    load({ reset: true });
     return () => {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    const onDeskChange = (event) => {
+      if (event.detail === 'live' || event.detail === 'paper') setDesk(event.detail);
+    };
+    window.addEventListener('desk:changed', onDeskChange);
+    return () => window.removeEventListener('desk:changed', onDeskChange);
+  }, []);
+
+  useEffect(() => {
+    if (!desk) return undefined;
+    const deskMode = desk === 'live' ? 'real' : 'paper';
+    setMode(deskMode);
+    loadRef.current({ mode: deskMode, reset: true });
+  }, [desk]);
 
   const loadRef = React.useRef(load);
   useEffect(() => {
@@ -86,22 +106,15 @@ export default function Journal() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2.5">
-            <Select
-              value={mode}
-              onValueChange={(value) => {
-                setMode(value);
-                load({ mode: value, reset: true });
-              }}
+            <span
+              className={`rounded-lg border px-3 py-2 text-[11px] font-medium ${
+                mode === 'real'
+                  ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+                  : 'border-border/70 bg-secondary/40 text-muted-foreground'
+              }`}
             >
-              <SelectTrigger className="h-9 w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All trades</SelectItem>
-                <SelectItem value="paper">Paper bot</SelectItem>
-                <SelectItem value="real">Real money</SelectItem>
-              </SelectContent>
-            </Select>
+              {mode === 'real' ? 'Live desk journal' : 'Paper desk journal'}
+            </span>
             <Select
               value={status}
               onValueChange={(value) => {

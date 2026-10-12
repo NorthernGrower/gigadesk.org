@@ -14,7 +14,6 @@ import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
 import LiveSignals from '@/components/desk/LiveSignals';
-import ScannedCoins from '@/components/desk/ScannedCoins';
 import DayMovers from '@/components/desk/DayMovers';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -324,8 +323,6 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
         exchange={connection?.label}
         held={!bot?.top?.length}
       />
-
-      <ScannedCoins rows={bot?.top || []} scannedCount={bot?.scanned} />
 
       <PositionsPanel
         positions={live.positions || []}

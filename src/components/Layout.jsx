@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import BotRunner from '@/components/BotRunner';
 import Sidebar from '@/components/layout/Sidebar';
+import AlertsBell from '@/components/layout/AlertsBell';
 import BotStatusPill from '@/components/layout/BotStatusPill';
 import { ensureBotConfig } from '@/lib/market';
 
@@ -52,7 +53,10 @@ export default function Layout() {
           <p className="hidden text-[11px] uppercase tracking-[0.16em] text-muted-foreground md:block">
             Live market desk · {clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} UTC
           </p>
-          <BotStatusPill config={config} running={running} />
+          <div className="flex items-center gap-2">
+            <AlertsBell />
+            <BotStatusPill config={config} running={running} />
+          </div>
         </header>
 
         <main className="mx-auto max-w-[1500px] space-y-4 px-4 pb-24 pt-4 md:px-6 md:pb-10">

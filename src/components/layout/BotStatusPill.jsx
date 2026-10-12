@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Play } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
 import { MODE_LABEL, ensureBotConfig, requestBotRun } from '@/lib/market';
 import { timeAgo } from '@/lib/format';
 
-export default function BotStatusPill({ config, running }) {
+export default function BotStatusPill({ config }) {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [lastRun, setLastRun] = useState(config?.last_run_at || null);
@@ -104,11 +102,6 @@ export default function BotStatusPill({ config, running }) {
       >
         {mode === 'auto' ? 'Auto on' : 'Auto'}
       </button>
-
-      <Button size="sm" variant="outline" className="h-8 text-[11px]" onClick={requestBotRun} disabled={running}>
-        {running ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
-        Run now
-      </Button>
     </div>
   );
 }
