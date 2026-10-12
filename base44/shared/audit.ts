@@ -3,12 +3,16 @@
 // execution rules. Pure comparison tool: reads no entity data, changes nothing.
 // All three variants walk the SAME bars and share ONE precomputed signal pass
 // per symbol, so the delta between iterations isolates the engine changes.
-import { fetchCandles, chunk } from "./market.ts";
+import { fetchCandles, fetchCandlesHistory, chunk } from "./market.ts";
 import { analyzeCoin } from "./strategy.ts";
 import { pickCandidates } from "./scan.ts";
 import { KRAKEN_PAIRS, fetchKrakenCandles } from "./kraken.ts";
 
 const WARMUP = 300;
+// Bounded indicator lookback for long backtest windows: every series
+// analyzeCoin reads needs well under this many bars, and a window keeps a
+// six-month signal pass linear in bars instead of quadratic.
+const PREP_WINDOW = 600;
 const FETCH_LIMIT = 500;
 const BARS_PER_DAY = 24;
 export const AUDIT_DAYS = 7;
@@ -87,11 +91,14 @@ function btcRegimeMap(btcCandles, barsPerDay = BARS_PER_DAY) {
  * 24h volume are reconstructed from the candles themselves, so no current-day
  * ticker value leaks into historical bars.
  */
-function prepSymbol(coin, candles, endBar, barsPerDay = BARS_PER_DAY) {
+function prepSymbol(coin, candles, endBar, barsPerDay = BARS_PER_DAY, step = 1) {
   if (!candles || candles.length < WARMUP + AUDIT_DAYS * barsPerDay + 2) return null;
   const rowsByJ = new Map();
   const end = endBar != null ? endBar : Math.min(candles.length - 1, WARMUP + AUDIT_DAYS * barsPerDay);
-  for (let j = WARMUP; j < end; j++) {
+  // step > 1 samples the signal pass on every Nth bar: long backtest windows
+  // stay inside the function's CPU budget, and every variant walks the SAME
+  // sampled pass, so comparisons between variants stay exact
+  for (let j = WARMUP; j < end; j += step) {
     const price = candles[j].c;
     const back = candles[j - barsPerDay];
     const change24h = back && back.c ? ((price - back.c) / back.c) * 100 : 0;
@@ -100,7 +107,7 @@ function prepSymbol(coin, candles, endBar, barsPerDay = BARS_PER_DAY) {
     for (let k = Math.max(0, j - (barsPerDay - 1)); k <= j; k++) v24 += candles[k].v || 0;
     const row = analyzeCoin(
       { ...coin, change24h, volume24h: v24 * price },
-      candles.slice(0, j + 1),
+      candles.slice(Math.max(0, j + 1 - PREP_WINDOW), j + 1),
       { medianChange24h: 0, dailyTargetPct: 2, barsPerDay, confluenceV2: true },
     );
     if (row) rowsByJ.set(j, row);
@@ -435,6 +442,14 @@ export function variantCfg(id, description, over = {}) {
     pattern_must_support: false,
     pattern_block_q: 0,
     pattern_min_quality: 0,
+    skip_weekend: false,
+    skip_overnight: false,
+    min_stop_atr: 0,
+    rsi_chase_block: false,
+    div_must_agree: false,
+    slope_must_agree: false,
+    stoch_must_agree: false,
+    max_bb_width: 0,
     ...over,
   };
 }
@@ -477,6 +492,27 @@ function gateFor(cfg) {
     if (cfg.min_stop_pct && (Number(row.stop_pct) || 0) < cfg.min_stop_pct) return false;
     if (cfg.max_stop_pct && (Number(row.stop_pct) || 0) > cfg.max_stop_pct) return false;
     if (cfg.min_rr && (Number(row.risk_reward) || 0) < cfg.min_rr) return false;
+    // lower-timeframe gates, all read off the same precomputed row: chase
+    // protection, divergence agreement, trend-slope agreement, stochastic
+    // alignment and a calm-volatility ceiling
+    if (cfg.rsi_chase_block) {
+      const rsiVal = Number(ind.rsi) || 0;
+      if (row.side === "long" ? rsiVal > 72 : rsiVal < 28) return false;
+    }
+    if (cfg.div_must_agree && row.rsi_divergence) {
+      const supports = row.side === "long" ? row.rsi_divergence === "bullish" : row.rsi_divergence === "bearish";
+      if (!supports) return false;
+    }
+    if (cfg.slope_must_agree) {
+      const slope = Number(ind.ema50_slope) || 0;
+      if (row.side === "long" ? slope < 0 : slope > 0) return false;
+    }
+    if (cfg.stoch_must_agree) {
+      const k = Number(ind.stoch_k) || 0;
+      const d = Number(ind.stoch_d) || 0;
+      if (row.side === "long" ? k < d : k > d) return false;
+    }
+    if (cfg.max_bb_width && (Number(ind.bb_width_percentile) || 0) > cfg.max_bb_width) return false;
     // chart-pattern gates: the detected swing pattern's bias versus the trade side
     const pBias = row.chart_pattern_bias;
     if (pBias && pBias !== "neutral") {
@@ -562,6 +598,25 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
     }
     const row = rowsByJ.get(j);
     if (gate(row)) {
+      // session gates: thin-tape hours and weekend entries, measured on the bar
+      if (cfg.skip_weekend || cfg.skip_overnight) {
+        const at = new Date(bar.t);
+        if (
+          (cfg.skip_weekend && (at.getUTCDay() === 0 || at.getUTCDay() === 6)) ||
+          (cfg.skip_overnight && (at.getUTCHours() >= 22 || at.getUTCHours() < 6))
+        ) {
+          missed += 1;
+          continue;
+        }
+      }
+      // a stop tighter than the bar's own noise range gets hit by nothing but noise
+      if (cfg.min_stop_atr) {
+        const atrVal = Number(row.indicators && row.indicators.atr) || 0;
+        if (atrVal > 0 && Math.abs(bar.c - Number(row.stop)) < cfg.min_stop_atr * atrVal) {
+          missed += 1;
+          continue;
+        }
+      }
       // regime gates: BTC's 24h tape at entry time. Risk-on longs measured the
       // weakest in every round - a moon-chasing tape is where this engine's
       // entries are least reliable - and sideways longs second weakest.
@@ -614,6 +669,10 @@ export async function runOptimize(coins, variants, opts = {}) {
   const timeframe = opts.timeframe === "4h" ? "4h" : "1h";
   const barsPerDay = timeframe === "4h" ? 6 : BARS_PER_DAY;
   const interval = timeframe === "4h" ? 240 : 60;
+  // deep windows: Kraken's public chart API serves only the last 720 candles,
+  // so a window longer than a month pages Binance US kline history instead,
+  // over the same liquid pairs, keeping Kraken's conservative fee assumption
+  const months = Math.max(1, Number(opts.months) || 1);
   const universe = [];
   for (const { pair, symbol } of KRAKEN_PAIRS) {
     const cap = capMap.get(symbol);
@@ -621,12 +680,21 @@ export async function runOptimize(coins, variants, opts = {}) {
     universe.push({ ...cap, kraken_pair: pair });
     if (universe.length >= maxSymbols) break;
   }
-  const btcByTime = btcRegimeMap(await fetchKrakenCandles("XBTUSDT", interval), barsPerDay);
+  const btcByTime = btcRegimeMap(
+    months > 1
+      ? await fetchCandlesHistory("BTC", timeframe, months)
+      : await fetchKrakenCandles("XBTUSDT", interval),
+    barsPerDay,
+  );
 
   const fetched = [];
   for (const group of chunk(universe, 6)) {
     const settled = await Promise.allSettled(
-      group.map((c) => fetchKrakenCandles(c.kraken_pair, interval)),
+      group.map((c) =>
+        months > 1
+          ? fetchCandlesHistory(c.symbol, timeframe, months)
+          : fetchKrakenCandles(c.kraken_pair, interval),
+      ),
     );
     settled.forEach((res, i) => {
       if (res.status === "fulfilled" && res.value) fetched.push({ coin: group[i], candles: res.value });
@@ -643,7 +711,7 @@ export async function runOptimize(coins, variants, opts = {}) {
   const perCoin = {};
   const symbolsUsed = [];
   for (const { coin, candles } of eligible) {
-    const ready = prepSymbol(coin, candles, candles.length - 1, barsPerDay);
+    const ready = prepSymbol(coin, candles, candles.length - 1, barsPerDay, months > 1 ? 2 : 1);
     if (!ready) continue;
     symbolsUsed.push(coin.symbol);
     for (const cfg of variants) {
@@ -677,7 +745,8 @@ export async function runOptimize(coins, variants, opts = {}) {
   return {
     timeframe,
     days: sampleDays,
-    source: "kraken",
+    source: months > 1 ? "binance_us_history" : "kraken",
+    months,
     symbols: symbolsUsed.length,
     symbols_used: symbolsUsed,
     stale_symbols_excluded: staleSymbols,

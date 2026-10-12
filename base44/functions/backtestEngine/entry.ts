@@ -71,6 +71,109 @@ const ROUND13_VARIANTS = [
 ];
 const OPTIMIZE_VARIANTS = ROUND13_VARIANTS;
 
+// Round 14: lower-timeframe focus. The desk trades 1h, so every candidate is
+// the live champion plus ONE change aimed at how 1h setups behave — noise-
+// proof stops, faster exits, session filters and agreement gates. Backtested
+// over six months of hourly candles.
+const ROUND14_VARIANTS = [
+  variantCfg("champ_1h", "Reference: the live engine's rules as they run today", CHAMPION),
+  variantCfg("r14_stop3", "Champion + stops allowed up to 3.5% (more room for 1h noise)", {
+    ...CHAMPION,
+    max_stop_pct: 3.5,
+  }),
+  variantCfg("r14_stop_atr1", "Champion + stop must clear 1x ATR (no noise-tight stops)", {
+    ...CHAMPION,
+    min_stop_atr: 1,
+  }),
+  variantCfg("r14_stop_atr15", "Champion + stop must clear 1.5x ATR", { ...CHAMPION, min_stop_atr: 1.5 }),
+  variantCfg("r14_cool24", "Champion + 1-day cooldown (revisit fresh 1h setups sooner)", {
+    ...CHAMPION,
+    cooldown_bars: 24,
+  }),
+  variantCfg("r14_fast_exit", "Champion + underwater trades cut after 24 hours", {
+    ...CHAMPION,
+    time_underwater_bars: 24,
+  }),
+  variantCfg("r14_rsi_chase", "Champion + no longs over RSI 72, no shorts under RSI 28", {
+    ...CHAMPION,
+    rsi_chase_block: true,
+  }),
+  variantCfg("r14_div_agree", "Champion + an opposing RSI divergence vetoes the entry", {
+    ...CHAMPION,
+    div_must_agree: true,
+  }),
+  variantCfg("r14_slope_agree", "Champion + the EMA50 slope must agree with the trade", {
+    ...CHAMPION,
+    slope_must_agree: true,
+  }),
+  variantCfg("r14_stoch_agree", "Champion + the stochastic pair must agree with the trade", {
+    ...CHAMPION,
+    stoch_must_agree: true,
+  }),
+  variantCfg("r14_offhours", "Champion + no entries 22:00-06:00 UTC or on weekends", {
+    ...CHAMPION,
+    skip_overnight: true,
+    skip_weekend: true,
+  }),
+  variantCfg("r14_bb_calm", "Champion + skip entries when Bollinger width is in its top decile", {
+    ...CHAMPION,
+    max_bb_width: 90,
+  }),
+  variantCfg("r14_vol2", "Champion + the signal bar needs 2x average volume", {
+    ...CHAMPION,
+    min_vol_ratio: 2,
+  }),
+];
+
+// Round 15: stacks the three round-14 winners (RSI chase block, stochastic
+// agreement, 2x volume) and tests what each further change adds on top.
+const R14_STACK = { ...CHAMPION, rsi_chase_block: true, stoch_must_agree: true, min_vol_ratio: 2 };
+const ROUND15_VARIANTS = [
+  variantCfg("champ_1h", "Reference: the live engine's rules as they run today", CHAMPION),
+  variantCfg("r15_stack3", "Round-14 winners stacked: RSI chase block + stochastic agreement + 2x volume", R14_STACK),
+  variantCfg("r15_stack4", "Winners stacked + Bollinger calm filter", { ...R14_STACK, max_bb_width: 90 }),
+  variantCfg("r15_target3", "Winners stacked + 3R targets", { ...R14_STACK, target_r: 3 }),
+  variantCfg("r15_target2", "Winners stacked + 2R targets (quicker books)", { ...R14_STACK, target_r: 2 }),
+  variantCfg("r15_rr15", "Winners stacked + minimum 1.5R setups", { ...R14_STACK, min_rr: 1.5 }),
+  variantCfg("r15_score68", "Winners stacked + score bar 68", { ...R14_STACK, min_score: 68 }),
+  variantCfg("r15_adx28", "Winners stacked + ADX 28", { ...R14_STACK, min_adx: 28 }),
+  variantCfg("r15_longonly", "Winners stacked, longs only", { ...R14_STACK, long_only: true }),
+  variantCfg("r15_pullback", "Winners stacked + entries only on true Fibonacci pullbacks", {
+    ...R14_STACK,
+    require_fib_pullback: true,
+  }),
+];
+
+// Round 16: exit structure on the round-15 stack. The 6-month window showed
+// trades held past 24 hours were the profitable cohort and stop-outs dominate,
+// so these candidates trade less often but give surviving positions more room.
+const ROUND16_VARIANTS = [
+  variantCfg("champ_1h", "Reference: the live engine's rules as they run today", CHAMPION),
+  variantCfg("r16_stack", "Round-15 quality stack (reference for this round)", R14_STACK),
+  variantCfg("r16_s68_stack", "Quality stack + score bar 68 (round-15 winner, reference)", {
+    ...R14_STACK,
+    min_score: 68,
+  }),
+  variantCfg("r16_s68_notime", "Score-68 stack with no flat time exit (winners run)", {
+    ...R14_STACK,
+    min_score: 68,
+    time_flat_bars: 0,
+  }),
+  variantCfg("r16_s68_time96", "Score-68 stack + flat trades cut after 96 hours", {
+    ...R14_STACK,
+    min_score: 68,
+    time_flat_bars: 96,
+  }),
+  variantCfg("r16_s68_target4", "Score-68 stack + 4R targets", { ...R14_STACK, min_score: 68, target_r: 4 }),
+  variantCfg("r16_s68_score72", "Quality stack + score bar 72", { ...R14_STACK, min_score: 72 }),
+  variantCfg("r16_s68_t2_be10", "Score-68 stack + 2R targets + break-even after 1.0R", {
+    ...R14_STACK,
+    min_score: 68,
+    target_r: 2,
+    be_stop_r: 1.0,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -113,14 +216,29 @@ export default async function (req) {
     // variant simulated over the same prepared signals
     if (body.mode === "optimize") {
       const { coins } = await fetchMarkets();
+      const months = Math.max(0, Number(body.months) || 0);
       const result = await runOptimize(
         coins,
-        body.timeframe === "4h" ? ROUND11_4H_VARIANTS : OPTIMIZE_VARIANTS,
-        { maxSymbols: Math.min(Number(body.max_symbols) || 12, 20), timeframe: body.timeframe },
+        months
+          ? Number(body.round) >= 16
+            ? ROUND16_VARIANTS
+            : Number(body.round) >= 15
+              ? ROUND15_VARIANTS
+              : ROUND14_VARIANTS
+          : body.timeframe === "4h"
+            ? ROUND11_4H_VARIANTS
+            : OPTIMIZE_VARIANTS,
+        {
+          maxSymbols: Math.min(Number(body.max_symbols) || 12, 20),
+          timeframe: months ? "1h" : body.timeframe,
+          ...(months ? { months } : {}),
+        },
       );
       const saved = await base44.asServiceRole.entities.AuditRun
         .create({
-          label: `Kraken optimizer round - ${result.days}d, ${result.symbols} symbols`,
+          label: months
+            ? `Lower-timeframe optimizer round - ${result.days}d, ${result.symbols} symbols`
+            : `Kraken optimizer round - ${result.days}d, ${result.symbols} symbols`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,

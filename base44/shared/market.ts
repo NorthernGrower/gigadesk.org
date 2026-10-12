@@ -228,6 +228,49 @@ export async function fetchCandles(symbol, interval = "1h", limit = 300) {
   return cacheSet(key, candles, 45000);
 }
 
+/**
+ * Deep candle history for backtests: pages Binance US klines backwards from
+ * now, ~1000 bars per call, until the window covers the wanted months (the
+ * public kline endpoint allows this freely). Historical bars never change
+ * once closed, so the assembled series is cached for ten minutes.
+ */
+export async function fetchCandlesHistory(symbol, interval = "1h", months = 6) {
+  const key = `hist:${symbol}:${interval}:${months}`;
+  const cached = cacheGet(key);
+  if (cached) return cached;
+
+  const startMs = Date.now() - months * 30 * 24 * 3600 * 1000;
+  const pages = [];
+  let endMs = Date.now();
+  for (let page = 0; page < 12; page++) {
+    let rows = null;
+    try {
+      rows = await fetchJson(
+        `${BASE}/klines?symbol=${pairFor(symbol)}&interval=${interval}&limit=1000&endTime=${endMs}`,
+        12000,
+      );
+    } catch (err) {
+      break;
+    }
+    if (!Array.isArray(rows) || !rows.length) break;
+    pages.push(rows);
+    const oldest = Number(rows[0][0]);
+    if (oldest <= startMs) break;
+    endMs = oldest - 1;
+  }
+  const candles = [];
+  const seen = new Set();
+  for (const rows of pages.reverse()) {
+    for (const r of rows) {
+      const c = { t: Number(r[0]), o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] };
+      if (c.t < startMs || !(c.c > 0) || seen.has(c.t)) continue;
+      seen.add(c.t);
+      candles.push(c);
+    }
+  }
+  return cacheSet(key, candles, 10 * 60000);
+}
+
 const KRAKEN_PUBLIC = "https://api.kraken.com/0/public";
 
 /**
