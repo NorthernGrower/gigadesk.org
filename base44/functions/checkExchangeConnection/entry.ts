@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, pickQuoteBalance, backoffUntil } from '../../shared/exchanges.ts';
+import { readAccount, pickQuoteBalance, backoffUntil, isBackedOff } from '../../shared/exchanges.ts';
 import { encryptSecret, decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -34,6 +34,20 @@ export default async function(req) {
     const conn = await base44.asServiceRole.entities.ExchangeConnection.get(id);
     if (!conn || conn.created_by_id !== user.id) {
       return Response.json({ error: 'Connection not found' }, { status: 404 });
+    }
+
+    // a key in backoff is left alone: every retry during the pause counts
+    // toward the exchange-side lockout and keeps it alive. The saved balance
+    // and status travel back unchanged instead. A manual verify (force) is
+    // the user's own click and may proceed.
+    if (isBackedOff(conn) && body.force !== true) {
+      const safePaused = { id };
+      for (const f of SAFE_FIELDS) safePaused[f] = conn[f];
+      return Response.json({
+        connection: safePaused,
+        account: { ok: false, message: conn.status_message || 'Paused after a failed read', balances: [] },
+        paused: true,
+      });
     }
 
     const apiKey = await decryptSecret(conn.api_key || '');

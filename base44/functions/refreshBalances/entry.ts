@@ -9,10 +9,15 @@ import { pickQuoteBalance } from '../../shared/exchanges.ts';
 export default async function (req) {
   try {
     const base44 = createClientFromRequest(req);
-    const conns = await base44.asServiceRole.entities.ExchangeConnection.filter({ status: 'connected' });
+    const conns = await base44.asServiceRole.entities.ExchangeConnection.filter({});
     // a connection in backoff is left alone: its key failed a signed read
-    // recently and retrying keeps the exchange-side lockout alive
-    const usable = (conns || []).filter((c) => c.api_key && !isBackedOff(c) && !balanceJustRead(c));
+    // recently and retrying keeps the exchange-side lockout alive. Errored
+    // connections that had worked before (a saved balance) are retried once
+    // their backoff expires, so a temporary lockout self-heals instead of
+    // leaving the desk dark until a manual check.
+    const usable = (conns || []).filter(
+      (c) => c.api_key && !isBackedOff(c) && !balanceJustRead(c) && (c.status === 'connected' || c.balance_updated_at != null),
+    );
 
     const results = [];
     for (let i = 0; i < usable.length; i += 6) {
@@ -36,6 +41,8 @@ export default async function (req) {
           }
           const balance = await pickQuoteBalance(account.balances, conn.exchange);
           await base44.asServiceRole.entities.ExchangeConnection.update(conn.id, {
+            status: 'connected',
+            status_message: account.message,
             balance_usd: balance,
             balance_updated_at: new Date().toISOString(),
             balances: account.balances.slice(0, 10),

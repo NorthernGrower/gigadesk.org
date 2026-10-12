@@ -38,7 +38,8 @@ export default function ConnectionsManager({ showSafety = false }) {
   const handleCheck = async (conn) => {
     setBusyId(conn.id);
     try {
-      const res = await base44.functions.invoke('checkExchangeConnection', { id: conn.id });
+      // force: a manual verify may proceed during a backoff pause
+      const res = await base44.functions.invoke('checkExchangeConnection', { id: conn.id, force: true });
       const data = res && res.data ? res.data : res;
       upsert(data.connection);
       toast({
