@@ -83,10 +83,13 @@ export default async function (req) {
     const startedAt = config.last_cycle_started_at
       ? Date.parse(config.last_cycle_started_at)
       : 0;
-    const cycleInFlight = startedAt > 0 && Date.now() - startedAt < 45000;
-    await base44.entities.BotConfig.update(config.id, {
-      last_cycle_started_at: new Date().toISOString(),
-    });
+    // only full cycles scan and trade, so only they share the single-flight
+    // guard: a cheap light cycle must never block the desk's fresh scan
+    const cycleInFlight = !light && startedAt > 0 && Date.now() - startedAt < 45000;
+    if (!light)
+      await base44.entities.BotConfig.update(config.id, {
+        last_cycle_started_at: new Date().toISOString(),
+      });
 
     const { coins } = await fetchMarkets();
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));

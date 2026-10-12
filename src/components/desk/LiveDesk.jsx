@@ -13,6 +13,7 @@ import StatCard from '@/components/common/StatCard';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import LiveSignals from '@/components/desk/LiveSignals';
+import ScannedCoins from '@/components/desk/ScannedCoins';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -277,6 +278,8 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
         rows={bot?.top || []}
         exchange={connection?.label}
       />
+
+      <ScannedCoins rows={bot?.top || []} scannedCount={bot?.scanned} />
 
       <PositionsPanel
         positions={live.positions || []}

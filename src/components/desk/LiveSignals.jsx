@@ -17,7 +17,7 @@ const scoreTone = (score) =>
       : 'bg-secondary text-muted-foreground ring-1 ring-border';
 
 export default function LiveSignals({ rows, exchange }) {
-  const setups = (rows || []).slice(0, 6);
+  const setups = (rows || []).slice(0, 1);
   return (
     <div className="surface p-4">
       <div className="flex items-center justify-between gap-3">

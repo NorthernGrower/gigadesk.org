@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Layers, Wallet } from 'lucide-react';
 import AlertsFeed from '@/components/dashboard/AlertsFeed';
 import TopPicks from '@/components/desk/TopPicks';
+import ScannedCoins from '@/components/desk/ScannedCoins';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
@@ -253,6 +254,8 @@ export default function Dashboard() {
                 onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
                 onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
               />
+
+              <ScannedCoins rows={bot?.top || []} scannedCount={bot?.scanned} />
 
               <EquityPanel
                 startingBalance={Number(config?.starting_balance) || 10000}
