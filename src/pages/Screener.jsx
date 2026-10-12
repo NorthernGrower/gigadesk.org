@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import FiltersBar from '@/components/screener/FiltersBar';
 import ScreenerTable from '@/components/screener/ScreenerTable';
-import LiveScannedCoins from '@/components/screener/LiveScannedCoins';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { ensureBotConfig, pageItems, scanMarket } from '@/lib/market';
@@ -152,7 +151,6 @@ export default function Screener() {
             watchSymbols={watchSymbols}
             targetPct={targetPct}
           />
-          <LiveScannedCoins />
         </>
       )}
     </div>
