@@ -133,8 +133,9 @@ export default function Screener() {
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <p className="text-[11px] text-muted-foreground">
-              {rows.length} of {board?.scannedCount || 0} analysed setups shown · {board?.universeCount || 0} tradable
-              markets scanned for candidates
+              {board?.exchangeFilter
+                ? `${rows.length} of ${board?.scannedCount || 0} analysed setups shown · candidates drawn from the ${board.exchangeFilter.listed} pairs listed on ${board.exchangeFilter.label} (of ${board?.universeCount || 0} tradable markets)`
+                : `${rows.length} of ${board?.scannedCount || 0} analysed setups shown · ${board?.universeCount || 0} tradable markets scanned for candidates`}
             </p>
             {board?.medianChange24h !== undefined ? (
               <p className="num text-[11px] text-muted-foreground">

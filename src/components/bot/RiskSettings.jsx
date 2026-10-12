@@ -281,15 +281,21 @@ export default function RiskSettings({ config, onSaved }) {
     }
   };
 
+  // full reset: wipes every paper trade, the equity history, the bot's
+  // lessons and those trades' alerts, then puts the balance back to the
+  // starting amount — the desk is as good as brand new
   const resetBalance = async () => {
+    if (!window.confirm('Reset the paper desk? This deletes every paper trade, its lessons and the equity history, and sets the balance back to the starting amount.')) return;
     setSaving('paper');
     try {
-      const balance = roundTo(paper.starting_balance, 2);
-      await base44.entities.BotConfig.update(config.id, {
-        starting_balance: balance,
-        cash_balance: balance,
+      const res = await base44.functions.invoke('resetPaperTrading', {});
+      const data = res.data || {};
+      const balance = roundTo(data.starting_balance ?? paper.starting_balance, 2);
+      const counts = data.counts || {};
+      toast({
+        title: 'Paper desk reset',
+        description: `${counts.paper_trades ?? 0} paper trades and ${counts.lessons ?? 0} lessons cleared. Balance back to $${balance.toLocaleString()}.`,
       });
-      toast({ title: 'Paper balance reset', description: `Back to $${balance.toLocaleString()}.` });
       if (onSaved) onSaved();
     } catch (error) {
       toast({ title: 'Could not reset', description: error.message, variant: 'destructive' });
@@ -424,7 +430,7 @@ export default function RiskSettings({ config, onSaved }) {
             Save paper rules
           </Button>
           <Button size="sm" variant="ghost" className="w-full text-[11px] text-muted-foreground" onClick={resetBalance} disabled={saving === 'paper'}>
-            Reset paper balance
+            Reset paper desk (trades + stats)
           </Button>
         </div>
       )}
