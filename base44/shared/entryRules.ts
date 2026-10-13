@@ -75,13 +75,15 @@ export function gateReason(row, desk, rules) {
     const conviction = rules.margin ? 0.5 : 0.6;
     if ((Number(row.body_ratio) || 0) < conviction)
       return `signal bar lacks conviction (body under ${Math.round(conviction * 100)}%)`;
-    // regime: the longs only traded into a risk-off BTC tape; shorts wait
-    // out a flat one - measured on BTC's 24h move (over +1% risk-on,
-    // under -1% risk-off, in between sideways)
-    const btc = Number(rules.btc_change24h);
-    if (Number.isFinite(btc)) {
-      if (long && btc > -1) return "longs wait for a risk-off BTC tape";
-      if (!long && btc <= 1 && btc >= -1) return "shorts wait out a flat BTC tape";
+    // regime: the longs only traded into a risk-off BTC tape - measured on
+    // BTC's 24h move (over +1% risk-on, under -1% risk-off). The shorts'
+    // flat-tape block is gone: it sat on BTC's 24h move too, and whenever
+    // BTC drifted between +-1% the desk could not trade at all - longs were
+    // gated off, shorts were gated off. A missing BTC reading must also
+    // never masquerade as a flat tape and shut the desk silently.
+    const btcRaw = rules.btc_change24h;
+    if (btcRaw != null && Number.isFinite(Number(btcRaw))) {
+      if (long && Number(btcRaw) > -1) return "longs wait for a risk-off BTC tape";
     }
     // the engine target (6R, or 3R under the margin engine) must still
     // clear the daily goal on the trade's own stop
