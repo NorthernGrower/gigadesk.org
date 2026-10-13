@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Layers, Wallet } from 'lucide-react';
 import TopPicks from '@/components/desk/TopPicks';
@@ -24,7 +24,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
 import { onTradesChange } from '@/lib/live';
-import { emitBotTick, getLastBot, requestBotRun, runBot, tradeAction } from '@/lib/market';
+import { emitBotTick, getLastBot, requestBotRun, runBot, scanMarket, tradeAction } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 
 export default function Dashboard() {
@@ -36,8 +36,12 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [closingId, setClosingId] = useState(null);
   const [closingAll, setClosingAll] = useState(false);
+  const botRef = useRef(null);
   const [deskMode, setDeskMode] = useState('paper');
   const [confirmLive, setConfirmLive] = useState(false);
+  // the market pulse refreshes on its own schedule (every 15 minutes), so its
+  // stats never depend on when the bot's own cycle last scanned
+  const [pulse, setPulse] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -99,6 +103,31 @@ export default function Dashboard() {
       if (data.summary) setLoading(false);
     };
 
+    // market pulse: one scan right away (so the box shows stats even when the
+    // bot cycle has none) and again every 15 minutes
+    let alive2 = true;
+    const refreshPulse = async () => {
+      const cfg = botRef.current?.config;
+      try {
+        const board = await scanMarket({
+          timeframe: cfg?.timeframe || '1h',
+          scope: cfg?.market_cap_scope || 'all',
+          dailyTargetPct: Number(cfg?.daily_target_pct) || 2,
+        });
+        if (alive2)
+          setPulse({
+            summary: board.summary || null,
+            median_change_24h: board.medianChange24h,
+            universe: board.universeCount,
+            updated_at: new Date().toISOString(),
+          });
+      } catch (err) {
+        // the last pulse stays on screen until the next scheduled refresh
+      }
+    };
+    refreshPulse();
+    const pulseTimer = setInterval(refreshPulse, 15 * 60 * 1000);
+
     load();
     window.addEventListener('bot:tick', onTick);
 
@@ -117,6 +146,8 @@ export default function Dashboard() {
 
     return () => {
       alive = false;
+      alive2 = false;
+      clearInterval(pulseTimer);
       window.removeEventListener('bot:tick', onTick);
       stopLive();
     };
@@ -182,6 +213,8 @@ export default function Dashboard() {
     }
     persistDesk(desk);
   };
+
+  botRef.current = bot;
 
   if (loading)
     return (
@@ -297,10 +330,10 @@ export default function Dashboard() {
 
             <div className="min-w-0 space-y-4">
               <MarketPulse
-                summary={bot?.summary}
-                medianChange24h={bot?.median_change_24h}
-                universe={bot?.universe}
-                updatedAt={bot?.updated_at}
+                summary={pulse?.summary ?? bot?.summary}
+                medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
+                universe={pulse ? pulse.universe : bot?.universe}
+                updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
               />
             </div>
           </div>

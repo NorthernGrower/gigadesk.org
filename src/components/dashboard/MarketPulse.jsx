@@ -19,7 +19,7 @@ export default function MarketPulse({ summary, medianChange24h, universe, update
       <div className="surface p-4">
         <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Market pulse</p>
         <p className="mt-3 text-sm text-muted-foreground">
-          Run a scan to read the breadth of the whole market.
+          Reading the whole market — the first scan lands in a moment.
         </p>
       </div>
     );
