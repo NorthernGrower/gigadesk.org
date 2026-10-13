@@ -24,7 +24,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
 import { onTradesChange } from '@/lib/live';
-import { emitBotTick, getLastBot, requestBotRun, runBot, scanMarket, tradeAction } from '@/lib/market';
+import { emitBotTick, getLastBot, getLastPulse, lastBotAgeMs, rememberPulse, requestBotRun, runBot, scanMarket, tradeAction } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 
 export default function Dashboard() {
@@ -87,9 +87,15 @@ export default function Dashboard() {
         .finally(() => {
           if (alive) setLoading(false);
         });
-      runBot(false)
-        .then((data) => apply(data, true))
-        .catch(() => {});
+      // a full cycle scans 60 coins and takes the server up to a minute —
+      // only launch one when the board is actually stale. The header runner
+      // refreshes it every five minutes anyway, so revisiting the desk
+      // within that window must not relaunch the minute-long scan.
+      if (lastBotAgeMs() > 240000) {
+        runBot(false)
+          .then((data) => apply(data, true))
+          .catch(() => {});
+      }
     };
 
     const onTick = (event) => {
@@ -113,19 +119,27 @@ export default function Dashboard() {
     let alive2 = true;
     const refreshPulse = async () => {
       const cfg = botRef.current?.config;
+      // the last pulse (15-minute life) survives page changes and reloads:
+      // revisiting the desk re-renders it instead of rescanning the market
+      const cachedPulse = getLastPulse();
+      if (cachedPulse) {
+        setPulse(cachedPulse);
+        return;
+      }
       try {
         const board = await scanMarket({
           timeframe: cfg?.timeframe || '1h',
           scope: cfg?.market_cap_scope || 'all',
           dailyTargetPct: Number(cfg?.daily_target_pct) || 2,
         });
-        if (alive2)
-          setPulse({
-            summary: board.summary || null,
-            median_change_24h: board.medianChange24h,
-            universe: board.universeCount,
-            updated_at: new Date().toISOString(),
-          });
+        const next = {
+          summary: board.summary || null,
+          median_change_24h: board.medianChange24h,
+          universe: board.universeCount,
+          updated_at: new Date().toISOString(),
+        };
+        if (alive2) setPulse(next);
+        rememberPulse(next);
       } catch (err) {
         // the last pulse stays on screen until the next scheduled refresh
       }

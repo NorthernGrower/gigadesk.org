@@ -96,8 +96,22 @@ export async function ensureBotConfig() {
   return await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 }
 
-export async function scanMarket(payload = {}) {
-  return unwrap(await base44.functions.invoke('scanMarket', payload));
+// The market-wide scan behind the desk pulse, the screener and the watchlist
+// takes the server tens of seconds — and each page fired its own on mount, so
+// two or three identical scans stacked up in parallel and starved the app's
+// data reads. Identical scans within a minute share one request or its fresh
+// result instead of running side by side.
+let lastScan = null;
+
+export function scanMarket(payload = {}) {
+  const key = JSON.stringify(payload);
+  if (lastScan && lastScan.key === key && Date.now() - lastScan.at < 60000) return lastScan.promise;
+  const promise = base44.functions.invoke('scanMarket', payload).then(unwrap);
+  lastScan = { at: Date.now(), key, promise };
+  promise.catch(() => {
+    if (lastScan && lastScan.promise === promise) lastScan = null;
+  });
+  return promise;
 }
 
 export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
@@ -141,15 +155,57 @@ export function getLastBot(maxAgeMs = 600000) {
   return lastBot && Date.now() - lastBot.at < maxAgeMs ? lastBot.data : null;
 }
 
+/** How old the board is, so pages can skip a scan that would only repeat it. */
+export function lastBotAgeMs() {
+  return lastBot ? Date.now() - lastBot.at : Number.POSITIVE_INFINITY;
+}
+
+// The market pulse keeps its own cache: it re-renders on revisits and reloads
+// instead of rescanning the whole market every time the desk mounts.
+const LAST_PULSE_KEY = 'gigadesk:lastPulse';
+
+const hydrateLastPulse = () => {
+  try {
+    const raw = sessionStorage.getItem(LAST_PULSE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.data ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+let lastPulse = hydrateLastPulse();
+
+const persistLastPulse = () => {
+  try {
+    if (lastPulse) sessionStorage.setItem(LAST_PULSE_KEY, JSON.stringify(lastPulse));
+  } catch {
+    // storage unavailable: the in-memory copy still covers revisits
+  }
+};
+
+export function getLastPulse(maxAgeMs = 15 * 60 * 1000) {
+  return lastPulse && Date.now() - lastPulse.at < maxAgeMs ? lastPulse.data : null;
+}
+
+export function rememberPulse(pulse) {
+  if (!pulse) return;
+  lastPulse = { at: Date.now(), data: pulse };
+  persistLastPulse();
+}
+
 function rememberBot(data) {
   if (!data) return;
   if (data.summary) {
     lastBot = { at: Date.now(), data };
     persistLastBot();
   } else if (lastBot) {
-    // light cycles keep the scan's board but refresh the stats around it
+    // light cycles keep the scan's board but refresh the stats around it —
+    // and keep the board's own timestamp, so its age still tracks the last
+    // full scan and stale boards still relaunch one
     lastBot = {
-      at: Date.now(),
+      at: lastBot.at,
       data: {
         ...lastBot.data,
         ...data,
