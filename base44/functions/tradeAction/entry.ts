@@ -46,13 +46,25 @@ export default async function (req) {
     const action = String(body.action || "");
     const tradeId = String(body.trade_id || "");
 
+    // the config is the requesting user's own: a desk must never spend
+    // another user's cash balance
     const config = asArray(
-      await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
+      await base44.entities.BotConfig.filter(
+        { created_by_id: user.id },
+        { sort: "-updated_date", limit: 1 },
+      ),
     )[0];
     const cash = Number(config?.cash_balance) || 0;
 
     if (action === "close_all") {
-      const openTrades = asArray(await base44.entities.Trade.filter({ status: "open" }, { limit: 500 }));
+      // close-everything closes THIS user's open positions only — a shared
+      // read here once closed another user's paper desk with it
+      const openTrades = asArray(
+        await base44.entities.Trade.filter(
+          { status: "open", created_by_id: user.id },
+          { limit: 500 },
+        ),
+      );
       if (!openTrades.length) {
         return Response.json({ ok: true, closed: 0, skipped: 0, pnl_usd: 0, cash: round(cash) });
       }
@@ -137,7 +149,8 @@ export default async function (req) {
     if (!tradeId) return Response.json({ error: "A trade id is required" }, { status: 400 });
 
     const trade = await base44.entities.Trade.get(tradeId);
-    if (!trade) return Response.json({ error: "Trade not found" }, { status: 404 });
+    if (!trade || trade.created_by_id !== user.id)
+      return Response.json({ error: "Trade not found" }, { status: 404 });
     const isPaper = (trade.mode || "paper") === "paper";
 
     if (action === "approve") {

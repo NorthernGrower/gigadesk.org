@@ -68,9 +68,14 @@ export default async function (req) {
     const dryRun = body.dry_run === true;
 
     // one set of rules only: keep the freshest config and remove stray older
-    // ones, so every cycle and screen agrees on a single balance
+    // ones, so every cycle and screen agrees on a single balance — scoped to
+    // the requesting user, so a desk can never read or delete another user's
+    // configuration
     const configs = asArray(
-      await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 10 }),
+      await base44.entities.BotConfig.filter(
+        { created_by_id: user.id },
+        { sort: "-updated_date", limit: 10 },
+      ),
     );
     if (!dryRun) for (const extra of configs.slice(1)) await base44.entities.BotConfig.delete(extra.id);
     let config = configs[0];
@@ -132,7 +137,10 @@ export default async function (req) {
       const claim = new Date().toISOString();
       await base44.entities.BotConfig.update(config.id, { last_cycle_started_at: claim });
       const fresh = asArray(
-        await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
+        await base44.entities.BotConfig.filter(
+          { created_by_id: user.id },
+          { sort: "-updated_date", limit: 1 },
+        ),
       )[0];
       claimConfirmed = !fresh || fresh.last_cycle_started_at === claim;
     }
@@ -169,9 +177,12 @@ export default async function (req) {
     // from this list and the live block filters out the real ones, instead of
     // paying for a second identical read that only doubled entity traffic
     // the open-trade read and the live-connection resolution are independent —
-    // one parallel round instead of two serial waits
+    // one parallel round instead of two serial waits — and the read is scoped
+    // to the requesting user: another user's open paper positions are their
+    // desk's business, never this cycle's (a shared read here let one desk's
+    // exits close another user's trades)
     const [openTrades, managedRes] = await Promise.all([
-      readAll({ status: "open" }),
+      readAll({ status: "open", created_by_id: config.created_by_id || user.id }),
       resolveLiveConnection(base44, liveConfigView, { manage: true, readOnly: dryRun }),
     ]);
 
@@ -986,6 +997,7 @@ export default async function (req) {
         const alreadyOpen = await base44.entities.Trade.count({
           status: "open",
           symbol: r.symbol,
+          created_by_id: config.created_by_id || user.id,
         });
         if (alreadyOpen) continue;
         const stopDist = Math.abs(r.entry - r.stop);
@@ -1186,9 +1198,9 @@ export default async function (req) {
     // eight serial waits; this chain was seconds of every cycle
     const [todays, realizedAgg, deployedAgg, prevCandlesPage, existingCandlePage, prevLivePage, existingLivePage] =
       await Promise.all([
-        readAll({ status: "closed", closed_at: { $gte: dayStart.toISOString() } }),
-        base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper" }, sum: "pnl_usd" }),
-        base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper" }, sum: "size_usd" }),
+        readAll({ status: "closed", closed_at: { $gte: dayStart.toISOString() }, created_by_id: user.id }),
+        base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper", created_by_id: user.id }, sum: "pnl_usd" }),
+        base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper", created_by_id: user.id }, sum: "size_usd" }),
         base44.entities.EquityCandle.filter({ owner: user.id, day: { $lt: todayKey } }, { sort: "-day", limit: 1 }),
         base44.entities.EquityCandle.filter({ owner: user.id, day: todayKey }, { limit: 1 }),
         base44.entities.EquityCandle.filter({ owner: `${user.id}|live`, day: { $lt: todayKey } }, { sort: "-day", limit: 1 }),
