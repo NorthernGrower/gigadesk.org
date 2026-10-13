@@ -476,6 +476,36 @@ const ROUND28_VARIANTS = [
 // ---------------------------------------------------------------------------
 export const COMBO_ENGINE = { ...R27_BEST };
 
+// ---------------------------------------------------------------------------
+// MARGIN MODE: the combined champion simulated as a Kraken spot-margin trader.
+// Only the pairs Kraken's AssetPairs endpoint lists with sell leverage (the
+// markets a margin account can actually open and short), shorts live because
+// margin lending sells without holdings, and Kraken's margin fees on top of
+// the round-trip taker assumption: 0.02% opening fee plus a 0.02% rollover
+// every 4 hours the position is held.
+// ---------------------------------------------------------------------------
+const MARGIN_VARIANTS = [
+  variantCfg("margin_combo", "The combined champion (4.5R + score 70), longs AND shorts, Kraken margin costs", {
+    ...R27_BEST,
+    margin: true,
+  }),
+  variantCfg("margin_long_only", "The combined champion, longs only (what the live rules trade today), margin costs", {
+    ...R27_BEST,
+    margin: true,
+    long_only: true,
+  }),
+  variantCfg("margin_combo_2x", "The combined champion with shorts, 2x leverage scaling returns", {
+    ...R27_BEST,
+    margin: true,
+    leverage: 2,
+  }),
+  variantCfg("margin_combo_3x", "The combined champion with shorts, 3x leverage scaling returns", {
+    ...R27_BEST,
+    margin: true,
+    leverage: 3,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -565,6 +595,29 @@ export default async function (req) {
           label: months
             ? `Lower-timeframe optimizer round - ${result.days}d, ${result.symbols} symbols`
             : `Kraken optimizer round - ${result.days}d, ${result.symbols} symbols`,
+          ran_at: new Date().toISOString(),
+          timeframe: "1h",
+          window_days: result.days,
+          symbols: result.symbols,
+          results: result,
+        })
+        .catch(() => null);
+      return Response.json({ run_id: saved ? saved.id : null, ...result });
+    }
+
+    // Kraken margin backtest: the combined champion over six months of hourly
+    // candles on leverage-eligible Kraken pairs only, with margin fees applied.
+    if (body.mode === "margin") {
+      const { coins } = await fetchMarkets();
+      const result = await runOptimize(coins, MARGIN_VARIANTS, {
+        maxSymbols: 20,
+        timeframe: "1h",
+        months: 6,
+        marginOnly: true,
+      });
+      const saved = await base44.asServiceRole.entities.AuditRun
+        .create({
+          label: `Kraken margin backtest - 6 months, ${result.symbols} leverage pairs`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,

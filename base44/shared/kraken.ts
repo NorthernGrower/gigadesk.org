@@ -31,6 +31,30 @@ export function krakenPairs() {
   return KRAKEN_PAIRS;
 }
 
+let marginCache = null;
+let marginCacheAt = 0;
+
+/**
+ * Kraken margin-eligible pairs: the AssetPairs endpoint exposes each pair's
+ * leverage ladder (an empty or missing list means spot only). Returns the
+ * engine symbols of our tracked pairs that offer SELL leverage - the pairs
+ * margin trading can actually short - cached for ten minutes.
+ */
+export async function fetchKrakenMarginSymbols() {
+  if (marginCache && Date.now() - marginCacheAt < 600000) return marginCache;
+  const j = await fetchJson(`${KRAKEN_API}/AssetPairs`);
+  if (!j || (j.error && j.error.length)) return null;
+  const out = [];
+  for (const { pair, symbol } of KRAKEN_PAIRS) {
+    const d = (j.result || {})[pair];
+    if (d && (d.status || "online") === "online" && Array.isArray(d.leverage_sell) && d.leverage_sell.length)
+      out.push(symbol);
+  }
+  marginCache = new Set(out);
+  marginCacheAt = Date.now();
+  return marginCache;
+}
+
 async function fetchJson(url) {
   try {
     const res = await fetch(url, {

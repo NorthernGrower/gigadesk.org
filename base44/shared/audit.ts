@@ -6,7 +6,7 @@
 import { fetchCandles, fetchCandlesHistory, chunk } from "./market.ts";
 import { analyzeCoin } from "./strategy.ts";
 import { pickCandidates } from "./scan.ts";
-import { KRAKEN_PAIRS, fetchKrakenCandles } from "./kraken.ts";
+import { KRAKEN_PAIRS, fetchKrakenCandles, fetchKrakenMarginSymbols } from "./kraken.ts";
 
 const WARMUP = 300;
 // Bounded indicator lookback for long backtest windows: every series
@@ -419,6 +419,11 @@ export async function runAudit(coins, opts = {}) {
 // ---------------------------------------------------------------------------
 
 const OPT_COST_PCT = 0.5;
+// Kraken spot margin, on top of the round-trip taker fees: a one-time margin
+// opening fee when the position opens, and the same-rate rollover fee charged
+// every 4 hours while it stays open.
+const MARGIN_OPEN_PCT = 0.02;
+const MARGIN_ROLLOVER_PCT = 0.02;
 const TRAIL_ATR = 1.5;
 
 /**
@@ -474,6 +479,9 @@ export function variantCfg(id, description, over = {}) {
     max_bb_width_low: null,
     min_body: 0,
     entry_hours: null,
+    margin: false,
+    leverage: 1,
+    margin_rollover_bars: 4,
     ...over,
   };
 }
@@ -634,13 +642,21 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
       if (exitPx != null) {
         const raw =
           long ? ((exitPx - pos.entry) / pos.entry) * 100 : ((pos.entry - exitPx) / pos.entry) * 100;
+        // margin costs: the round-trip taker fees, Kraken's margin opening
+        // fee, and the rollover charged every 4 hours the position is held.
+        // Leverage scales the return on capital (and the cost).
+        const cost = cfg.margin
+          ? OPT_COST_PCT +
+            MARGIN_OPEN_PCT +
+            (MARGIN_ROLLOVER_PCT * held) / (Number(cfg.margin_rollover_bars) || 4)
+          : OPT_COST_PCT;
         trades.push({
           symbol: pos.symbol,
           side: pos.side,
           entry_time: pos.entryTime,
           exit_time: bar.t,
           raw_pct: Math.round(raw * 100) / 100,
-          net_pct: Math.round((raw - OPT_COST_PCT) * 100) / 100,
+          net_pct: Math.round((raw - cost) * (Number(cfg.leverage) || 1) * 100) / 100,
           stop_pct: pos.stopPct,
           hold_bars: held,
           reason,
@@ -772,10 +788,14 @@ export async function runOptimize(coins, variants, opts = {}) {
   // so a window longer than a month pages Binance US kline history instead,
   // over the same liquid pairs, keeping Kraken's conservative fee assumption
   const months = Math.max(1, Number(opts.months) || 1);
+  // margin mode: only the pairs Kraken's AssetPairs endpoint lists with sell
+  // leverage - the markets a margin account can actually open and short
+  const marginSymbols = opts.marginOnly ? await fetchKrakenMarginSymbols() : null;
   const universe = [];
   for (const { pair, symbol } of KRAKEN_PAIRS) {
     const cap = capMap.get(symbol);
     if (!cap) continue;
+    if (marginSymbols && !marginSymbols.has(symbol)) continue;
     universe.push({ ...cap, kraken_pair: pair });
     if (universe.length >= maxSymbols) break;
   }
@@ -850,7 +870,13 @@ export async function runOptimize(coins, variants, opts = {}) {
     symbols_used: symbolsUsed,
     stale_symbols_excluded: staleSymbols,
     universe: universe.map((u) => u.symbol),
-    costs: { round_trip_pct: OPT_COST_PCT, note: "Kraken taker fees plus slippage, charged on every simulated trade" },
+    costs: {
+      round_trip_pct: OPT_COST_PCT,
+      margin: !!opts.marginOnly,
+      note: opts.marginOnly
+        ? "Kraken taker fees (0.5% round trip) plus the margin opening fee (0.02%) and a 0.02% rollover every 4 hours a position is held"
+        : "Kraken taker fees plus slippage, charged on every simulated trade",
+    },
     sizing: {
       starting_balance: STARTING_BALANCE,
       risk_per_trade_pct: RISK_PCT,
