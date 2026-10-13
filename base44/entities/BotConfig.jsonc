@@ -108,10 +108,10 @@
       "type": "number",
       "default": 2
     },
-    "max_drawdown_pct": {
+    "max_trade_loss_pct": {
       "type": "number",
-      "default": 15,
-      "description": "Drawdown guard: when a desk's equity falls this far below its peak, new entries pause on that desk until it recovers. Open positions keep their stops and targets. 0 = off"
+      "default": 20,
+      "description": "Per-trade max loss guard: a trade down this percent of its own deployed size is force-closed at market on the next cycle, even if its stop has not fired. 0 = off"
     },
     "trailing_stop": {
       "type": "boolean",

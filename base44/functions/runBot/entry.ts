@@ -36,7 +36,7 @@ const DEFAULT_CONFIG = {
   live_cap_usd: 0,
   trading_style: "mild",
   profit_mode: "compound",
-  max_drawdown_pct: 15,
+  max_trade_loss_pct: 20,
   combo_engine: true,
   margin_engine: false,
   sentiment_watch: true,
@@ -414,7 +414,14 @@ export default async function (req) {
         // flat: only underwater stalls are cut here, the trailing stop and
         // the target own the profitable side of time
         gainPct < 0;
-      const exit = hitTarget || hitStop || stagnant;
+      // per-trade max loss guard: a trade down more than max_trade_loss_pct
+      // of its own deployed size is force-closed at market — the backstop
+      // when a stop sits too wide or the tape moved past the desk's checks
+      const maxLossPct = isRealPos
+        ? Number(lrVal("max_trade_loss_pct", 20)) || 0
+        : Number(config.max_trade_loss_pct) || 0;
+      const hitMaxLoss = maxLossPct > 0 && gainPct <= -maxLossPct;
+      const exit = hitTarget || hitStop || stagnant || hitMaxLoss;
 
       if (exit) {
         // the stop always wins: a breached stop fills at its level — the same
@@ -429,7 +436,9 @@ export default async function (req) {
             : "stop"
           : stagnant
             ? "time"
-            : "target";
+            : hitMaxLoss
+              ? "max_loss"
+              : "target";
         const ok = await closeOut(t, side, exitPrice, reason, updates, (pnl, pnlPct) => ({
           kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
           message: `${
@@ -437,9 +446,11 @@ export default async function (req) {
               ? "Target reached"
               : reason === "trailing"
                 ? "Trailing stop hit"
-                : reason === "time"
-                  ? "Stagnant trade cut after sitting still too long"
-                  : "Stop hit"
+                : reason === "max_loss"
+                  ? "Max loss guard: the trade reached its per-trade loss cap"
+                  : reason === "time"
+                    ? "Stagnant trade cut after sitting still too long"
+                    : "Stop hit"
           } at ${round(exitPrice, 8)}. P&L ${round(pnl)} USD.`,
         }));
         if (!ok) continue;
@@ -574,74 +585,6 @@ export default async function (req) {
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
 
-    // ---- drawdown guard: when a desk's equity has fallen max_drawdown_pct
-    // from its peak, that desk stops opening new trades until it recovers —
-    // open positions keep their managed stops and targets either way
-    const maxDdPct = config.max_drawdown_pct == null ? 15 : Number(config.max_drawdown_pct) || 0;
-    let paperDdBlocked = false;
-    let liveDdBlocked = false;
-    if (maxDdPct > 0) {
-      const markPnl = (t) => {
-        const px = Number(priceMap.get(t.symbol)?.price) || Number(t.entry_price) || 0;
-        const entry = Number(t.entry_price) || 0;
-        const qty = Number(t.quantity) || (Number(t.size_usd) || 0) / (entry || 1);
-        return t.side === "short" ? (entry - px) * qty : (px - entry) * qty;
-      };
-      const peakOf = async (owner, floor) => {
-        const top = asArray(
-          await base44.entities.EquityCandle.filter({ owner }, { sort: "-high", limit: 1 }),
-        )[0];
-        return Math.max(Number(top && top.high) || 0, floor);
-      };
-      const deskGuard = async (desk, equityNow, peak) => {
-        if (!(peak > 0)) return false;
-        const dd = ((peak - equityNow) / peak) * 100;
-        if (dd < maxDdPct) return false;
-        // one warning per desk per 6 hours, not one per cycle
-        const recent = asArray(
-          await base44.entities.Alert.filter(
-            {
-              created_by_id: config.created_by_id,
-              kind: "rule_warning",
-              symbol: `dd_${desk}`,
-              created_date: { $gte: new Date(Date.now() - 6 * 3600000).toISOString() },
-            },
-            { limit: 1 },
-          ),
-        );
-        if (!recent.length)
-          await base44.entities.Alert.create({
-            symbol: `dd_${desk}`,
-            title: `${desk === "live" ? "Live" : "Paper"} desk drawdown guard tripped`,
-            message: `Equity is down ${round(dd, 1)}% from its peak of ${round(peak)} USD (guard set at ${maxDdPct}%). New entries are paused until the desk recovers — open positions keep their stops and targets.`,
-            mode: desk === "live" ? "live" : "paper",
-            kind: "rule_warning",
-            severity: "warning",
-          });
-        return true;
-      };
-      const paperOpen = stillOpen.filter((t) => (t.mode || "paper") === "paper");
-      const liveOpenPositions = stillOpen.filter((t) => (t.mode || "paper") === "real");
-      const paperEquity =
-        (Number(config.cash_balance) || 0) +
-        paperOpen.reduce((a, t) => a + (Number(t.size_usd) || 0), 0) +
-        paperOpen.reduce((a, t) => a + markPnl(t), 0);
-      const liveEquity =
-        (Number(connRow && connRow.balance_usd) || 0) +
-        liveOpenPositions.reduce((a, t) => a + markPnl(t), 0);
-      paperDdBlocked = await deskGuard(
-        "paper",
-        paperEquity,
-        await peakOf(user.id, Number(config.starting_balance) || 0),
-      );
-      if (managed.conn)
-        liveDdBlocked = await deskGuard(
-          "live",
-          liveEquity,
-          await peakOf(`${user.id}|live`, Number(connRow && connRow.balance_usd) || 0),
-        );
-    }
-
     const scanGateOpen =
       paperOpenCount < paperMaxOpen ||
       (live.conn != null && liveVerified && liveOpenCount < liveMaxOpen);
@@ -773,7 +716,6 @@ export default async function (req) {
       };
       const useEngineTarget = marginOn || comboOn || (engineV2 && champion);
       const qualifies = (r, desk) => {
-        if (desk === "live" ? liveDdBlocked : paperDdBlocked) return false;
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         return !blocked.has(r.symbol) && entryGate(r, desk) === null;
       };
@@ -865,7 +807,6 @@ export default async function (req) {
           liveBudget -= size;
         }
         return Response.json({ dry_run: true, mode: config.mode, scanned: board.scannedCount,
-          drawdown_guard: { max_pct: maxDdPct, paper_blocked: paperDdBlocked, live_blocked: liveDdBlocked },
           live: {         entry_ready: live.conn != null && liveVerified && !isBackedOff(connRow), reason: live.reason,
             spendable_quote: spendableQuote, budget_cap: liveBudgetCap, planned: plans },
           paper: { qualifying: paperWanted.filter(r => !stillOpen.some(t => t.symbol === r.symbol))
@@ -1408,7 +1349,6 @@ export default async function (req) {
         };
       }),
       scanned: board.scannedCount,
-      drawdown_guard: { max_pct: maxDdPct, paper_blocked: paperDdBlocked, live_blocked: liveDdBlocked },
       scan_log: scanLog,
       rule_lock: deskDiag,
       universe: board.universeCount,

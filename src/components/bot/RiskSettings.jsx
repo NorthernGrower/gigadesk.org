@@ -156,7 +156,7 @@ export default function RiskSettings({ config, onSaved }) {
     engine_v2: config?.engine_v2 !== false,
     champion_engine: config?.champion_engine !== false,
     margin_engine: config?.margin_engine === true,
-    max_drawdown_pct: config?.max_drawdown_pct ?? 15,
+    max_trade_loss_pct: config?.max_trade_loss_pct ?? 20,
   });
 
   // re-sync the forms whenever a fresh config lands (after a save or a cycle)
@@ -200,7 +200,7 @@ export default function RiskSettings({ config, onSaved }) {
       engine_v2: config.engine_v2 !== false,
       champion_engine: config.champion_engine !== false,
       margin_engine: config.margin_engine === true,
-      max_drawdown_pct: config.max_drawdown_pct ?? 15,
+      max_trade_loss_pct: config.max_trade_loss_pct ?? 20,
     });
   }, [config?.id, config?.updated_date]);
 
@@ -286,7 +286,7 @@ export default function RiskSettings({ config, onSaved }) {
         engine_v2: shared.engine_v2,
         champion_engine: shared.champion_engine,
         margin_engine: shared.margin_engine,
-        max_drawdown_pct: roundTo(shared.max_drawdown_pct, 1),
+        max_trade_loss_pct: roundTo(shared.max_trade_loss_pct, 1),
       });
       toast({ title: 'Shared settings saved', description: 'Both desks scan with these on the next cycle.' });
       if (onSaved) onSaved();
@@ -492,10 +492,10 @@ export default function RiskSettings({ config, onSaved }) {
           </Field>
         </div>
         <Field
-          label="Max drawdown %"
-          hint="When a desk's equity falls this far below its peak, new entries pause on that desk until it recovers. Open positions keep their stops and targets. 0 turns the guard off."
+          label="Max loss per trade %"
+          hint="The most one trade can lose, as a percent of what is deployed in it. A trade down this far is closed at market on the next bot cycle, even if its stop has not fired. 0 turns the guard off."
         >
-          <Input className="num" inputMode="decimal" value={shared.max_drawdown_pct} onChange={setSharedNum('max_drawdown_pct')} />
+          <Input className="num" inputMode="decimal" value={shared.max_trade_loss_pct} onChange={setSharedNum('max_trade_loss_pct')} />
         </Field>
         <div className="grid gap-2.5 sm:grid-cols-2">
           <Toggle
