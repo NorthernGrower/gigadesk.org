@@ -456,6 +456,10 @@ export function variantCfg(id, description, over = {}) {
     target_r: null,
     be_stop_r: null,
     trail_r: null,
+    // the live desk's own percent trailing: stop follows the best price once
+    // the trade is up by trail_trigger_pct, trail_distance_pct behind it
+    trail_trigger_pct: null,
+    trail_distance_pct: 1,
     time_underwater_bars: 0,
     time_flat_bars: 48,
     long_only: false,
@@ -667,7 +671,7 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
         });
         pos = null;
         cooldownUntil = j + (Number(cfg.cooldown_bars) || COOLDOWN_BARS);
-      } else if (cfg.be_stop_r != null || cfg.trail_r != null) {
+      } else if (cfg.be_stop_r != null || cfg.trail_r != null || cfg.trail_trigger_pct != null) {
         const prevClose = candles[j - 1].c;
         const gainR = long ? (prevClose - pos.entry) / pos.unit : (pos.entry - prevClose) / pos.unit;
         if (cfg.be_stop_r != null && gainR >= cfg.be_stop_r) {
@@ -677,6 +681,22 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
         if (cfg.trail_r != null && gainR >= cfg.trail_r) {
           const trail = long ? prevClose - TRAIL_ATR * pos.atr : prevClose + TRAIL_ATR * pos.atr;
           pos.stop = long ? Math.max(pos.stop, trail) : Math.min(pos.stop, trail);
+        }
+        // the live desk's trailing, simulated the way runBot applies it: the
+        // peak tracks the bar's extreme (the closest a bar-by-bar sim gets to
+        // the desk's live ticker), the stop ratchets once the peak gain clears
+        // the trigger, and later bars fill it at its level
+        if (cfg.trail_trigger_pct != null) {
+          const peak = long ? Math.max(pos.peak ?? pos.entry, bar.h) : Math.min(pos.peak ?? pos.entry, bar.l);
+          pos.peak = peak;
+          const gainPct = long
+            ? ((peak - pos.entry) / pos.entry) * 100
+            : ((pos.entry - peak) / pos.entry) * 100;
+          if (gainPct >= cfg.trail_trigger_pct) {
+            const dist = Number(cfg.trail_distance_pct) || 1;
+            const trail = long ? peak * (1 - dist / 100) : peak * (1 + dist / 100);
+            pos.stop = long ? Math.max(pos.stop, trail) : Math.min(pos.stop, trail);
+          }
         }
         if (gate(rowsByJ.get(j))) missed += 1;
       }

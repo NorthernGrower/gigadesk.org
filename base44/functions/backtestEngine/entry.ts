@@ -821,6 +821,45 @@ export default async function (req) {
       return Response.json({ run_id: saved ? saved.id : null, ...result });
     }
 
+    // LIVE-TRAILING CHECK: validates the live desk's trailing stop settings
+    // before real orders are enabled. The reference is the engine exactly as
+    // it runs live today (the combo champion, break-even at +1.2R, no
+    // trailing); the candidates add the desk's percent trailing on top.
+    if (body.mode === "live_trailing") {
+      const { coins } = await fetchMarkets();
+      const trigger = Number(body.trigger_pct) || 3;
+      const distance = Number(body.distance_pct) || 1;
+      const variants = [
+        variantCfg("live_ref", "Reference: the live engine's rules as they run today (break-even at +1.2R, no trailing)", COMBO_ENGINE),
+        variantCfg("live_trail", `Combo champion + the live desk's trailing (trigger +${trigger}%, distance ${distance}%)`, {
+          ...COMBO_ENGINE,
+          trail_trigger_pct: trigger,
+          trail_distance_pct: distance,
+        }),
+        variantCfg("live_trail_tight", "Combo champion + tighter trailing (trigger +1.5%, distance 1%)", {
+          ...COMBO_ENGINE,
+          trail_trigger_pct: 1.5,
+          trail_distance_pct: 1,
+        }),
+      ];
+      const result = await runOptimize(coins, variants, {
+        maxSymbols: Math.min(Number(body.max_symbols) || 12, 20),
+        timeframe: "1h",
+        months: Number(body.months) || 6,
+      });
+      const saved = await base44.asServiceRole.entities.AuditRun
+        .create({
+          label: `Live trailing check - ${result.days}d, ${result.symbols} symbols, trigger ${trigger}%`,
+          ran_at: new Date().toISOString(),
+          timeframe: "1h",
+          window_days: result.days,
+          symbols: result.symbols,
+          results: result,
+        })
+        .catch(() => null);
+      return Response.json({ run_id: saved ? saved.id : null, ...result });
+    }
+
     const timeframe = body.timeframe === "4h" ? "4h" : "1h";
     const maxSymbols = Math.min(Number(body.max_symbols) || 12, 40);
     const minScore = Number(body.min_score) || 62;

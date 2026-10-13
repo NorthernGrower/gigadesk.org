@@ -371,15 +371,17 @@ export default async function (req) {
       // trailing follows the desk the position trades on: real positions
       // trail by the live rules, paper ones by the paper rules
       const isRealPos = (t.mode || "paper") === "real";
-      // combo/margin-managed trades (4.5R and 3R targets) exit by break-even
-      // and target only: the trailing stop is the old engine's exit, not part
-      // of the tested stacks
-      const trailingOn =
-        (Number(t.target_r) || 0) >= 3
+      // trailing follows the desk the position trades on: real positions
+      // trail by the live rules whenever the user left trailing on there —
+      // the combo engine's break-even and 4.5R target exits still run as
+      // tested, and the trailing stop ratchets on top once its trigger hits.
+      // The paper desk keeps the tested stacks' behavior (no trailing on
+      // combo/margin targets)
+      const trailingOn = isRealPos
+        ? lrVal("trailing_stop", true) !== false
+        : (Number(t.target_r) || 0) >= 3
           ? false
-          : isRealPos
-            ? lrVal("trailing_stop", true) !== false
-            : config.trailing_stop !== false;
+          : config.trailing_stop !== false;
       if (trailingOn) {
         if (side === "long" && price > peak) peak = price;
         if (side === "short" && price < peak) peak = price;
