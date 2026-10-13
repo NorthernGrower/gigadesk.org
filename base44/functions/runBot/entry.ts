@@ -1166,7 +1166,12 @@ export default async function (req) {
     ) {
       const syncBalances = freshBalances || (connRow && Array.isArray(connRow.balances) ? connRow.balances : null);
       if (syncBalances && syncBalances.length) {
-        walletSync = await syncExchangePositions(base44, managed.conn, syncBalances, {
+        walletSync = await syncExchangePositions(
+          base44,
+          // the fill-history throttle reads the last pull time off the stored row
+          { ...managed.conn, fills_fetched_at: connRow ? connRow.fills_fetched_at : null },
+          syncBalances,
+          {
           ownerId: config.created_by_id,
           stopPct: Number(lrVal("default_stop_pct", 2.5)),
           targetR: marginOn ? 3 : comboOn ? 4.5 : engineV2 && champion ? 2.5 : 0,

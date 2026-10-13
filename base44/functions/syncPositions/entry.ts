@@ -22,6 +22,14 @@ export default async function (req) {
     if (!managed.conn)
       return Response.json({ error: managed.reason || "No exchange connection" }, { status: 400 });
 
+    // the fill-history throttle reads the last pull time off the stored row
+    if (!managed.conn.fills_fetched_at) {
+      const stored = await base44.asServiceRole.entities.ExchangeConnection
+        .get(managed.conn.id)
+        .catch(() => null);
+      if (stored) managed.conn.fills_fetched_at = stored.fills_fetched_at;
+    }
+
     // a fresh wallet read unless the key is locked out; otherwise the last
     // saved balance list
     let balances = null;
