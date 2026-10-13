@@ -447,6 +447,7 @@ export function variantCfg(id, description, over = {}) {
     no_chasing: false,
     require_fib_pullback: false,
     min_rr: 0,
+    short_only: false,
     min_stop_pct: 0,
     max_stop_pct: 0,
     skip_riskon_long: false,
@@ -490,6 +491,7 @@ function gateFor(cfg) {
   return (row) => {
     if (!row || row.score < cfg.min_score) return false;
     if (cfg.long_only && row.side !== "long") return false;
+    if (cfg.short_only && row.side !== "short") return false;
     if (cfg.require_daily_target) {
       if (cfg.target_r != null) {
         const move = cfg.target_r * (Number(row.stop_pct) || 2);

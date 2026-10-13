@@ -477,6 +477,18 @@ const ROUND28_VARIANTS = [
 export const COMBO_ENGINE = { ...R27_BEST };
 
 // ---------------------------------------------------------------------------
+// MARGIN ENGINE (settled 2026-10-13, margin optimizer rounds 29-31): the
+// combined champion re-targeted to 3R and run on Kraken spot margin costs
+// over the leverage-eligible pairs only. 6 months of 1h candles, 9 pairs,
+// 13 trades, 69.2% win rate, profit factor 8.86, max drawdown 1.4%, worst
+// losing streak 2, avg hold ~19h (half the 4.5R version's, so rollover fees
+// halve too). Return scales with leverage: ~+22% at 2x, ~+28% at 2.5x, ~+47%
+// at 4x (drawdown scales the same way). Small-sample caveat: 13 trades in
+// 6 months - treat as promising, not proven. Set `leverage` when using it.
+// ---------------------------------------------------------------------------
+export const MARGIN_ENGINE = { ...R27_BEST, target_r: 3, margin: true };
+
+// ---------------------------------------------------------------------------
 // MARGIN MODE: the combined champion simulated as a Kraken spot-margin trader.
 // Only the pairs Kraken's AssetPairs endpoint lists with sell leverage (the
 // markets a margin account can actually open and short), shorts live because
@@ -505,6 +517,81 @@ const MARGIN_VARIANTS = [
     leverage: 3,
   }),
 ];
+
+// ---------------------------------------------------------------------------
+// MARGIN OPTIMIZER ROUNDS: rule candidates simulated on Kraken margin costs
+// over the leverage-eligible pairs only, six months of 1h candles. The
+// reference is the margin champion from the first margin backtest (4.5R +
+// score 70 stack, 2x leverage): +13.2% at 1x, +27.5% at 2x, 14 trades, most
+// of the edge from shorts. Each candidate changes ONE thing.
+// ---------------------------------------------------------------------------
+const M2X = { ...R27_BEST, margin: true, leverage: 2 };
+const ROUND29_VARIANTS = [
+  variantCfg("m29_ref", "Reference: the margin champion at 2x leverage", M2X),
+  variantCfg("m29_shorts_only", "Champion at 2x, shorts only (shorts carried the margin edge)", {
+    ...M2X,
+    short_only: true,
+  }),
+  variantCfg("m29_t3", "Champion at 2x + 3R targets (faster books, less rollover)", {
+    ...M2X,
+    target_r: 3,
+  }),
+  variantCfg("m29_under12", "Champion at 2x + underwater trades cut after 12 hours (rollover bleed)", {
+    ...M2X,
+    time_underwater_bars: 12,
+  }),
+  variantCfg("m29_cool24", "Champion at 2x + 1-day cooldown (more trades)", {
+    ...M2X,
+    cooldown_bars: 24,
+  }),
+  variantCfg("m29_be10", "Champion at 2x + break-even earlier, at +1.0R", { ...M2X, be_stop_r: 1 }),
+  variantCfg("m29_volband3", "Champion at 2x + tighter volume band (2x-3x)", { ...M2X, max_vol_ratio: 3 }),
+  variantCfg("m29_lev1", "Champion at 1x (leverage sanity check)", { ...R27_BEST, margin: true }),
+  variantCfg("m29_lev3", "Champion at 3x leverage", { ...M2X, leverage: 3 }),
+];
+
+// Round 30: stacks the round-29 winner (3R targets, halved hold time) and
+// probes leverage, exit and filter edges on top of it.
+const M30_BEST = { ...M2X, target_r: 3 };
+const ROUND30_VARIANTS = [
+  variantCfg("m30_ref", "Reference: the margin champion at 2x", M2X),
+  variantCfg("m30_t3", "Reference: 3R targets (round-29 winner)", M30_BEST),
+  variantCfg("m30_t3_lev3", "3R targets + 3x leverage", { ...M30_BEST, leverage: 3 }),
+  variantCfg("m30_t25", "3R stack + 2.5R targets", { ...M2X, target_r: 2.5 }),
+  variantCfg("m30_t35", "3R stack + 3.5R targets", { ...M2X, target_r: 3.5 }),
+  variantCfg("m30_t3_u24", "3R stack + underwater trades cut after 24 hours", {
+    ...M30_BEST,
+    time_underwater_bars: 24,
+  }),
+  variantCfg("m30_t3_cool24", "3R stack + 1-day cooldown", { ...M30_BEST, cooldown_bars: 24 }),
+  variantCfg("m30_t3_st3", "3R stack + 3% max stretch", { ...M30_BEST, max_stretch_pct: 3 }),
+  variantCfg("m30_t3_bb90", "3R stack + skip entries in the top Bollinger-width decile", {
+    ...M30_BEST,
+    max_bb_width: 90,
+  }),
+  variantCfg("m30_t3_div", "3R stack + an opposing RSI divergence vetoes the entry", {
+    ...M30_BEST,
+    div_must_agree: true,
+  }),
+];
+
+// Round 31: last edges on the settled 3R winner - stop management and width.
+const ROUND31_VARIANTS = [
+  variantCfg("m31_t3", "Reference: 3R targets at 2x (round-30 winner)", M30_BEST),
+  variantCfg("m31_trail", "3R stack + ATR trailing stop after +1.5R", { ...M30_BEST, trail_r: 1.5 }),
+  variantCfg("m31_sqz", "3R stack + volatility squeeze (bottom 40% width)", {
+    ...M30_BEST,
+    max_bb_width_low: 40,
+  }),
+  variantCfg("m31_stopatr", "3R stack + stop must clear 1x ATR (no noise-tight stops)", {
+    ...M30_BEST,
+    min_stop_atr: 1,
+  }),
+  variantCfg("m31_lev2x5", "3R stack at 2.5x leverage", { ...M30_BEST, leverage: 2.5 }),
+  variantCfg("m31_lev4", "3R stack at 4x leverage (risk check)", { ...M30_BEST, leverage: 4 }),
+];
+
+const MARGIN_ROUNDS = { 29: ROUND29_VARIANTS, 30: ROUND30_VARIANTS, 31: ROUND31_VARIANTS };
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
@@ -608,8 +695,10 @@ export default async function (req) {
     // Kraken margin backtest: the combined champion over six months of hourly
     // candles on leverage-eligible Kraken pairs only, with margin fees applied.
     if (body.mode === "margin") {
+      const round = Number(body.round) || 0;
+      const variants = MARGIN_ROUNDS[round] || MARGIN_VARIANTS;
       const { coins } = await fetchMarkets();
-      const result = await runOptimize(coins, MARGIN_VARIANTS, {
+      const result = await runOptimize(coins, variants, {
         maxSymbols: 20,
         timeframe: "1h",
         months: 6,
@@ -617,7 +706,9 @@ export default async function (req) {
       });
       const saved = await base44.asServiceRole.entities.AuditRun
         .create({
-          label: `Kraken margin backtest - 6 months, ${result.symbols} leverage pairs`,
+          label: round
+            ? `Kraken margin optimizer round ${round} - 6 months, ${result.symbols} leverage pairs`
+            : `Kraken margin backtest - 6 months, ${result.symbols} leverage pairs`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,
