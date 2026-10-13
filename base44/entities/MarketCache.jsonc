@@ -1,0 +1,36 @@
+{
+  "name": "MarketCache",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "description": "Cache slot, e.g. 'caps' for the market-cap snapshot"
+    },
+    "value": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The cached payload"
+    }
+  },
+  "required": [
+    "key"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

@@ -110,7 +110,11 @@ export default async function (req) {
       claimConfirmed = !fresh || fresh.last_cycle_started_at === claim;
     }
 
-    const { coins } = await fetchMarkets();
+    // light cycles only manage open positions — their prices come from the
+    // batched live feed, so the whole-market fetch (and its cap-feed probes,
+    // which took tens of seconds whenever a provider was down) is skipped
+    // entirely: the desk load waits on this call, so it must stay fast
+    const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole);
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
     // Existing exit management is preserved. Entry quality is governed by
@@ -151,7 +155,12 @@ export default async function (req) {
     // one query for every open trade: the paper desk manages its own records
     // from this list and the live block filters out the real ones, instead of
     // paying for a second identical read that only doubled entity traffic
-    const openTrades = await readAll({ status: "open" });
+    // the open-trade read and the live-connection resolution are independent —
+    // one parallel round instead of two serial waits
+    const [openTrades, managedRes] = await Promise.all([
+      readAll({ status: "open" }),
+      resolveLiveConnection(base44, liveConfigView, { manage: true, readOnly: dryRun }),
+    ]);
 
     // live prices for every symbol with an open position: one batched public
     // call keeps exits (stop/target/trailing) on the real tape instead of the
@@ -167,7 +176,7 @@ export default async function (req) {
     }
     // managing existing real positions must work even while new live entries
     // are paused — the pause gates entries, never risk management
-    const managed = await resolveLiveConnection(base44, liveConfigView, { manage: true, readOnly: dryRun });
+    const managed = managedRes;
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
@@ -1116,10 +1125,24 @@ export default async function (req) {
     const localNowMs = Date.now() - tzOffset * 60000;
     const dayStartMs = Math.floor(localNowMs / 86400000) * 86400000 + tzOffset * 60000;
     const dayStart = new Date(dayStartMs);
-    const todays = await readAll({
-      status: "closed",
-      closed_at: { $gte: dayStart.toISOString() },
-    });
+    const todayKey = new Date().toISOString().slice(0, 10);
+    // everything the desk stats need — the day's closes, the running totals,
+    // and the four equity-candle reads — in one parallel round instead of
+    // eight serial waits; this chain was seconds of every cycle
+    const [todays, realizedAgg, deployedAgg, prevCandlesPage, existingCandlePage, prevLivePage, existingLivePage] =
+      await Promise.all([
+        readAll({ status: "closed", closed_at: { $gte: dayStart.toISOString() } }),
+        base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper" }, sum: "pnl_usd" }),
+        base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper" }, sum: "size_usd" }),
+        base44.entities.EquityCandle.filter({ owner: user.id, day: { $lt: todayKey } }, { sort: "-day", limit: 1 }),
+        base44.entities.EquityCandle.filter({ owner: user.id, day: todayKey }, { limit: 1 }),
+        base44.entities.EquityCandle.filter({ owner: `${user.id}|live`, day: { $lt: todayKey } }, { sort: "-day", limit: 1 }),
+        base44.entities.EquityCandle.filter({ owner: `${user.id}|live`, day: todayKey }, { limit: 1 }),
+      ]);
+    const prevCandles = asArray(prevCandlesPage);
+    const existingCandle = asArray(existingCandlePage)[0];
+    const prevLiveCandles = asArray(prevLivePage);
+    const existingLive = asArray(existingLivePage)[0];
     // the headline counter and the daily goal track the paper bot's results —
     // real trades already report through the live stats block
     const paperTodays = todays.filter((t) => (t.mode || "paper") === "paper");
@@ -1302,10 +1325,7 @@ export default async function (req) {
     // cash figure alone let it drift (overlapping cycles, balance resets
     // with positions open) and the desk quietly traded on money it didn't
     // have; anchored, equity always ties to booked profit exactly.
-    const [realizedAgg, deployedAgg] = await Promise.all([
-      base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper" }, sum: "pnl_usd" }),
-      base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper" }, sum: "size_usd" }),
-    ]);
+    // totals were fetched in the parallel stats read above
     const realizedTotal = realizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0;
     const deployedTotal = deployedAgg?.rows?.[0]?.sum_size_usd ?? 0;
     // profit handling: compound rolls booked profit back into the trading
@@ -1335,23 +1355,10 @@ export default async function (req) {
 
     // ---- save today's equity candle so the chart keeps its history even as
     // old trades age out of the journal
-    const todayKey = new Date().toISOString().slice(0, 10);
     const paperRealizedToday = realizedToday;
     // candles are per-user: one app user's equity chart must not overwrite
     // another's, so every write carries the owner and keys on owner + day
-    const prevCandles = asArray(
-      await base44.entities.EquityCandle.filter(
-        { owner: user.id, day: { $lt: todayKey } },
-        { sort: "-day", limit: 1 },
-      ),
-    );
     const prevClose = prevCandles.length ? Number(prevCandles[0].close) : null;
-    const existingCandle = asArray(
-      await base44.entities.EquityCandle.filter(
-        { owner: user.id, day: todayKey },
-        { limit: 1 },
-      ),
-    )[0];
     const candleOpen = existingCandle
       ? Number(existingCandle.open)
       : prevClose != null
@@ -1384,19 +1391,7 @@ export default async function (req) {
     if (liveEquityNow != null) {
       const liveOwner = `${user.id}|live`;
       const liveTodays = todays.filter((t) => (t.mode || "paper") === "real");
-      const prevLiveCandles = asArray(
-        await base44.entities.EquityCandle.filter(
-          { owner: liveOwner, day: { $lt: todayKey } },
-          { sort: "-day", limit: 1 },
-        ),
-      );
       const prevLiveClose = prevLiveCandles.length ? Number(prevLiveCandles[0].close) : null;
-      const existingLive = asArray(
-        await base44.entities.EquityCandle.filter(
-          { owner: liveOwner, day: todayKey },
-          { limit: 1 },
-        ),
-      )[0];
       const liveOpen = existingLive
         ? Number(existingLive.open)
         : prevLiveClose != null

@@ -68,11 +68,74 @@ function tierFor(index) {
  * source burns tens of seconds of every caps refresh.
  */
 let lastGoodCapSource = null;
-async function loadCaps() {
+
+/** A function instance is short-lived: without a durable copy, every cycle
+ * re-probed the cap feeds, and the dead providers (429s, 530s) cost tens of
+ * seconds of every cycle. When a db client is passed, the last good caps
+ * snapshot is stored on the desk and read back here. */
+async function readCapsFromDb(db) {
+  if (!db) return null;
+  try {
+    const rows = asArray(
+      await db.entities.MarketCache.filter({ key: "caps" }, { limit: 1 }),
+    );
+    const value = rows[0] && rows[0].value;
+    if (!value) return null;
+    if (value.failed_at) return { failedAt: Date.parse(value.failed_at) || 0 };
+    if (!Array.isArray(value.caps) || !value.caps.length) return null;
+    const savedAt = Date.parse(value.saved_at || "");
+    if (Number.isFinite(savedAt) && Date.now() - savedAt > 7 * 24 * 3600 * 1000) return null;
+    return new Map(value.caps);
+  } catch {
+    // the desk cache is an optimisation, never a hard dependency
+    return null;
+  }
+}
+
+let lastGoodCaps = null;
+
+/** Persists a good caps snapshot, or — with null — a "sources are down" marker
+ * so the next cycles skip the dead providers' timeouts instead of paying them
+ * again and again. */
+async function saveCapsToDb(db, caps) {
+  if (caps) lastGoodCaps = caps;
+  if (!db) return;
+  try {
+    await db.entities.MarketCache.upsert(
+      [
+        caps
+          ? { key: "caps", value: { caps: Array.from(caps.entries()), saved_at: new Date().toISOString() } }
+          : { key: "caps", value: { failed_at: new Date().toISOString() } },
+      ],
+      { key: "key" },
+    );
+  } catch (err) {
+    console.log(`caps desk-cache save failed: ${err && err.message}`);
+  }
+}
+
+async function loadCaps(db = null) {
   const cached = cacheGet("caps");
   if (cached) return cached;
+  const stored = await readCapsFromDb(db);
+  if (stored instanceof Map && stored.size) {
+    console.log(`caps loaded from desk cache: ${stored.size} symbols`);
+    return cacheSet("caps", stored, 15 * 60 * 1000);
+  }
+  if (stored && stored.failedAt && Date.now() - stored.failedAt < 5 * 60 * 1000) {
+    // the sources failed moments ago — skip their timeouts this cycle
+    console.log("caps sources failed recently - skipping the probe");
+    return lastGoodCaps;
+  }
 
   const sources = [
+    {
+      name: "coinpaprika",
+      pages: ["https://api.coinpaprika.com/v1/tickers"],
+      headers: { accept: "application/json" },
+      list: (res) => (Array.isArray(res) ? res : []),
+      capOf: (c) => Number((((c || {}).quotes || {}).USD || {}).market_cap) || 0,
+    },
     {
       name: "coingecko",
       pages: [
@@ -94,13 +157,6 @@ async function loadCaps() {
       list: (res) => (Array.isArray(res && res.data) ? res.data : []),
       capOf: (c) => Number(c.marketCapUsd) || 0,
     },
-    {
-      name: "coinpaprika",
-      pages: ["https://api.coinpaprika.com/v1/tickers"],
-      headers: { accept: "application/json" },
-      list: (res) => (Array.isArray(res) ? res : []),
-      capOf: (c) => Number((((c || {}).quotes || {}).USD || {}).market_cap) || 0,
-    },
   ];
 
   if (lastGoodCapSource) {
@@ -112,7 +168,7 @@ async function loadCaps() {
     try {
       const lists = await Promise.all(
         src.pages.map((url) =>
-          fetch(url, { headers: src.headers, signal: AbortSignal.timeout(20000) })
+          fetch(url, { headers: src.headers, signal: AbortSignal.timeout(12000) })
             .then((res) => {
               if (!res.ok) throw new Error(`responded ${res.status}`);
               return res.json();
@@ -133,17 +189,21 @@ async function loadCaps() {
       if (caps.size) {
         console.log(`caps loaded from ${src.name}: ${caps.size} symbols`);
         lastGoodCapSource = src.name;
+        await saveCapsToDb(db, caps);
         return cacheSet("caps", caps, 15 * 60 * 1000);
       }
     } catch (err) {
       console.log(`caps ${src.name} failed: ${err && err.message}`);
     }
   }
-  return null;
+  // every live source is down: mark the failure (so the next cycles skip the
+  // dead providers' timeouts) and serve the last snapshot this instance saw
+  await saveCapsToDb(db, null);
+  return lastGoodCaps;
 }
 
 /** Whole-market snapshot: every tradable market on the exchange, ranked by traded volume. */
-export async function fetchMarkets() {
+export async function fetchMarkets(db = null) {
   const cached = cacheGet("markets");
   if (cached) return { ...cached, capsDebug: -2 };
 
@@ -179,7 +239,7 @@ export async function fetchMarkets() {
 
   // Real market caps (best effort): coins the cap feed has no data for stay at
   // 0 and are skipped when the bot picks candidates.
-  const caps = await loadCaps();
+  const caps = await loadCaps(db);
   console.log(`caps loaded: ${caps ? caps.size : "none"}`);
   if (caps && caps.size) {
     for (const c of coins) c.market_cap = caps.get(c.symbol) || 0;

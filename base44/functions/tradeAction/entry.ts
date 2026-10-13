@@ -57,7 +57,7 @@ export default async function (req) {
         return Response.json({ ok: true, closed: 0, skipped: 0, pnl_usd: 0, cash: round(cash) });
       }
 
-      const { coins } = await fetchMarkets();
+      const { coins } = await fetchMarkets(base44.asServiceRole);
       const priceOf = (symbol) => coins.find((c) => c.symbol === symbol)?.price;
       const closeable = openTrades.filter((t) => Number(priceOf(t.symbol)) > 0);
       if (!closeable.length) {
@@ -253,7 +253,7 @@ export default async function (req) {
       if (trade.status !== "open") {
         return Response.json({ error: "Only an open position can be closed" }, { status: 409 });
       }
-      const { coins } = await fetchMarkets();
+      const { coins } = await fetchMarkets(base44.asServiceRole);
       const price = coins.find((c) => c.symbol === trade.symbol)?.price;
       if (!price) {
         return Response.json({ error: "No live price for this coin right now" }, { status: 502 });

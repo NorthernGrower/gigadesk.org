@@ -12,8 +12,8 @@ function inScope(coin, scope) {
 }
 
 /** Whole-market snapshot plus the market-wide median move used for relative strength. */
-export async function loadUniverse() {
-  const { coins, source } = await fetchMarkets();
+export async function loadUniverse(db = null) {
+  const { coins, source } = await fetchMarkets(db);
   const moves = coins
     .map((c) => c.change24h)
     .filter((v) => Number.isFinite(v))
@@ -67,9 +67,10 @@ export async function scanBoard({
   extraSymbols = [],
   onlySymbols = null,
   confluenceV2 = true,
+  db = null,
 } = {}) {
   const safeScope = SCOPES.has(scope) ? scope : "all";
-  const { coins, source, medianChange24h } = await loadUniverse();
+  const { coins, source, medianChange24h } = await loadUniverse(db);
   // coins with no market-cap data (0) are out of consideration whenever the
   // feed carries caps at all
   const hasCaps = coins.some((c) => (c.market_cap || 0) > 0);

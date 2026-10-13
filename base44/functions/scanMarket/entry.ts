@@ -65,6 +65,7 @@ export default async function (req) {
       dailyTargetPct,
       extraSymbols,
       ...(onlySymbols ? { onlySymbols } : {}),
+      db: base44.asServiceRole,
     });
 
     let persisted = { created: 0, updated: 0 };
