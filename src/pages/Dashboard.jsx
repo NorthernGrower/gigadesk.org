@@ -47,44 +47,49 @@ export default function Dashboard() {
     let alive = true;
 
     const load = async () => {
-      // revisits render the last scan immediately and refresh quietly behind it
-      const cached = getLastBot();
+      // any earlier scan (this session or the last one) renders immediately
+      const cached = getLastBot(Number.POSITIVE_INFINITY);
       if (cached) {
         setBot(cached);
         if (cached?.config?.active_desk === 'live' || cached?.config?.active_desk === 'paper') {
           setDeskMode(cached.config.active_desk);
         }
         setLoading(false);
-        runBot(true)
-          .then((data) => {
-            if (alive) {
-              setBot((prev) => ({
+      }
+
+      // the desk never waits on a full cycle — a full cycle scans 60 coins,
+      // re-reads open charts and syncs the exchange, which is why the desk
+      // used to sit on its spinner. The fast pass returns positions and
+      // stats in seconds; the board refreshes quietly behind it.
+      const apply = (data, full) => {
+        if (!alive) return;
+        setBot((prev) =>
+          full || !prev
+            ? data
+            : {
                 ...data,
                 top: data.top?.length ? data.top : prev?.top || [],
                 summary: data.summary ? data.summary : prev?.summary || null,
                 universe: data.universe || prev?.universe || 0,
                 median_change_24h: data.summary ? data.median_change_24h : prev?.median_change_24h ?? 0,
                 scanned: data.scanned || prev?.scanned || 0,
-              }));
-            }
-          })
-          .catch(() => {});
-        return;
-      }
-      try {
-        const data = await runBot(false);
-        if (alive) {
-          setBot(data);
-          // the desk switch is persistent: the dashboard opens on the desk last used
-          if (data?.config?.active_desk === 'live' || data?.config?.active_desk === 'paper') {
-            setDeskMode(data.config.active_desk);
-          }
-        }
-      } catch (err) {
-        if (alive) setError(err.message);
-      } finally {
-        if (alive) setLoading(false);
-      }
+              },
+        );
+        const desk = data?.config?.active_desk;
+        if (desk === 'live' || desk === 'paper') setDeskMode(desk);
+      };
+
+      runBot(true)
+        .then((data) => apply(data, false))
+        .catch((err) => {
+          if (alive && !cached) setError(err.message);
+        })
+        .finally(() => {
+          if (alive) setLoading(false);
+        });
+      runBot(false)
+        .then((data) => apply(data, true))
+        .catch(() => {});
     };
 
     const onTick = (event) => {

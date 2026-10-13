@@ -111,8 +111,31 @@ export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
 let lastLightRun = null;
 
 // The last finished cycle's result, kept so revisiting pages render it
-// instantly instead of staring at a spinner while a fresh scan runs.
-let lastBot = null;
+// instantly instead of staring at a spinner while a fresh scan runs. It also
+// survives a fresh browser session through sessionStorage — a reload or a
+// later visit renders the last scan straight away and refreshes quietly.
+const LAST_BOT_KEY = 'gigadesk:lastBot';
+
+const hydrateLastBot = () => {
+  try {
+    const raw = sessionStorage.getItem(LAST_BOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.data ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+let lastBot = hydrateLastBot();
+
+const persistLastBot = () => {
+  try {
+    if (lastBot) sessionStorage.setItem(LAST_BOT_KEY, JSON.stringify(lastBot));
+  } catch {
+    // storage full or unavailable: the in-memory copy still covers revisits
+  }
+};
 
 export function getLastBot(maxAgeMs = 600000) {
   return lastBot && Date.now() - lastBot.at < maxAgeMs ? lastBot.data : null;
@@ -122,6 +145,7 @@ function rememberBot(data) {
   if (!data) return;
   if (data.summary) {
     lastBot = { at: Date.now(), data };
+    persistLastBot();
   } else if (lastBot) {
     // light cycles keep the scan's board but refresh the stats around it
     lastBot = {
@@ -136,6 +160,7 @@ function rememberBot(data) {
         scanned: lastBot.data.scanned,
       },
     };
+    persistLastBot();
   }
 }
 
