@@ -36,6 +36,8 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
     allow_shorts: config.allow_shorts !== false && (desk === "paper" || margin),
     combo,
     margin,
+    // the champion stack's BTC regime gate: each desk can switch it off
+    btc_gate: config.btc_gate !== false,
     target_r: margin ? 3 : combo ? 6 : null,
     btc_change24h: btcChange24h,
   };
@@ -96,7 +98,7 @@ export function gateReason(row, desk, rules) {
     // gated off, shorts were gated off. A missing BTC reading must also
     // never masquerade as a flat tape and shut the desk silently.
     const btcRaw = rules.btc_change24h;
-    if (btcRaw != null && Number.isFinite(Number(btcRaw))) {
+    if (rules.btc_gate !== false && btcRaw != null && Number.isFinite(Number(btcRaw))) {
       if (long && Number(btcRaw) > -1) return "longs wait for a risk-off BTC tape";
     }
     // the engine target (6R, or 3R under the margin engine) must still

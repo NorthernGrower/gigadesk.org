@@ -65,6 +65,11 @@
       "default": true,
       "description": "The optimizer champion's refinements on top of the entry rules: 2.5R targets with break-even after +1.2R, 1.5x volume, and longs only while BTC's tape is risk-off. Turn off to trade the base V2 rules"
     },
+    "btc_gate": {
+      "type": "boolean",
+      "default": true,
+      "description": "The champion engine's BTC regime gate: longs only trade while BTC's 24h tape is risk-off (under -1%). Turn off to let the desk take longs in any tape"
+    },
     "combo_engine": {
       "type": "boolean",
       "default": true,

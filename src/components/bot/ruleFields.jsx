@@ -209,6 +209,14 @@ export function scanEngineFields(form, setNum, setV) {
           checked={form.champion_engine}
           onChange={setV('champion_engine')}
         />
+        {form.champion_engine ? (
+          <Toggle
+            label="BTC regime gate"
+            hint="The champion engine's tested tape filter: longs only open while BTC's 24h move is risk-off (under -1%). Turn off to let longs trade in any tape."
+            checked={form.btc_gate}
+            onChange={setV('btc_gate')}
+          />
+        ) : null}
         <Toggle
           label="Margin engine"
           hint="The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Gains and losses both move faster."
