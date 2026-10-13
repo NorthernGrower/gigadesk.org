@@ -14,12 +14,15 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
   const combo = config.combo_engine !== false;
   const margin = config.margin_engine === true;
   const style = config.trading_style || "mild";
-  // the paper pool's own score bar: a user-set number overrides the tested
-  // champion's 70 — the rules panel warns that 70 is the backtested optimum
-  const userBar = Number(config.score_bar);
+  // each desk's own score bar: the paper pool reads the config's bar, the
+  // live desk reads live_rules.bar — falling back to the tested optimum 70.
+  // A lower bar takes more trades with weaker setups; the rules panel warns
+  // whenever a desk runs away from 70.
+  const barVal = desk === "live" ? (config.live_rules || {}).score_bar : config.score_bar;
+  const userBar = Number(barVal);
   return {
     min_score:
-      desk === "paper" && Number.isFinite(userBar)
+      Number.isFinite(userBar)
         ? userBar
         : combo
           ? 70

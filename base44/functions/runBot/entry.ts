@@ -85,6 +85,33 @@ export default async function (req) {
     const LR = config.live_rules || {};
     const lrVal = (key, fb) => (LR[key] != null ? LR[key] : config[key] != null ? config[key] : fb);
     const liveConfigView = { ...config, real_connection_id: lrVal("real_connection_id", "") || "" };
+    // fully separate desk rules: the live desk reads its settings from
+    // live_rules (falling back to the config value only where a live rule
+    // was never set), the paper desk reads the config itself
+    const deskView = (desk) =>
+      desk === "live"
+        ? { ...config, ...Object.fromEntries(Object.entries(LR).filter(([, v]) => v != null)) }
+        : config;
+    const liveView = deskView("live");
+    const paperView = deskView("paper");
+    // per-desk engine stack: engine flags and the target placement each desk
+    // trades by (3R margin, 6R combo, 2.5R old engine)
+    const deskEngine = (v) => {
+      const engineV2 = v.engine_v2 !== false;
+      const champion = v.champion_engine !== false;
+      const comboOn = v.combo_engine !== false;
+      const marginOn = v.margin_engine === true;
+      return {
+        engineV2,
+        champion,
+        comboOn,
+        marginOn,
+        leverage: Math.max(1, Math.min(5, Number(v.margin_leverage) || 2)),
+        targetR: marginOn ? 3 : comboOn ? 6 : engineV2 && champion ? 2.5 : null,
+      };
+    };
+    const paperEngine = deskEngine(paperView);
+    const liveEngine = deskEngine(liveView);
 
     // single-flight: a cycle that started moments ago is still scanning, and
     // two overlapping cycles read the same empty state and opened the same
@@ -117,22 +144,8 @@ export default async function (req) {
     const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole);
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
-    // Existing exit management is preserved. Entry quality is governed by
-    // the shared managed policy, not the old optimizer/target vetoes.
-    const engineV2 = config.engine_v2 !== false;
-    const champion = config.champion_engine !== false;
-    // COMBO ENGINE (round 25-28 champion): the optimizer's tested stack governs
-    // entries when on - score bar 70, ADX 28, volume band 2x-4x, stochastic
-    // agreement, RSI chase block, conviction candles, BTC risk-off longs - and
-    // sets 4.5R targets with break-even at +1.2R instead of trailing stops.
-    const comboOn = config.combo_engine !== false;
-    // MARGIN ENGINE (optimizer rounds 29-36): the combo stack re-targeted to
-    // 3R, conviction loosened to 50%, restricted to the tested majors + AVAX
-    // universe. Off by default — leverage moves losses as fast as gains.
-    const marginOn = config.margin_engine === true;
-    // margin shorts open at this leverage level on Kraken; gains and losses
-    // both scale with it
-    const marginLeverage = Math.max(1, Math.min(5, Number(config.margin_leverage) || 2));
+    // Engine stacks resolve per desk (deskEngine above): each desk trades by
+    // its own engine flags and target placement.
 
     // entity reads cap each page, so a plain read silently missed open trades
     // once the desk held more than a page — the exact window that let already
@@ -434,6 +447,11 @@ export default async function (req) {
       const side = t.side === "short" ? "short" : "long";
       const entry = Number(t.entry_price) || 0;
       if (!entry) continue;
+      // each position follows its own desk's rules: real positions are live-
+      // desk trades, everything else is paper
+      const isRealPos = (t.mode || "paper") === "real";
+      const deskCfg = isRealPos ? liveView : paperView;
+      const deskEng = isRealPos ? liveEngine : paperEngine;
 
       const gainPct =
         side === "long" ? ((price - entry) / entry) * 100 : ((entry - price) / entry) * 100;
@@ -446,7 +464,7 @@ export default async function (req) {
       // engine_v2: break-even once the trade is +1.2R in — the optimizer
       // winner's protective stop move, applied before any trailing
       const targetR = Number(t.target_r) || 0;
-      if (engineV2 && targetR && target) {
+      if (deskEng.engineV2 && targetR && target) {
         const bePct = ((Math.abs(target - entry) / targetR) / entry) * 100 * 1.2;
         if (gainPct >= bePct) {
           const be = side === "long" ? entry * 1.0005 : entry * 0.9995;
@@ -454,9 +472,6 @@ export default async function (req) {
         }
       }
 
-      // trailing follows the desk the position trades on: real positions
-      // trail by the live rules, paper ones by the paper rules
-      const isRealPos = (t.mode || "paper") === "real";
       // trailing follows the desk the position trades on: real positions
       // trail by the live rules whenever the user left trailing on there —
       // the combo engine's break-even and 4.5R target exits still run as
@@ -492,9 +507,9 @@ export default async function (req) {
       // is cut so the capital moves on to fresher setups
       const openedMs = t.opened_at ? Date.parse(t.opened_at) : 0;
       const stagnant =
-        (config.trading_style || "mild") === "aggressive" &&
+        (deskCfg.trading_style || "mild") === "aggressive" &&
         openedMs > 0 &&
-        Date.now() - openedMs > (TIMEFRAME_MS[config.timeframe || "1h"] || TIMEFRAME_MS["1h"]) / 4 &&
+        Date.now() - openedMs > (TIMEFRAME_MS[deskCfg.timeframe || "1h"] || TIMEFRAME_MS["1h"]) / 4 &&
         // time must never close a position just because it is winning or
         // flat: only underwater stalls are cut here, the trailing stop and
         // the target own the profitable side of time
@@ -602,15 +617,18 @@ export default async function (req) {
     // market turn is caught between stops. When the same engine that picked
     // the trade now favors the other side with conviction, the position is
     // closed (reason "flipped") and the capital is free for the next scan.
-    const sentimentReads = new Map();
-    if (!light && config.sentiment_watch !== false && sentinel.length) {
+    // sentiment watch runs per desk: each desk re-reads the charts behind its
+    // own open positions with its own toggle, timeframe and engine stack
+    const sentimentReads = new Map(); // "desk:symbol" -> fresh analysis
+    const sentimentPass = async (desk, view, trades) => {
+      if (view.sentiment_watch === false || !trades.length) return;
       const moves = coins
         .map((c) => c.change24h)
         .filter((v) => Number.isFinite(v))
         .sort((a, b) => a - b);
       const medianChange24h = moves.length ? moves[Math.floor(moves.length / 2)] : 0;
-      const tf = config.timeframe || "1h";
-      for (const group of chunk([...new Set(sentinel.map((t) => t.symbol))], 6)) {
+      const tf = view.timeframe || "1h";
+      for (const group of chunk([...new Set(trades.map((t) => t.symbol))], 6)) {
         const settled = await Promise.allSettled(
           group.map((s) => fetchCandles(s, tf, 300)),
         );
@@ -620,17 +638,21 @@ export default async function (req) {
           if (!coin) return;
           const row = analyzeCoin(coin, res.value, {
             medianChange24h,
-            dailyTargetPct: Number(config.daily_target_pct) || 2,
+            dailyTargetPct: Number(view.daily_target_pct) || 2,
             barsPerDay:
               { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[tf] || 24,
-            confluenceV2: config.confluence_v2 !== false,
+            confluenceV2: view.confluence_v2 !== false,
           });
-          if (row) sentimentReads.set(group[i], row);
+          if (row) sentimentReads.set(`${desk}:${group[i]}`, row);
         });
       }
+    };
+    if (!light) {
+      await sentimentPass("paper", paperView, sentinel.filter((t) => (t.mode || "paper") !== "real"));
+      await sentimentPass("live", liveView, sentinel.filter((t) => (t.mode || "paper") === "real"));
     }
     for (const t of sentinel) {
-      const row = sentimentReads.get(t.symbol);
+      const row = sentimentReads.get(`${(t.mode || "paper") === "real" ? "live" : "paper"}:${t.symbol}`);
       if (!row) continue;
       const side = t.side === "short" ? "short" : "long";
       const flipped =
@@ -717,6 +739,25 @@ export default async function (req) {
         ...(listed ? { onlySymbols: listed } : {}),
         confluenceV2: config.confluence_v2 !== false,
       });
+      // the live desk scans its own board when its scan settings differ from
+      // the paper desk's — separate desks, separate scans; matching settings
+      // share one board so the cycle never scans the market twice needlessly
+      const liveScanDiffers =
+        String(liveView.timeframe || "1h") !== String(config.timeframe || "1h") ||
+        String(liveView.market_cap_scope || "all") !== String(config.market_cap_scope || "all") ||
+        (liveView.confluence_v2 !== false) !== (config.confluence_v2 !== false);
+      let liveBoard = board;
+      if (live.conn != null && liveVerified && liveScanDiffers) {
+        liveBoard = await scanBoard({
+          timeframe: liveView.timeframe || "1h",
+          scope: liveView.market_cap_scope || "all",
+          count: 60,
+          dailyTargetPct: Number(lrVal("daily_target_pct", 2)) || 2,
+          extraSymbols: watch.map((w) => w.symbol),
+          ...(listed ? { onlySymbols: listed } : {}),
+          confluenceV2: liveView.confluence_v2 !== false,
+        });
+      }
 
       // cooldowns are per desk: each desk leaves its own closed trades alone
       // for its own cooldown, both with the 30-minute churn floor that keeps
@@ -761,17 +802,22 @@ export default async function (req) {
       // trading style bends the rules without touching what the user saved:
       // timid waits for stronger setups with less at stake, aggressive
       // accepts more setups and stakes more to reach the goal faster
-      const style = config.trading_style || "mild";
-      const styleRisk = style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1;
+      // trading style bends each desk's rules without touching what the user
+      // saved: timid waits for stronger setups with less at stake, aggressive
+      // accepts more setups and stakes more to reach the goal faster
+      const styleRiskFor = (style) => (style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1);
       // BTC's 24h tape drives the combo regime gate (risk-off longs, flat-tape skips)
       const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
       const rulesByDesk = {
-        live: entryRulesFor(config, "live", btcChange),
-        paper: entryRulesFor(config, "paper", btcChange),
+        live: entryRulesFor(liveView, "live", btcChange),
+        paper: entryRulesFor(paperView, "paper", btcChange),
       };
       const entryGate = (r, desk) => gateReasonShared(r, desk, rulesByDesk[desk]);
       const liveSlots = Math.max(1, liveMaxOpen - liveOpenCount);
-      const riskPct = Math.min(25, (Number(config.risk_per_trade_pct) || 4) * styleRisk);
+      const riskPct = Math.min(
+        25,
+        (Number(paperView.risk_per_trade_pct) || 4) * styleRiskFor(paperView.trading_style || "mild"),
+      );
 
       // self-teaching: past results per pattern (side x cap tier) nudge scores
       const lessons = await loadLessons(base44);
@@ -781,7 +827,7 @@ export default async function (req) {
       // scores the same way — aligned with their flow, capped at +-5 points
       const smartBias = await loadSmartBias(base44);
 
-      const tradable = board.rows.map((r) => {
+      const applyEdges = (rows) => rows.map((r) => {
         const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
         let smartAdj = 0;
         let smartNote = null;
@@ -803,22 +849,28 @@ export default async function (req) {
         const reasons = smartNote && (r.reasons || []).length ? [...r.reasons, smartNote] : r.reasons;
         return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
       });
+      const tradable = applyEdges(board.rows);
+      const tradableLive = liveBoard === board ? tradable : applyEdges(liveBoard.rows);
 
       // engine targets: 6R from entry with the combo stack on (the pooled
-      // flat-tape winner), 2.5R under the old engine rules - always on the
-      // trade's own side, so the distance is |entry - stop| measured outward
-      const targetR = marginOn ? 3 : comboOn ? 6 : 2.5;
-      const engineTarget = (r) => {
-        const dist = targetR * Math.abs(r.entry - r.stop);
+      // flat-tape winner), 3R under the margin engine, 2.5R under the old
+      // engine rules - always on the trade's own side, so the distance is
+      // |entry - stop| measured outward. Each desk targets by its own stack.
+      const engineTargetFor = (eng) => (r) => {
+        const dist = (eng.targetR || 2.5) * Math.abs(r.entry - r.stop);
         return round(r.side === "long" ? r.entry + dist : r.entry - dist, 8);
       };
-      const useEngineTarget = marginOn || comboOn || (engineV2 && champion);
+      const useEngineTargetFor = (eng) => eng.marginOn || eng.comboOn || (eng.engineV2 && eng.champion);
+      const paperEngineTarget = engineTargetFor(paperEngine);
+      const liveEngineTarget = engineTargetFor(liveEngine);
+      const paperUseEngine = useEngineTargetFor(paperEngine);
+      const liveUseEngine = useEngineTargetFor(liveEngine);
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         return !blocked.has(r.symbol) && entryGate(r, desk) === null;
       };
       const liveWanted = live.conn && liveVerified && !isBackedOff(connRow)
-        ? tradable
+        ? tradableLive
             .filter((r) => qualifies(r, "live"))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
         : [];
@@ -858,7 +910,10 @@ export default async function (req) {
         return px > 0 ? { ...r, entry: px } : r;
       };
       const minimumFor = (r) => entryMinimum(constraints, r.symbol, funding?.asset || QUOTE_ASSET[live.conn?.exchange] || "USDT", r.entry);
-      const liveRiskPct = Math.min(25, (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRisk);
+      const liveRiskPct = Math.min(
+        25,
+        (Number(lrVal("risk_per_trade_pct", 4)) || 4) * styleRiskFor(liveView.trading_style || "mild"),
+      );
       const sizeLive = (r, slots) => liveEntrySize({ row: r, balance: quoteLeft, budget: liveBudget, slots,
         riskPct: liveRiskPct, minimum: minimumFor(r) });
       // claim only what the live desk can actually pay for: size each wanted
@@ -900,7 +955,7 @@ export default async function (req) {
           const size = sizeLive(rl, Math.max(1, liveSlots - plans.length));
           if (!size) continue;
           plans.push({ symbol: r.symbol, side: r.side, score: r.score, size_usd: size,
-            entry: rl.entry, stop: r.stop, target: engineV2 && champion ? engineTarget(rl) : r.target });
+            entry: rl.entry, stop: r.stop, target: liveUseEngine ? liveEngineTarget(rl) : r.target });
           quoteLeft -= size * 1.005;
           liveBudget -= size;
         }
@@ -971,7 +1026,7 @@ export default async function (req) {
             price: rl.entry,
             // a live short is a Kraken margin order: the account sells an
             // asset it holds none of, backed by the margin account
-            ...(isShort ? { margin: true, leverage: marginLeverage } : {}),
+            ...(isShort ? { margin: true, leverage: liveEngine.leverage } : {}),
           });
           if (!real.ok) {
             await base44.entities.Alert.create({
@@ -1000,8 +1055,8 @@ export default async function (req) {
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
-            target_price: useEngineTarget ? engineTarget(rl) : r.target,
-            target_r: marginOn ? 3 : comboOn ? 6 : engineV2 && champion ? 2.5 : null,
+            target_price: liveUseEngine ? liveEngineTarget(rl) : r.target,
+            target_r: liveEngine.targetR,
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1056,8 +1111,8 @@ export default async function (req) {
           quantity: round(qty, 8),
           size_usd: round(sizeUsd),
           stop_price: r.stop,
-          target_price: useEngineTarget ? engineTarget(r) : r.target,
-          target_r: comboOn ? 6 : engineV2 ? 2.5 : null,
+          target_price: paperUseEngine ? paperEngineTarget(r) : r.target,
+          target_r: paperEngine.targetR,
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1286,7 +1341,7 @@ export default async function (req) {
           {
           ownerId: config.created_by_id,
           stopPct: Number(lrVal("default_stop_pct", 2.5)),
-          targetR: marginOn ? 3 : comboOn ? 6 : engineV2 && champion ? 2.5 : 0,
+          targetR: liveEngine.targetR || 0,
         });
         await base44.entities.BotConfig.update(config.id, { last_wallet_sync_at: Date.now() });
       }
@@ -1425,9 +1480,9 @@ export default async function (req) {
       // the desk's top picks display the target the bot actually trades:
       // 6R from entry with the combo stack on, not the scan's raw level
       top: (board.rows || []).slice(0, 12).map((r) => {
-        const dist = (marginOn ? 3 : 6) * Math.abs(r.entry - r.stop);
+        const dist = (paperEngine.marginOn ? 3 : 6) * Math.abs(r.entry - r.stop);
         const target =
-          (marginOn || comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
+          (paperEngine.marginOn || paperEngine.comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
             ? round(r.side === "long" ? r.entry + dist : r.entry - dist, 8)
             : r.target;
         return {
