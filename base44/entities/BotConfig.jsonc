@@ -68,7 +68,7 @@
     "combo_engine": {
       "type": "boolean",
       "default": true,
-      "description": "The optimizer's combined champion stack: score bar 70, ADX 28, 2x-4x volume, stochastic agreement, RSI chase block, conviction candles, BTC risk-off longs, 4.5R targets and break-even at +1.2R. Turn off to trade the previous managed rules"
+      "description": "The optimizer's combined champion stack: score bar 70, ADX 28, 2x-4x volume, stochastic agreement, RSI chase block, conviction candles, BTC risk-off longs, 6R targets, break-even at +1.2R and a 3R scale-out (half booked at +3R, runner stop at break-even). Turn off to trade the previous managed rules"
     },
     "margin_engine": {
       "type": "boolean",

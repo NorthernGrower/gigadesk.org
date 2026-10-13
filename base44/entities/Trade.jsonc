@@ -59,6 +59,11 @@
       "type": "number",
       "description": "The R-multiple target the trade was opened with; drives its break-even management"
     },
+    "scaled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set once the 3R scale-out has booked half the position; the runner keeps its target with its stop at break-even"
+    },
     "peak_price": {
       "type": "number"
     },
@@ -103,7 +108,8 @@
         "flipped",
         "time",
         "weakened",
-        "max_loss"
+        "max_loss",
+        "scale"
       ]
     },
     "opened_at": {

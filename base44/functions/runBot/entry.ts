@@ -339,6 +339,82 @@ export default async function (req) {
       return true;
     }
 
+    /**
+     * 3R scale-out (the pooled flat-tape winner, three 6-month windows):
+     * half the position books at +3R, the runner's stop moves to break-even,
+     * and the rest runs to the target. The booked leg becomes its own closed
+     * trade record, so journal totals and pooled reviews match the backtest's
+     * leg accounting. Returns false to keep the position whole this cycle.
+     */
+    async function scaleOut(t, side, scalePrice, newStop) {
+      const entry = Number(t.entry_price) || 0;
+      const qty = Number(t.quantity) || 0;
+      const size = Number(t.size_usd) || 0;
+      const halfQty = qty / 2;
+      if (!(entry > 0) || !(halfQty > 0)) return false;
+      if (t.mode === "real" && t.exchange_order_id) {
+        if (!managed.conn || isBackedOff(connRow)) return false;
+        // half the order under the exchange minimum: stay whole and let the
+        // full position close at its target instead of spamming refused orders
+        if (!(size / 2 >= 10)) return false;
+        const sell = await placeMarketOrder(managed.conn, {
+          symbol: t.symbol,
+          side: side === "short" ? "buy" : "sell",
+          quantity: halfQty,
+        });
+        if (!sell.ok) return false;
+        if (sell.avg_price) scalePrice = sell.avg_price;
+      }
+      const legQty = round(halfQty, 8);
+      const legSize = round(size / 2);
+      const pnl = side === "long" ? (scalePrice - entry) * legQty : (entry - scalePrice) * legQty;
+      const pnlPct = legSize ? (pnl / legSize) * 100 : 0;
+      await base44.entities.Trade.create({
+        symbol: t.symbol,
+        name: t.name,
+        image: t.image,
+        side,
+        mode: t.mode || "paper",
+        status: "closed",
+        entry_price: round(entry, 8),
+        exit_price: round(scalePrice, 8),
+        quantity: legQty,
+        size_usd: legSize,
+        stop_price: t.stop_price,
+        target_price: t.target_price,
+        target_r: t.target_r,
+        score: t.score,
+        pattern: t.pattern,
+        exchange: t.exchange,
+        pnl_usd: round(pnl),
+        pnl_pct: round(pnlPct),
+        exit_reason: "scale",
+        opened_at: t.opened_at,
+        closed_at: new Date().toISOString(),
+        signal_id: t.signal_id,
+        rationale: "Scale-out: half booked at +3R, the runner's stop sits at break-even",
+      });
+      if ((t.mode || "paper") === "paper")
+        cash += (config.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : legSize + pnl;
+      await base44.entities.Trade.update(t.id, {
+        quantity: legQty,
+        size_usd: legSize,
+        scaled: true,
+        stop_price: round(newStop, 8),
+      });
+      await base44.entities.Alert.create({
+        symbol: t.symbol,
+        title: `${t.symbol} scaled out at +3R`,
+        message: `Half the position booked at ${round(scalePrice, 8)} — P&L ${round(pnl)} USD. The runner's stop sits at break-even and keeps its target.`,
+        mode: (t.mode || "paper") === "real" ? "live" : "paper",
+        kind: "target_hit",
+        severity: "success",
+        trade_id: t.id,
+      });
+      await recordLesson(base44, { ...t, quantity: legQty, size_usd: legSize }, pnlPct, pnl, "scale");
+      return true;
+    }
+
     // ---- manage the positions already open
     for (const t of dryRun ? [] : openTrades) {
       // a real fill the user logged by hand is theirs to manage — the bot only
@@ -421,6 +497,19 @@ export default async function (req) {
         ? Number(lrVal("max_trade_loss_pct", 20)) || 0
         : Number(config.max_trade_loss_pct) || 0;
       const hitMaxLoss = maxLossPct > 0 && gainPct <= -maxLossPct;
+      // 3R scale-out: fires once, at +3R, on the stacks tested at scale-out
+      // targets (6R combo). A 3R margin target coincides with its own target
+      // and closes whole; break-even already protects the runner at +1.2R.
+      const rUnitPct = targetR && target ? (Math.abs(target - entry) / targetR / entry) * 100 : 0;
+      if (
+        !hitTarget && !hitStop && !hitMaxLoss && !stagnant &&
+        targetR >= 4 && rUnitPct && !t.scaled &&
+        gainPct >= rUnitPct * 3
+      ) {
+        const be = side === "long" ? entry * 1.0005 : entry * 0.9995;
+        const newStop = side === "long" ? Math.max(stop, be) : Math.min(stop, be);
+        if (await scaleOut(t, side, price, newStop)) continue;
+      }
       const exit = hitTarget || hitStop || stagnant || hitMaxLoss;
 
       if (exit) {
@@ -706,10 +795,10 @@ export default async function (req) {
         return scoreAdj || smartNote ? { ...r, score: r.score + scoreAdj, reasons } : r;
       });
 
-      // engine targets: 4.5R from entry with the combo stack on (the round 25-28
-      // champion), 2.5R under the old engine rules - always on the trade's own
-      // side, so the distance is |entry - stop| measured outward
-      const targetR = marginOn ? 3 : comboOn ? 4.5 : 2.5;
+      // engine targets: 6R from entry with the combo stack on (the pooled
+      // flat-tape winner), 2.5R under the old engine rules - always on the
+      // trade's own side, so the distance is |entry - stop| measured outward
+      const targetR = marginOn ? 3 : comboOn ? 6 : 2.5;
       const engineTarget = (r) => {
         const dist = targetR * Math.abs(r.entry - r.stop);
         return round(r.side === "long" ? r.entry + dist : r.entry - dist, 8);
@@ -903,7 +992,7 @@ export default async function (req) {
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
             target_price: useEngineTarget ? engineTarget(rl) : r.target,
-            target_r: marginOn ? 3 : comboOn ? 4.5 : engineV2 && champion ? 2.5 : null,
+            target_r: marginOn ? 3 : comboOn ? 6 : engineV2 && champion ? 2.5 : null,
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -959,7 +1048,7 @@ export default async function (req) {
           size_usd: round(sizeUsd),
           stop_price: r.stop,
           target_price: useEngineTarget ? engineTarget(r) : r.target,
-          target_r: comboOn ? 4.5 : engineV2 ? 2.5 : null,
+          target_r: comboOn ? 6 : engineV2 ? 2.5 : null,
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1174,7 +1263,7 @@ export default async function (req) {
           {
           ownerId: config.created_by_id,
           stopPct: Number(lrVal("default_stop_pct", 2.5)),
-          targetR: marginOn ? 3 : comboOn ? 4.5 : engineV2 && champion ? 2.5 : 0,
+          targetR: marginOn ? 3 : comboOn ? 6 : engineV2 && champion ? 2.5 : 0,
         });
         await base44.entities.BotConfig.update(config.id, { last_wallet_sync_at: Date.now() });
       }
@@ -1339,9 +1428,9 @@ export default async function (req) {
       proposed,
       positions,
       // the desk's top picks display the target the bot actually trades:
-      // 4.5R from entry with the combo stack on, not the scan's raw level
+      // 6R from entry with the combo stack on, not the scan's raw level
       top: (board.rows || []).slice(0, 12).map((r) => {
-        const dist = (marginOn ? 3 : 4.5) * Math.abs(r.entry - r.stop);
+        const dist = (marginOn ? 3 : 6) * Math.abs(r.entry - r.stop);
         const target =
           (marginOn || comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
             ? round(r.side === "long" ? r.entry + dist : r.entry - dist, 8)

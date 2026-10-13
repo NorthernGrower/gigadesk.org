@@ -22,7 +22,7 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
     allow_shorts: config.allow_shorts !== false && (desk === "paper" || margin),
     combo,
     margin,
-    target_r: margin ? 3 : combo ? 4.5 : null,
+    target_r: margin ? 3 : combo ? 6 : null,
     btc_change24h: btcChange24h,
   };
 }
@@ -77,9 +77,9 @@ export function gateReason(row, desk, rules) {
       if (long && btc > -1) return "longs wait for a risk-off BTC tape";
       if (!long && btc <= 1 && btc >= -1) return "shorts wait out a flat BTC tape";
     }
-    // the engine target (4.5R, or 3R under the margin engine) must still
+    // the engine target (6R, or 3R under the margin engine) must still
     // clear the daily goal on the trade's own stop
-    if ((Number(row.stop_pct) || 2) * (Number(rules.target_r) || 4.5) < 2)
+    if ((Number(row.stop_pct) || 2) * (Number(rules.target_r) || 6) < 2)
       return "target move under the daily goal";
   }
   return null;
