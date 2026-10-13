@@ -74,10 +74,23 @@ export function gateReason(row, desk, rules) {
     // margin engine: only the tested majors + AVAX universe is traded
     if (rules.margin && !MARGIN_UNIVERSE.has(String(row.symbol || "").toUpperCase()))
       return "margin engine trades the majors + AVAX only";
-    if ((Number(ind.adx) || 0) < 28) return "ADX under 28 (combo requires a strong trend)";
-    const vr = Number(ind.vol_ratio) || 0;
-    if (vr < 2) return "signal bar volume under 2x its average";
-    if (vr > 4) return "signal bar volume over 4x (blow-off volume)";
+    // the gates follow the desk's score bar: every point under the tested 70
+    // eases the trend and volume gates a little, so lowering the bar means
+    // "trade more" in one move instead of editing each gate by hand. At the
+    // tested 70 the gates sit exactly where the backtest ran them.
+    const relax = Math.max(0, 70 - (Number(rules.min_score) || 70));
+    const adxMin = Math.max(15, 28 - relax * 0.6);
+    const volMin = Math.max(0.8, 2 - relax * 0.08);
+    const volMax = 4 + relax * 0.05;
+    if ((Number(ind.adx) || 0) < adxMin)
+      return `ADX under ${Math.round(adxMin)} (combo requires a strong trend)`;
+    // below the tested 70 the gate also accepts the last three bars' flow —
+    // the same reading the managed gate uses — so a quiet tape whose latest
+    // bar is calm isn't an automatic shutout
+    const vrRaw = Number(ind.vol_ratio) || 0;
+    const vr = relax > 0 ? Math.max(vrRaw, Number(ind.vol_ratio_3) || 0) : vrRaw;
+    if (vr < volMin) return `signal bar volume under ${volMin.toFixed(2)}x its average`;
+    if (vr > volMax) return "signal bar volume over 4x (blow-off volume)";
     const k = Number(ind.stoch_k) || 0, d = Number(ind.stoch_d) || 0;
     if (long ? k < d : k > d) return "stochastic pair opposes the trade";
     // RSI chase block, longs only: the short-only optimizer's round-38/39

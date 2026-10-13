@@ -52,7 +52,7 @@ export function ScoreBarField({ form, setNum }) {
   return (
     <Field
       label="Entry score bar"
-      hint="The minimum coin score the engine trades. 70 is the default."
+      hint="The minimum coin score the engine trades. 70 is the default. Lowering it also eases the trend and volume gates automatically — no other settings to touch."
     >
       <Select
         value={String(Number.isFinite(value) ? value : 70)}
