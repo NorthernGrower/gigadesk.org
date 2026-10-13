@@ -449,7 +449,7 @@ export async function runFlatLab(opts = {}) {
   for (const { coin, candles, rowsByJ } of prepared) {
     for (const cfg of variants) {
       const slot = (slots[cfg.id] = slots[cfg.id] || []);
-      slot.push(...simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps));
+      slot.push(...simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps, btcRunByTime));
     }
   }
 
