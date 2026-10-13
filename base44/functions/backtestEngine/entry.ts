@@ -477,16 +477,25 @@ const ROUND28_VARIANTS = [
 export const COMBO_ENGINE = { ...R27_BEST };
 
 // ---------------------------------------------------------------------------
-// MARGIN ENGINE (settled 2026-10-13, margin optimizer rounds 29-31): the
-// combined champion re-targeted to 3R and run on Kraken spot margin costs
-// over the leverage-eligible pairs only. 6 months of 1h candles, 9 pairs,
-// 13 trades, 69.2% win rate, profit factor 8.86, max drawdown 1.4%, worst
-// losing streak 2, avg hold ~19h (half the 4.5R version's, so rollover fees
-// halve too). Return scales with leverage: ~+22% at 2x, ~+28% at 2.5x, ~+47%
-// at 4x (drawdown scales the same way). Small-sample caveat: 13 trades in
-// 6 months - treat as promising, not proven. Set `leverage` when using it.
+// MARGIN ENGINE (settled 2026-10-13, margin optimizer rounds 29-36): the
+// combined champion re-targeted to 3R, conviction loosened to 50%, run on
+// Kraken spot margin costs over the profitable leverage universe (the 9
+// majors + AVAX - widened small caps like GRT/FIL/AAVE/UNI bleed on margin
+// fees). 6 months of 1h candles: 17 trades, 70.6% win rate, profit factor
+// 6.3, max drawdown 1.4%, worst losing streak 2, avg hold ~17h (rollover
+// fees halved vs the 4.5R version). Return scales with leverage: ~+14% at
+// 1x, ~+30% at 2x, ~+46% at 3x (drawdown scales the same way). Windows stay
+// at 6 months - 12-month runs exceed the platform's CPU allocation.
+// Small-sample caveat: 17 trades - treat as promising, not proven.
+// Set `leverage` when using it.
 // ---------------------------------------------------------------------------
-export const MARGIN_ENGINE = { ...R27_BEST, target_r: 3, margin: true };
+export const MARGIN_ENGINE = {
+  ...R27_BEST,
+  target_r: 3,
+  min_body: 0.5,
+  universe: ["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "LINK", "LTC", "DOGE", "AVAX"],
+  margin: true,
+};
 
 // ---------------------------------------------------------------------------
 // MARGIN MODE: the combined champion simulated as a Kraken spot-margin trader.
