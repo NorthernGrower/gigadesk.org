@@ -259,22 +259,15 @@ export default function Dashboard() {
       </div>
 
       {deskMode === 'live' ? (
-        <>
-          <MarketPulse
-            summary={pulse?.summary ?? bot?.summary}
-            medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
-            universe={pulse ? pulse.universe : bot?.universe}
-            updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
-          />
-          <LiveDesk
-            bot={bot}
-            onClosePosition={closePosition}
-            onCloseAll={closeAll}
-            closingId={closingId}
-            closingAll={closingAll}
-            onBackToPaper={() => persistDesk('paper')}
-          />
-        </>
+        <LiveDesk
+          bot={bot}
+          pulse={pulse}
+          onClosePosition={closePosition}
+          onCloseAll={closeAll}
+          closingId={closingId}
+          closingAll={closingAll}
+          onBackToPaper={() => persistDesk('paper')}
+        />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

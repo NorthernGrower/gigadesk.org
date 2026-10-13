@@ -10,6 +10,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import StatCard from '@/components/common/StatCard';
+import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import EquityPanel from '@/components/dashboard/EquityPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
@@ -43,7 +44,7 @@ const ago = (iso) => {
   }
 };
 
-export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, closingAll, onBackToPaper }) {
+export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, closingId, closingAll, onBackToPaper }) {
   const { toast } = useToast();
   const [toggling, setToggling] = useState(false);
   const [recent, setRecent] = useState([]);
@@ -289,6 +290,13 @@ export default function LiveDesk({ bot, onClosePosition, onCloseAll, closingId, 
         openCount={live.open_count ?? 0}
         scanned={bot?.scanned || 0}
         startingBalance={balanceUsd || 0}
+      />
+
+      <MarketPulse
+        summary={pulse?.summary ?? bot?.summary}
+        medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
+        universe={pulse ? pulse.universe : bot?.universe}
+        updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
       />
 
       <LiveSignals
