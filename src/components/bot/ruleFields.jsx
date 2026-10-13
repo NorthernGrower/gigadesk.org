@@ -85,6 +85,8 @@ export function deskRuleWarnings(rules) {
     w.push(`Risk per trade ${rules.risk_per_trade_pct}% is very high — a short run of stops can halve the desk.`);
   if (rules.score_bar != null && Number(rules.score_bar) !== 70)
     w.push(`Score bar ${Number(rules.score_bar)} differs from the tested optimum of 70: the backtested champion (77.8% win rate, profit factor 23.6 over 6 months) only traded score-70+ setups. Lower bars take more trades with weaker setups.`);
+  if (rules.champion_engine !== false && rules.btc_gate === false)
+    w.push('Warning: the BTC regime gate is off. It is part of the backtested champion stack, so turning it off can reduce profitability — longs will trade in any BTC tape, including risk-on ones the champion skipped.');
   return w;
 }
 
