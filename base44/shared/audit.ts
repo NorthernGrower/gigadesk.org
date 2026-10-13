@@ -324,6 +324,7 @@ function metricsFor(rawTrades, missed) {
     recovery_factor: sized.max_dd_usd ? r2(sized.net_usd / sized.max_dd_usd) : null,
     duration,
     regimes,
+    sides,
     exits,
     false_signals_stopped_out: exits.stop || 0,
     missed_opportunities: missed,
@@ -829,6 +830,7 @@ export async function runOptimize(coins, variants, opts = {}) {
   // so a window longer than a month pages Binance US kline history instead,
   // over the same liquid pairs, keeping Kraken's conservative fee assumption
   const months = Math.max(1, Number(opts.months) || 1);
+  const endOffsetMonths = Math.max(0, Number(opts.end_offset_months) || 0);
   // margin mode: only the pairs Kraken's AssetPairs endpoint lists with sell
   // leverage - the markets a margin account can actually open and short
   const marginSymbols = opts.marginOnly ? await fetchKrakenMarginSymbols() : null;
@@ -848,7 +850,7 @@ export async function runOptimize(coins, variants, opts = {}) {
   }
   const btcByTime = btcRegimeMap(
     months > 1
-      ? await fetchCandlesHistory("BTC", timeframe, months)
+      ? await fetchCandlesHistory("BTC", timeframe, months, endOffsetMonths)
       : await fetchKrakenCandles("XBTUSDT", interval),
     barsPerDay,
   );
@@ -858,7 +860,7 @@ export async function runOptimize(coins, variants, opts = {}) {
     const settled = await Promise.allSettled(
       group.map((c) =>
         months > 1
-          ? fetchCandlesHistory(c.symbol, timeframe, months)
+          ? fetchCandlesHistory(c.symbol, timeframe, months, endOffsetMonths)
           : fetchKrakenCandles(c.kraken_pair, interval),
       ),
     );
@@ -867,8 +869,10 @@ export async function runOptimize(coins, variants, opts = {}) {
     });
   }
   const staleSymbols = [];
+  // a backdated window's candles end months ago: staleness is expected there,
+  // the historical bars themselves are what the window is for
   const eligible = fetched.filter((f) => {
-    const stale = Date.now() - f.candles[f.candles.length - 1].t > 4 * 3600000;
+    const stale = !endOffsetMonths && Date.now() - f.candles[f.candles.length - 1].t > 4 * 3600000;
     if (stale) staleSymbols.push(f.coin.symbol);
     return !stale && f.candles.length >= WARMUP + AUDIT_DAYS * barsPerDay + 2;
   });
@@ -916,6 +920,7 @@ export async function runOptimize(coins, variants, opts = {}) {
     days: sampleDays,
     source: months > 1 ? "binance_us_history" : "kraken",
     months,
+    end_offset_months: endOffsetMonths,
     symbols: symbolsUsed.length,
     symbols_used: symbolsUsed,
     stale_symbols_excluded: staleSymbols,

@@ -693,6 +693,42 @@ const ROUND36_VARIANTS = [
 
 const MARGIN_ROUNDS = { 29: ROUND29_VARIANTS, 30: ROUND30_VARIANTS, 31: ROUND31_VARIANTS, 32: ROUND32_VARIANTS, 33: ROUND33_VARIANTS, 34: ROUND34_VARIANTS, 35: ROUND35_VARIANTS, 36: ROUND36_VARIANTS };
 
+// ---------------------------------------------------------------------------
+// SHORT-TRADE AUDIT (round 37): the champion exactly as the paper desk gates
+// it today - longs only on a risk-off BTC tape, shorts only on a risk-on one -
+// split by side, plus tape-gate candidates for the short leg. Each candidate
+// keeps every quality gate (score 70, ADX 28, conviction, volume band, chase
+// blocks) untouched: shorts must meet the same standard as longs.
+// ---------------------------------------------------------------------------
+const S37_REF = {
+  ...COMBO_ENGINE,
+  skip_riskon_long: false,
+  skip_sideways: false,
+  long_riskoff_only: true,
+  short_riskon_only: true,
+};
+const ROUND37_VARIANTS = [
+  variantCfg("s37_ref", "Reference: the champion as the paper desk trades it today (live tape gates)", S37_REF),
+  variantCfg("s37_ref_long", "Reference, longs only", { ...S37_REF, long_only: true }),
+  variantCfg("s37_ref_short", "Reference, shorts only", { ...S37_REF, short_only: true }),
+  variantCfg("s37_c1_shorts_any_trend", "Shorts allowed on a risk-off BTC tape too (flat tape still blocks)", {
+    ...S37_REF,
+    short_riskon_only: false,
+    skip_sideways: true,
+  }),
+  variantCfg("s37_c2_shorts_no_gate", "Shorts with no tape gate at all (flat and risk-off tapes included)", {
+    ...S37_REF,
+    short_riskon_only: false,
+    skip_sideways: false,
+  }),
+  variantCfg("s37_c3_no_tape_gates", "No tape gates for either side (full removal, control test)", {
+    ...S37_REF,
+    long_riskoff_only: false,
+    short_riskon_only: false,
+    skip_sideways: false,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -811,6 +847,30 @@ export default async function (req) {
           label: round
             ? `Kraken margin optimizer round ${round} - ${result.days}d, ${result.symbols} leverage pairs`
             : `Kraken margin backtest - ${result.days}d, ${result.symbols} leverage pairs`,
+          ran_at: new Date().toISOString(),
+          timeframe: "1h",
+          window_days: result.days,
+          symbols: result.symbols,
+          results: result,
+        })
+        .catch(() => null);
+      return Response.json({ run_id: saved ? saved.id : null, ...result });
+    }
+
+    // SHORT-TRADE AUDIT: the champion's tape gates, split by side, plus
+    // short-leg tape candidates. Runs as two six-month blocks (a backdated
+    // second block) - 12-month single passes exceed the CPU allocation.
+    if (body.mode === "short_audit") {
+      const { coins } = await fetchMarkets();
+      const result = await runOptimize(coins, ROUND37_VARIANTS, {
+        maxSymbols: Math.min(Number(body.max_symbols) || 12, 20),
+        timeframe: "1h",
+        months: Number(body.months) || 6,
+        ...(Number(body.end_offset_months) ? { end_offset_months: Number(body.end_offset_months) } : {}),
+      });
+      const saved = await base44.asServiceRole.entities.AuditRun
+        .create({
+          label: `Short-trade audit - ${result.days}d${body.end_offset_months ? ` -${body.end_offset_months}m offset` : ""}, ${result.symbols} symbols`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,

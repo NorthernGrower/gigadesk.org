@@ -301,7 +301,7 @@ export async function fetchCandlesHistory(symbol, interval = "1h", months = 6, e
 
   // an end offset backdates the window: 6 months ending 6 months ago is the
   // earlier half of a 12-month test, run in two blocks to bound CPU
-  const endMs = Date.now() - endOffsetMonths * 30 * 24 * 3600 * 1000;
+  let endMs = Date.now() - endOffsetMonths * 30 * 24 * 3600 * 1000;
   const startMs = endMs - months * 30 * 24 * 3600 * 1000;
   const pages = [];
   for (let page = 0; page < 12; page++) {
