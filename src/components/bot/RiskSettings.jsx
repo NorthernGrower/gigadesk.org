@@ -155,6 +155,7 @@ export default function RiskSettings({ config, onSaved }) {
     confluence_v2: config?.confluence_v2 !== false,
     engine_v2: config?.engine_v2 !== false,
     champion_engine: config?.champion_engine !== false,
+    margin_engine: config?.margin_engine === true,
   });
 
   // re-sync the forms whenever a fresh config lands (after a save or a cycle)
@@ -197,6 +198,7 @@ export default function RiskSettings({ config, onSaved }) {
       confluence_v2: config.confluence_v2 !== false,
       engine_v2: config.engine_v2 !== false,
       champion_engine: config.champion_engine !== false,
+      margin_engine: config.margin_engine === true,
     });
   }, [config?.id, config?.updated_date]);
 
@@ -280,6 +282,7 @@ export default function RiskSettings({ config, onSaved }) {
         confluence_v2: shared.confluence_v2,
         engine_v2: shared.engine_v2,
         champion_engine: shared.champion_engine,
+        margin_engine: shared.margin_engine,
       });
       toast({ title: 'Shared settings saved', description: 'Both desks scan with these on the next cycle.' });
       if (onSaved) onSaved();
@@ -503,7 +506,21 @@ export default function RiskSettings({ config, onSaved }) {
             checked={shared.champion_engine}
             onChange={setSharedV('champion_engine')}
           />
+          <Toggle
+            label="Margin engine"
+            hint="The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Gains and losses both move faster."
+            checked={shared.margin_engine}
+            onChange={setSharedV('margin_engine')}
+          />
         </div>
+        {shared.margin_engine ? (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-destructive">Margin engine warning</p>
+            <p className="mt-1.5 text-[11px] leading-snug text-destructive/90">
+              Margin trades lose money faster: positions are leveraged, so a stop-out takes a bigger bite of the account than a spot trade, and the tighter 3R targets book losses sooner too. Only enable it with money you can afford to lose.
+            </p>
+          </div>
+        ) : null}
         <Button className="w-full" onClick={saveShared} disabled={saving === 'shared'}>
           {saving === 'shared' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Save shared settings

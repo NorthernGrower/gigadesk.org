@@ -70,6 +70,11 @@
       "default": true,
       "description": "The optimizer's combined champion stack: score bar 70, ADX 28, 2x-4x volume, stochastic agreement, RSI chase block, conviction candles, BTC risk-off longs, 4.5R targets and break-even at +1.2R. Turn off to trade the previous managed rules"
     },
+    "margin_engine": {
+      "type": "boolean",
+      "default": false,
+      "description": "The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Leverage moves losses as fast as gains \u2014 off by default"
+    },
     "starting_balance": {
       "type": "number",
       "default": 10000

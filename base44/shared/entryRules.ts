@@ -4,14 +4,23 @@
 // A backtest of $10,000 returned +$1,419.13 (+14.19%) over 6 months on 1h
 // candles with 0.5% round-trip costs - 9 trades, 77.8% win rate, profit
 // factor 23.56, max drawdown 0.6%, worst losing streak 2.
+// The margin engine's tested universe (optimizer rounds 29-36): the nine
+// majors plus AVAX — widened small caps bleed on margin fees.
+export const MARGIN_UNIVERSE = new Set([
+  "BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "LINK", "LTC", "DOGE", "AVAX",
+]);
+
 export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) {
   const combo = config.combo_engine !== false;
+  const margin = config.margin_engine === true;
   const style = config.trading_style || "mild";
   return {
     // the combo stack's tested score bar; styles keep bending sizing, not the bar
     min_score: combo ? 70 : style === "timid" ? 68 : style === "aggressive" ? 58 : 62,
     allow_shorts: desk === "paper" && config.allow_shorts !== false,
     combo,
+    margin,
+    target_r: margin ? 3 : combo ? 4.5 : null,
     btc_change24h: btcChange24h,
   };
 }
@@ -44,6 +53,9 @@ export function gateReason(row, desk, rules) {
   if (row.fib_phase === "chasing") return "entry is chasing";
   if (rules.combo !== false) {
     // ---- COMBO ENGINE gates (round 25-28 champion), layered on the managed gate
+    // margin engine: only the tested majors + AVAX universe is traded
+    if (rules.margin && !MARGIN_UNIVERSE.has(String(row.symbol || "").toUpperCase()))
+      return "margin engine trades the majors + AVAX only";
     if ((Number(ind.adx) || 0) < 28) return "ADX under 28 (combo requires a strong trend)";
     const vr = Number(ind.vol_ratio) || 0;
     if (vr < 2) return "signal bar volume under 2x its average";
@@ -52,7 +64,9 @@ export function gateReason(row, desk, rules) {
     if (long ? k < d : k > d) return "stochastic pair opposes the trade";
     const rsiVal = Number(ind.rsi) || 0;
     if (long ? rsiVal > 72 : rsiVal < 28) return "RSI chasing the move (over 72 / under 28)";
-    if ((Number(row.body_ratio) || 0) < 0.6) return "signal bar lacks conviction (body under 60%)";
+    const conviction = rules.margin ? 0.5 : 0.6;
+    if ((Number(row.body_ratio) || 0) < conviction)
+      return `signal bar lacks conviction (body under ${Math.round(conviction * 100)}%)`;
     // regime: the longs only traded into a risk-off BTC tape; shorts wait
     // out a flat one - measured on BTC's 24h move (over +1% risk-on,
     // under -1% risk-off, in between sideways)
@@ -61,8 +75,10 @@ export function gateReason(row, desk, rules) {
       if (long && btc > -1) return "longs wait for a risk-off BTC tape";
       if (!long && btc <= 1 && btc >= -1) return "shorts wait out a flat BTC tape";
     }
-    // the 4.5R target must still clear the daily goal on the trade's own stop
-    if ((Number(row.stop_pct) || 2) * 4.5 < 2) return "target move under the daily goal";
+    // the engine target (4.5R, or 3R under the margin engine) must still
+    // clear the daily goal on the trade's own stop
+    if ((Number(row.stop_pct) || 2) * (Number(rules.target_r) || 4.5) < 2)
+      return "target move under the daily goal";
   }
   return null;
 }

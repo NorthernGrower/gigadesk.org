@@ -37,6 +37,7 @@ const DEFAULT_CONFIG = {
   trading_style: "mild",
   profit_mode: "compound",
   combo_engine: true,
+  margin_engine: false,
   sentiment_watch: true,
   confluence_v2: true,
   champion_engine: true,
@@ -120,6 +121,10 @@ export default async function (req) {
     // agreement, RSI chase block, conviction candles, BTC risk-off longs - and
     // sets 4.5R targets with break-even at +1.2R instead of trailing stops.
     const comboOn = config.combo_engine !== false;
+    // MARGIN ENGINE (optimizer rounds 29-36): the combo stack re-targeted to
+    // 3R, conviction loosened to 50%, restricted to the tested majors + AVAX
+    // universe. Off by default — leverage moves losses as fast as gains.
+    const marginOn = config.margin_engine === true;
 
     // entity reads cap each page, so a plain read silently missed open trades
     // once the desk held more than a page — the exact window that let already
@@ -362,10 +367,11 @@ export default async function (req) {
       // trailing follows the desk the position trades on: real positions
       // trail by the live rules, paper ones by the paper rules
       const isRealPos = (t.mode || "paper") === "real";
-      // combo-managed trades (4.5R targets) exit by break-even and target only:
-      // the trailing stop is the old engine's exit, not part of the tested stack
+      // combo/margin-managed trades (4.5R and 3R targets) exit by break-even
+      // and target only: the trailing stop is the old engine's exit, not part
+      // of the tested stacks
       const trailingOn =
-        (Number(t.target_r) || 0) >= 4
+        (Number(t.target_r) || 0) >= 3
           ? false
           : isRealPos
             ? lrVal("trailing_stop", true) !== false
@@ -685,12 +691,12 @@ export default async function (req) {
       // engine targets: 4.5R from entry with the combo stack on (the round 25-28
       // champion), 2.5R under the old engine rules - always on the trade's own
       // side, so the distance is |entry - stop| measured outward
-      const targetR = comboOn ? 4.5 : 2.5;
+      const targetR = marginOn ? 3 : comboOn ? 4.5 : 2.5;
       const engineTarget = (r) => {
         const dist = targetR * Math.abs(r.entry - r.stop);
         return round(r.side === "long" ? r.entry + dist : r.entry - dist, 8);
       };
-      const useEngineTarget = comboOn || (engineV2 && champion);
+      const useEngineTarget = marginOn || comboOn || (engineV2 && champion);
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         return !blocked.has(r.symbol) && entryGate(r, desk) === null;
@@ -875,7 +881,7 @@ export default async function (req) {
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
             target_price: useEngineTarget ? engineTarget(rl) : r.target,
-            target_r: comboOn ? 4.5 : engineV2 && champion ? 2.5 : null,
+            target_r: marginOn ? 3 : comboOn ? 4.5 : engineV2 && champion ? 2.5 : null,
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1141,7 +1147,7 @@ export default async function (req) {
         walletSync = await syncExchangePositions(base44, managed.conn, syncBalances, {
           ownerId: config.created_by_id,
           stopPct: Number(lrVal("default_stop_pct", 2.5)),
-          targetR: comboOn ? 4.5 : engineV2 && champion ? 2.5 : 0,
+          targetR: marginOn ? 3 : comboOn ? 4.5 : engineV2 && champion ? 2.5 : 0,
         });
         await base44.entities.BotConfig.update(config.id, { last_wallet_sync_at: Date.now() });
       }
@@ -1308,9 +1314,9 @@ export default async function (req) {
       // the desk's top picks display the target the bot actually trades:
       // 4.5R from entry with the combo stack on, not the scan's raw level
       top: (board.rows || []).slice(0, 12).map((r) => {
-        const dist = 4.5 * Math.abs(r.entry - r.stop);
+        const dist = (marginOn ? 3 : 4.5) * Math.abs(r.entry - r.stop);
         const target =
-          comboOn && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
+          (marginOn || comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
             ? round(r.side === "long" ? r.entry + dist : r.entry - dist, 8)
             : r.target;
         return {
