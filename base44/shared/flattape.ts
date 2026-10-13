@@ -120,6 +120,8 @@ export function flatCfg(id, description, over = {}) {
     htf_must_agree: false,
     btc_trend_bars: 0,
     min_flat_run: 0,
+    scale_out_r: null, // book half the position at this R-multiple, run the rest
+    be_after_scale: false, // move the stop to break-even once the half is booked
     ...over,
   };
 }
@@ -262,25 +264,58 @@ function simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps, b
     if (pos) {
       const long = pos.side === "long";
       const hitStop = long ? bar.l <= pos.stop : bar.h >= pos.stop;
-      const hitTarget = long ? bar.h >= pos.target : bar.l <= pos.target;
       const held = j - pos.j;
       let exitPx = null;
       let reason = null;
       if (hitStop) {
         exitPx = pos.stop;
         reason = "stop";
-      } else if (hitTarget) {
-        exitPx = pos.target;
-        reason = "target";
       } else {
-        const prevClose = candles[j - 1].c;
-        const underwater = long ? prevClose < pos.entry : prevClose > pos.entry;
-        if (cfg.time_underwater_bars && held >= cfg.time_underwater_bars && underwater) {
-          exitPx = bar.o;
-          reason = "time";
-        } else if (cfg.time_flat_bars && held >= cfg.time_flat_bars) {
-          exitPx = bar.c;
-          reason = "time";
+        // scale-out: the first partial target books half the position (full
+        // round-trip cost charged per leg - correct, fees scale with notional),
+        // and the remaining half either runs to the full target or moves its
+        // stop to break-even first. Stop fills take priority in an ambiguous
+        // bar - the conservative reading.
+        if (cfg.scale_out_r != null && !pos.scaled) {
+          const scalePrice = long ? pos.entry + cfg.scale_out_r * pos.unit : pos.entry - cfg.scale_out_r * pos.unit;
+          if (long ? bar.h >= scalePrice : bar.l <= scalePrice) {
+            const raw = long
+              ? ((scalePrice - pos.entry) / pos.entry) * 100
+              : ((pos.entry - scalePrice) / pos.entry) * 100;
+            trades.push({
+              symbol: pos.symbol,
+              side: pos.side,
+              entry_time: pos.entryTime,
+              exit_time: bar.t,
+              raw_pct: round(raw, 2),
+              net_pct: round(raw - COST_PCT, 2),
+              stop_pct: round(pos.stopPct, 2),
+              hold_bars: held,
+              reason: "scale",
+              weight: 0.5,
+              regime: regimeLabel(btcByTime.get(pos.entryTime)),
+            });
+            pos.scaled = true;
+            if (cfg.be_after_scale) {
+              const be = long ? pos.entry * 1.0005 : pos.entry * 0.9995;
+              pos.stop = long ? Math.max(pos.stop, be) : Math.min(pos.stop, be);
+            }
+          }
+        }
+        const hitTarget = long ? bar.h >= pos.target : bar.l <= pos.target;
+        if (hitTarget) {
+          exitPx = pos.target;
+          reason = "target";
+        } else {
+          const prevClose = candles[j - 1].c;
+          const underwater = long ? prevClose < pos.entry : prevClose > pos.entry;
+          if (cfg.time_underwater_bars && held >= cfg.time_underwater_bars && underwater) {
+            exitPx = bar.o;
+            reason = "time";
+          } else if (cfg.time_flat_bars && held >= cfg.time_flat_bars) {
+            exitPx = bar.c;
+            reason = "time";
+          }
         }
       }
       if (exitPx != null) {
@@ -297,6 +332,7 @@ function simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps, b
           stop_pct: round(pos.stopPct, 2),
           hold_bars: held,
           reason,
+          weight: pos.scaled ? 0.5 : 1,
           regime: regimeLabel(btcByTime.get(pos.entryTime)),
         });
         pos = null;
@@ -337,7 +373,7 @@ function simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps, b
 }
 
 /** $10k account metrics: 4% risk per trade to its stop, 25% size cap, compounding. */
-function metricsFor(trades) {
+export function metricsFor(trades) {
   const ordered = trades.slice().sort((a, b) => a.exit_time - b.exit_time);
   let balance = STARTING_BALANCE;
   let peak = balance;
@@ -346,7 +382,9 @@ function metricsFor(trades) {
   let worstStreak = 0;
   for (const t of ordered) {
     const sizePct = Math.min(SIZE_CAP_PCT, (RISK_PCT / Math.max(t.stop_pct, 0.3)) * 100);
-    balance += (balance * sizePct * t.net_pct) / 100 / 100;
+    // scale-out legs carry a weight (0.5 = half the position's size)
+    const weight = Number(t.weight) || 1;
+    balance += (balance * sizePct * weight * t.net_pct) / 100 / 100;
     peak = Math.max(peak, balance);
     maxDd = Math.max(maxDd, peak - balance);
     if (t.net_pct > 0) streak = 0;
@@ -456,7 +494,11 @@ export async function runFlatLab(opts = {}) {
   const variantsOut = {};
   for (const cfg of variants) {
     const trades = slots[cfg.id] || [];
-    variantsOut[cfg.id] = { description: cfg.description, ...metricsFor(trades) };
+    // trade-list mode: respond with the raw legs only (metrics stay small) so
+    // disjoint windows can be pooled into one book outside this run
+    variantsOut[cfg.id] = opts.return_trades
+      ? { description: cfg.description, trades }
+      : { description: cfg.description, ...metricsFor(trades) };
   }
   const sampleDays = prepared.length
     ? Math.round(Math.min(...prepared.map((p) => (p.candles.length - WARMUP) / BARS_PER_DAY)))
