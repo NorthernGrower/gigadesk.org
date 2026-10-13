@@ -64,8 +64,14 @@ export function gateReason(row, desk, rules) {
     if (vr > 4) return "signal bar volume over 4x (blow-off volume)";
     const k = Number(ind.stoch_k) || 0, d = Number(ind.stoch_d) || 0;
     if (long ? k < d : k > d) return "stochastic pair opposes the trade";
+    // RSI chase block, longs only: the short-only optimizer's round-38/39
+    // winner - in a downtrend RSI sits pinned oversold while price keeps
+    // falling, so the under-28 block was refusing the short leg's best
+    // entries. Removing it nearly tripled short-side net P&L over the pooled
+    // 12-month test (+$1,486 vs +$589) and won consistently in both
+    // 6-month blocks; the longs' over-72 block stays untouched.
     const rsiVal = Number(ind.rsi) || 0;
-    if (long ? rsiVal > 72 : rsiVal < 28) return "RSI chasing the move (over 72 / under 28)";
+    if (long && rsiVal > 72) return "RSI chasing the move (over 72)";
     const conviction = rules.margin ? 0.5 : 0.6;
     if ((Number(row.body_ratio) || 0) < conviction)
       return `signal bar lacks conviction (body under ${Math.round(conviction * 100)}%)`;
