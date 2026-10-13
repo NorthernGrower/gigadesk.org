@@ -41,6 +41,43 @@ export function WarningsBox({ warnings }) {
   );
 }
 
+// The coin score the engine trades at: a dropdown with 70 — the backtested
+// most profitable bar — as its default, plus an inline warning the moment
+// any other number is picked.
+export function ScoreBarField({ form, setNum }) {
+  const value = Number(form.score_bar);
+  const options = Array.from(new Set([40, 50, 55, 60, 65, 70, 75, 80, value]))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  return (
+    <Field
+      label="Entry score bar"
+      hint="The minimum coin score the engine trades. 70 is the default."
+    >
+      <Select
+        value={String(Number.isFinite(value) ? value : 70)}
+        onValueChange={(v) => setNum('score_bar')({ target: { value: v } })}
+      >
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((n) => (
+            <SelectItem key={n} value={String(n)}>
+              {n === 70 ? '70 (backtested optimum)' : String(n)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {Number.isFinite(value) && value !== 70 ? (
+        <p className="text-[11px] leading-snug text-amber-400">
+          Warning: 70 is the backtested most profitable score bar. Picking {value} takes more trades with weaker setups.
+        </p>
+      ) : null}
+    </Field>
+  );
+}
+
 // Entry gates are managed by the bot; only user-controlled risk is warned here.
 export function deskRuleWarnings(rules) {
   const w = [];

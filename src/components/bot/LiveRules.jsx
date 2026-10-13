@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
-import { Field, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields } from '@/components/bot/ruleFields';
+import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields } from '@/components/bot/ruleFields';
 
 const EXCHANGE_LABELS = {
   binance_us: 'Binance US',
@@ -109,7 +109,7 @@ export default function LiveRules({ config, onSaved }) {
   };
 
   return (
-    <div className="surface space-y-4 p-4" id="risk-rules">
+    <div className="surface space-y-4 p-4">
       <div>
         <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Live bot rules</p>
         <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
@@ -152,16 +152,7 @@ export default function LiveRules({ config, onSaved }) {
         </div>
       ) : null}
 
-      <Field
-        label="Entry score bar"
-        hint={
-          Number(live.score_bar) !== 70
-            ? `You are running below the tested optimum of 70 — the backtested champion only traded score-70+ setups. A lower bar means more trades with weaker setups.`
-            : `The minimum setup score a live trade needs. 70 is the backtested most profitable bar; lower it to take more trades.`
-        }
-      >
-        <Input className="num" inputMode="numeric" value={live.score_bar} onChange={setLiveNum('score_bar')} />
-      </Field>
+      <ScoreBarField form={live} setNum={setLiveNum} />
 
       {riskFields(live, setLiveNum, setLiveV)}
 
