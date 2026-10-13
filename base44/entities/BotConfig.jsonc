@@ -108,6 +108,11 @@
       "type": "number",
       "default": 2
     },
+    "max_drawdown_pct": {
+      "type": "number",
+      "default": 15,
+      "description": "Drawdown guard: when a desk's equity falls this far below its peak, new entries pause on that desk until it recovers. Open positions keep their stops and targets. 0 = off"
+    },
     "trailing_stop": {
       "type": "boolean",
       "default": true

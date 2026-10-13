@@ -156,6 +156,7 @@ export default function RiskSettings({ config, onSaved }) {
     engine_v2: config?.engine_v2 !== false,
     champion_engine: config?.champion_engine !== false,
     margin_engine: config?.margin_engine === true,
+    max_drawdown_pct: config?.max_drawdown_pct ?? 15,
   });
 
   // re-sync the forms whenever a fresh config lands (after a save or a cycle)
@@ -199,6 +200,7 @@ export default function RiskSettings({ config, onSaved }) {
       engine_v2: config.engine_v2 !== false,
       champion_engine: config.champion_engine !== false,
       margin_engine: config.margin_engine === true,
+      max_drawdown_pct: config.max_drawdown_pct ?? 15,
     });
   }, [config?.id, config?.updated_date]);
 
@@ -219,6 +221,7 @@ export default function RiskSettings({ config, onSaved }) {
   const setPaperV = (key) => (value) => setPaper((prev) => ({ ...prev, [key]: value }));
   const setPaperNum = (key) => (event) => setPaper((prev) => ({ ...prev, [key]: event.target.value }));
   const setSharedV = (key) => (value) => setShared((prev) => ({ ...prev, [key]: value }));
+  const setSharedNum = (key) => (event) => setShared((prev) => ({ ...prev, [key]: event.target.value }));
 
   const saveLive = async () => {
     setSaving('live');
@@ -283,6 +286,7 @@ export default function RiskSettings({ config, onSaved }) {
         engine_v2: shared.engine_v2,
         champion_engine: shared.champion_engine,
         margin_engine: shared.margin_engine,
+        max_drawdown_pct: roundTo(shared.max_drawdown_pct, 1),
       });
       toast({ title: 'Shared settings saved', description: 'Both desks scan with these on the next cycle.' });
       if (onSaved) onSaved();
@@ -487,6 +491,12 @@ export default function RiskSettings({ config, onSaved }) {
             </Select>
           </Field>
         </div>
+        <Field
+          label="Max drawdown %"
+          hint="When a desk's equity falls this far below its peak, new entries pause on that desk until it recovers. Open positions keep their stops and targets. 0 turns the guard off."
+        >
+          <Input className="num" inputMode="decimal" value={shared.max_drawdown_pct} onChange={setSharedNum('max_drawdown_pct')} />
+        </Field>
         <div className="grid gap-2.5 sm:grid-cols-2">
           <Toggle
             label="Market tone watch"
