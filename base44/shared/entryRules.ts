@@ -14,9 +14,20 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
   const combo = config.combo_engine !== false;
   const margin = config.margin_engine === true;
   const style = config.trading_style || "mild";
+  // the paper pool's own score bar: a user-set number overrides the tested
+  // champion's 70 — the rules panel warns that 70 is the backtested optimum
+  const userBar = Number(config.score_bar);
   return {
-    // the combo stack's tested score bar; styles keep bending sizing, not the bar
-    min_score: combo ? 70 : style === "timid" ? 68 : style === "aggressive" ? 58 : 62,
+    min_score:
+      desk === "paper" && Number.isFinite(userBar)
+        ? userBar
+        : combo
+          ? 70
+          : style === "timid"
+            ? 68
+            : style === "aggressive"
+              ? 58
+              : 62,
     // shorts on the live desk are a margin-engine feature: the margin account
     // can open them without holdings, a spot account cannot
     allow_shorts: config.allow_shorts !== false && (desk === "paper" || margin),

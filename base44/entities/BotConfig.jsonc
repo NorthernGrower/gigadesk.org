@@ -156,6 +156,11 @@
       "type": "number",
       "default": 62
     },
+    "score_bar": {
+      "type": "number",
+      "default": 70,
+      "description": "The paper pool's own minimum setup score. 70 is the backtested most profitable bar; a lower number takes more trades with weaker setups"
+    },
     "require_daily_target": {
       "type": "boolean",
       "default": true

@@ -45,6 +45,8 @@ function deskRuleWarnings(rules) {
   const w = [];
   if ((Number(rules.risk_per_trade_pct) || 0) > 15)
     w.push(`Risk per trade ${rules.risk_per_trade_pct}% is very high — a short run of stops can halve the desk.`);
+  if (rules.score_bar != null && Number(rules.score_bar) !== 70)
+    w.push(`Score bar ${Number(rules.score_bar)} differs from the tested optimum of 70: the backtested champion (77.8% win rate, profit factor 23.6 over 6 months) only traded score-70+ setups. Lower bars take more trades with weaker setups.`);
   return w;
 }
 
@@ -139,6 +141,7 @@ export default function RiskSettings({ config, onSaved }) {
     risk_per_trade_pct: config?.risk_per_trade_pct ?? 4,
     max_open_positions: config?.max_open_positions ?? 8,
     min_score: config?.min_score ?? 62,
+    score_bar: config?.score_bar ?? 70,
     daily_target_pct: config?.daily_target_pct ?? 2,
     cooldown_minutes: config?.cooldown_minutes ?? 120,
     trailing_stop: config?.trailing_stop ?? true,
@@ -183,6 +186,7 @@ export default function RiskSettings({ config, onSaved }) {
       risk_per_trade_pct: config.risk_per_trade_pct ?? 4,
       max_open_positions: config.max_open_positions ?? 8,
       min_score: config.min_score ?? 62,
+      score_bar: config.score_bar ?? 70,
       daily_target_pct: config.daily_target_pct ?? 2,
       cooldown_minutes: config.cooldown_minutes ?? 120,
       trailing_stop: config.trailing_stop ?? true,
@@ -260,6 +264,7 @@ export default function RiskSettings({ config, onSaved }) {
         daily_target_pct: roundTo(paper.daily_target_pct, 2),
         target_pct: roundTo(paper.daily_target_pct, 2),
         cooldown_minutes: Math.max(0, Math.round(Number(paper.cooldown_minutes) || 0)),
+        score_bar: Math.max(0, roundTo(Number(paper.score_bar), 1)),
         trailing_trigger_pct: roundTo(paper.trailing_trigger_pct, 2),
         trailing_distance_pct: roundTo(paper.trailing_distance_pct, 2),
         trailing_stop: paper.trailing_stop,
@@ -421,6 +426,17 @@ export default function RiskSettings({ config, onSaved }) {
               </Select>
             </Field>
           </div>
+
+          <Field
+            label="Entry score bar"
+            hint={
+              Number(paper.score_bar) !== 70
+                ? `You are running below the tested optimum of 70 — the backtested champion only traded score-70+ setups. A lower bar means more trades with weaker setups.`
+                : `The minimum setup score a trade needs. 70 is the backtested most profitable bar; lower it to take more trades.`
+            }
+          >
+            <Input className="num" inputMode="numeric" value={paper.score_bar} onChange={setPaperNum('score_bar')} />
+          </Field>
 
           {sharedDeskFields(paper, setPaperNum, setPaperV)}
 
