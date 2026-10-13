@@ -16,10 +16,11 @@ export default async function (req) {
     const symbols = Array.isArray(body.symbols) ? body.symbols : null;
     const variants = Array.isArray(body.variants) ? body.variants : DEFAULT_VARIANTS;
 
-    const result = await runFlatLab({ months, maxSymbols, step, symbols, variants });
+    const endOffset = Number(body.end_offset_months) || 0;
+    const result = await runFlatLab({ months, maxSymbols, step, symbols, variants, end_offset_months: endOffset });
     // research log: every run is archived so nothing is lost to display limits
     await base44.asServiceRole.entities.AuditRun.create({
-      label: `Flat-tape lab: ${months}m 1h, ${result.symbols} symbols, step ${step}`,
+      label: `Flat-tape lab: ${months}m 1h${endOffset ? ` -${endOffset}m` : ""}, ${result.symbols} symbols, step ${step}`,
       ran_at: new Date().toISOString(),
       timeframe: "1h",
       window_days: result.days,

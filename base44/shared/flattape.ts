@@ -106,13 +106,78 @@ export function flatCfg(id, description, over = {}) {
     time_underwater_bars: 0,
     time_flat_bars: 48,
     cooldown_bars: 6,
+    long_only: false,
+    short_only: false,
+    require_breakout: false,
+    max_bb_width: 0,
+    max_bb_width_low: null,
+    entry_hours: null,
+    min_stop_atr: 0,
+    regime_before_in: null,
+    regime_lag_bars: 24,
+    regime_matches_side: false,
+    slope_must_agree: false,
+    htf_must_agree: false,
+    btc_trend_bars: 0,
+    min_flat_run: 0,
     ...over,
   };
 }
 
-function flatGate(cfg, row, btcByTime, btcLeadByTime, barTime) {
+/** BTC's consecutive-sideways run length (in bars) at each timestamp. */
+function btcRunMap(btcCandles) {
+  const map = new Map();
+  if (!btcCandles) return map;
+  let run = 0;
+  for (let i = 0; i < btcCandles.length; i++) {
+    const back = btcCandles[Math.max(0, i - BARS_PER_DAY)];
+    const change = back && back.c ? ((btcCandles[i].c - back.c) / back.c) * 100 : null;
+    run = change != null && change >= -1 && change <= 1 ? run + 1 : 0;
+    map.set(btcCandles[i].t, run);
+  }
+  return map;
+}
+
+function flatGate(cfg, row, btcByTime, btcLeadByTime, barTime, btcSmaMaps, btcRunByTime) {
   if (!row || (Number(row.score) || 0) < cfg.min_score) return false;
   if (cfg.regime_in && !cfg.regime_in.includes(regimeLabel(btcByTime.get(barTime)))) return false;
+  if (cfg.long_only && row.side !== "long") return false;
+  if (cfg.short_only && row.side !== "short") return false;
+  // longer-trend filters: the EMA50 slope must agree with the side, the
+  // higher timeframe must not oppose it, and BTC must trade above (longs) or
+  // below (shorts) its own N-bar average
+  if (cfg.slope_must_agree) {
+    const slope = Number(row.indicators && row.indicators.ema50_slope) || 0;
+    if (row.side === "long" ? slope < 0 : slope > 0) return false;
+  }
+  if (cfg.htf_must_agree && row.htf_trend && !["range", "unknown"].includes(row.htf_trend)) {
+    const supports = row.side === "long" ? row.htf_trend === "up" : row.htf_trend === "down";
+    if (!supports) return false;
+  }
+  if (cfg.btc_trend_bars) {
+    const m = btcSmaMaps && btcSmaMaps.get(Number(cfg.btc_trend_bars));
+    const s = m && m.get(barTime);
+    if (s) {
+      const ok = row.side === "long" ? s.close >= s.sma : s.close <= s.sma;
+      if (!ok) return false;
+    }
+  }
+  // compression duration: BTC must have been flat for at least this many
+  // consecutive bars before the entry (the longer the coil, the bigger the pop)
+  if (cfg.min_flat_run) {
+    const run = (btcRunByTime && btcRunByTime.get(barTime)) || 0;
+    if (run < cfg.min_flat_run) return false;
+  }
+  // expansion logic: what BTC's regime was LAG bars ago (the flat tape is the
+  // setup), and a require that BTC's regime NOW agrees with the trade side
+  if (cfg.regime_before_in) {
+    const past = btcByTime.get(barTime - (Number(cfg.regime_lag_bars) || 24) * 3600000);
+    if (!cfg.regime_before_in.includes(regimeLabel(past))) return false;
+  }
+  if (cfg.regime_matches_side) {
+    const now = regimeLabel(btcByTime.get(barTime));
+    if (now !== (row.side === "long" ? "risk_on" : "risk_off")) return false;
+  }
   if (cfg.btc_lead_pct != null) {
     const lead = btcLeadByTime.get(barTime);
     if (row.side === "long" ? !(lead >= cfg.btc_lead_pct) : !(lead <= -cfg.btc_lead_pct)) return false;
@@ -149,6 +214,10 @@ function flatGate(cfg, row, btcByTime, btcLeadByTime, barTime) {
     const ok = row.side === "long" ? rp <= cfg.range_favorable : rp >= 1 - cfg.range_favorable;
     if (!ok) return false;
   }
+  if (cfg.require_breakout && !row.breakout_20) return false;
+  if (cfg.max_bb_width && (Number(ind.bb_width_percentile) || 0) > cfg.max_bb_width) return false;
+  if (cfg.max_bb_width_low != null && (Number(ind.bb_width_percentile) || 100) > cfg.max_bb_width_low)
+    return false;
   // basic level sanity: levels must face the trade's own direction
   const stop = Number(row.stop);
   const unit = Math.abs(Number(row.price) - stop);
@@ -156,7 +225,34 @@ function flatGate(cfg, row, btcByTime, btcLeadByTime, barTime) {
   return true;
 }
 
-function simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime) {
+/** A liquid-session gate: only enter inside the stated UTC hour window. */
+function sessionOk(cfg, barTime) {
+  if (!cfg.entry_hours) return true;
+  const h = new Date(barTime).getUTCHours();
+  return h >= cfg.entry_hours[0] && h < cfg.entry_hours[1];
+}
+
+/** A stop tighter than the bar's own noise range gets hit by nothing but noise. */
+function stopOk(cfg, row, bar) {
+  if (!cfg.min_stop_atr) return true;
+  const atrVal = Number(row && row.indicators && row.indicators.atr) || 0;
+  return !(atrVal > 0 && Math.abs(bar.c - Number(row.stop)) < cfg.min_stop_atr * atrVal);
+}
+
+/** BTC's N-bar simple average and its close at each timestamp. */
+function btcSmaMap(btcCandles, bars) {
+  const map = new Map();
+  if (!btcCandles || !bars) return map;
+  let sum = 0;
+  for (let i = 0; i < btcCandles.length; i++) {
+    sum += btcCandles[i].c;
+    if (i >= bars) sum -= btcCandles[i - bars].c;
+    if (i >= bars - 1) map.set(btcCandles[i].t, { sma: sum / bars, close: btcCandles[i].c });
+  }
+  return map;
+}
+
+function simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps, btcRunByTime) {
   const trades = [];
   let pos = null;
   let cooldownUntil = 0;
@@ -218,7 +314,7 @@ function simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime) {
     }
     if (j < cooldownUntil) continue;
     const row = rowsByJ.get(j);
-    if (flatGate(cfg, row, btcByTime, btcLeadByTime, bar.t)) {
+    if (flatGate(cfg, row, btcByTime, btcLeadByTime, bar.t, btcSmaMaps, btcRunByTime) && sessionOk(cfg, bar.t) && stopOk(cfg, row, bar)) {
       const unit = Math.abs(Number(row.price) - Number(row.stop));
       const target =
         row.side === "long"
@@ -290,7 +386,13 @@ function metricsFor(trades) {
  * signals prepared once, every variant simulated over the same pass.
  */
 export async function runFlatLab(opts = {}) {
-  const months = Math.max(1, Math.min(6, Number(opts.months) || 6));
+  const months = Math.max(1, Math.min(14, Number(opts.months) || 6));
+  // end_offset_months pushes the window BACK in time: 0 = the most recent
+  // `months`, 6 = the 6 months before that (disjoint validation windows)
+  const endOffset = Math.max(0, Math.min(12, Number(opts.end_offset_months) || 0));
+  const fetchMonths = months + endOffset;
+  const cutoff = endOffset ? Date.now() - endOffset * 30 * 24 * 3600 * 1000 : 0;
+  const sliceCandles = (c) => (cutoff ? c.filter((k) => k.t < cutoff) : c);
   const maxSymbols = Math.max(4, Math.min(30, Number(opts.maxSymbols) || 16));
   const step = Math.max(1, Number(opts.step) || 2);
   const { coins } = await fetchMarkets();
@@ -302,16 +404,22 @@ export async function runFlatLab(opts = {}) {
     .slice(0, maxSymbols - 1);
   const universe = [{ symbol: "BTC", name: "Bitcoin" }, ...ranked.map((s) => capMap.get(s) || { symbol: s, name: s })];
 
-  const btcCandles = await fetchCandlesHistory("BTC", "1h", months);
+  const btcCandles = sliceCandles(await fetchCandlesHistory("BTC", "1h", fetchMonths));
   const btcByTime = btcRegimeMap(btcCandles);
   const btcLeadByTime = btcLeadMap(btcCandles);
 
   const variants = opts.variants || DEFAULT_VARIANTS;
+  const btcSmaMaps = new Map();
+  for (const cfg of variants) {
+    const bars = Number(cfg.btc_trend_bars) || 0;
+    if (bars && !btcSmaMaps.has(bars)) btcSmaMaps.set(bars, btcSmaMap(btcCandles, bars));
+  }
+  const btcRunByTime = btcRunMap(btcCandles);
   const prepared = [];
   const failures = [];
   const need = WARMUP + 7 * BARS_PER_DAY + 2;
   const tryFetch = async (coin) => {
-    const value = await fetchCandlesHistory(coin.symbol, "1h", months);
+    const value = sliceCandles(await fetchCandlesHistory(coin.symbol, "1h", fetchMonths));
     if (value && value.length >= need) {
       const rowsByJ = prepSymbol(coin, value, BARS_PER_DAY, step);
       prepared.push({ coin, candles: value, rowsByJ });
@@ -341,7 +449,7 @@ export async function runFlatLab(opts = {}) {
   for (const { coin, candles, rowsByJ } of prepared) {
     for (const cfg of variants) {
       const slot = (slots[cfg.id] = slots[cfg.id] || []);
-      slot.push(...simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime));
+      slot.push(...simulate(candles, rowsByJ, cfg, btcByTime, btcLeadByTime, btcSmaMaps));
     }
   }
 
@@ -355,6 +463,7 @@ export async function runFlatLab(opts = {}) {
     : 0;
   return {
     months,
+    end_offset_months: endOffset,
     days: sampleDays,
     symbols: prepared.length,
     symbols_used: prepared.map((p) => p.coin.symbol),
