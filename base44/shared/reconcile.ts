@@ -33,9 +33,9 @@ const FULLY_SOLD_USD = 0.5; // below this the wallet is treated as fully out
  * {asset, side, qty, price, time(ms)}. Best effort: an unavailable feed
  * returns [] and positions import at the live price instead.
  */
-async function fetchFills(cfg, assets) {
+async function fetchFills(cfg, assets, opts = {}) {
   try {
-    if (cfg.exchange === "kraken") return await krakenFills(cfg);
+    if (cfg.exchange === "kraken") return await krakenFills(cfg, opts);
     if (cfg.exchange === "binance" || cfg.exchange === "binance_us") return await binanceFills(cfg, assets);
     if (cfg.exchange === "bybit") return await bybitFills(cfg);
     if (cfg.exchange === "kucoin") return await kucoinFills(cfg);
@@ -48,7 +48,10 @@ async function fetchFills(cfg, assets) {
 // Kraken's TradesHistory reports the pair in several shapes across markets
 // ("XBTUSD", "CAKEUSD", the AssetPairs key) — normalize through the public
 // pair list first, with a suffix-strip fallback.
-async function krakenFills(cfg) {
+async function krakenFills(cfg, opts = {}) {
+  // a fresh history pull is skipped: the year-long fetch pages signed calls,
+  // and repeating it on every sync kept tripping Kraken's temporary lockout
+  if (opts.skipHistory) return [];
   const pairsRes = await callJson("https://api.kraken.com/0/public/AssetPairs");
   const pairBase = new Map();
   const normQuote = (q) => ({ ZUSD: "USD", USDT: "USDT", USDC: "USDC", ZEUR: "EUR", ZGBP: "GBP", ZCAD: "CAD" }[q] || q);
@@ -243,7 +246,15 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
   // average-cost entry from the fill history; a fill feed without the asset
   // (deposited, never traded, or the history is unavailable) imports at the
   // live price instead
-  const fills = await fetchFills(conn, valued.map((b) => b.asset));
+  // the fill history is the sync's heaviest read (a year of paged signed
+  // calls): it only refreshes once an hour per connection, and a fresh
+  // history's sync runs on balances alone — imports price at the live price
+  const historyFresh = Date.now() - (Date.parse(conn.fills_fetched_at) || 0) < 60 * 60000;
+  const fills = await fetchFills(conn, valued.map((b) => b.asset), historyFresh ? { skipHistory: true } : {});
+  if (!historyFresh && conn.id)
+    await base44.asServiceRole.entities.ExchangeConnection
+      .update(conn.id, { fills_fetched_at: new Date().toISOString() })
+      .catch(() => {});
   const agg = new Map();
   for (const f of fills) {
     const a = String(f.asset || "").toUpperCase();

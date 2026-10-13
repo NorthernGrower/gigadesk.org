@@ -70,6 +70,11 @@
       "format": "date-time",
       "description": "Background balance reads pause until this moment after a failed read, so an exchange-side lockout can clear"
     },
+    "fills_fetched_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the wallet's trade-fill history was last pulled; throttles the year-long signed fill fetch to once an hour so repeated pulls never trip the exchange's lockout"
+    },
     "balances": {
       "type": "array",
       "items": {

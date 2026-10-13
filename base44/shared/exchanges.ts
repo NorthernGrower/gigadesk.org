@@ -56,8 +56,11 @@ export const EXCHANGES = {
 // ---- Failure backoff: a failed signed read counts toward Kraken's lockout
 // counter, so every background reader must leave the key alone for a while
 // after a failure instead of retrying it into a longer lock
+// Kraken's raw code ("EGeneral:Temporary lockout") has usually been mapped to
+// plain English by the time it reaches here ("temporarily locked") — match
+// both, so a locked key really pauses long enough for the lock to clear
 export const backoffMinutes = (message) =>
-  /Temporary lockout/i.test(String(message || "")) ? 16 : 3;
+  /Temporary lockout|temporarily locked/i.test(String(message || "")) ? 16 : 3;
 export const isBackedOff = (conn) =>
   Boolean(conn && conn.backoff_until && Date.parse(conn.backoff_until) > Date.now());
 export const backoffUntil = (message) =>
