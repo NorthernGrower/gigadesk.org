@@ -591,7 +591,98 @@ const ROUND31_VARIANTS = [
   variantCfg("m31_lev4", "3R stack at 4x leverage (risk check)", { ...M30_BEST, leverage: 4 }),
 ];
 
-const MARGIN_ROUNDS = { 29: ROUND29_VARIANTS, 30: ROUND30_VARIANTS, 31: ROUND31_VARIANTS };
+// Round 32: the settled margin engine re-verified on MORE trades - a 12-month
+// window over the widened leverage universe (Kraken's USD-quoted margin pairs,
+// 40+ symbols). Leverage ladder for the risk picture.
+const M32 = { ...R27_BEST, target_r: 3, margin: true };
+const ROUND32_VARIANTS = [
+  variantCfg("m32_lev1", "The margin engine at 1x leverage, 12 months", { ...M32, leverage: 1 }),
+  variantCfg("m32_lev2", "The margin engine at 2x leverage, 12 months", { ...M32, leverage: 2 }),
+  variantCfg("m32_lev3", "The margin engine at 3x leverage, 12 months", { ...M32, leverage: 3 }),
+];
+
+// The margin universe found in round 32: the nine original leverage pairs
+// stayed profitable while the widened small caps (GRT, FIL, AAVE, UNI, TRX)
+// bled - only AVAX earned its seat.
+const MAJORS9 = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "LINK", "LTC", "DOGE"];
+const MAJORS_AVAX = [...MAJORS9, "AVAX"];
+
+// Round 33: more trades done RIGHT - the majors-only universe over 12 months
+// (twice the window) instead of diluting with small caps.
+const ROUND33_VARIANTS = [
+  variantCfg("m33_lev1_majors", "The margin engine, majors only, 12 months, 1x", {
+    ...M32,
+    leverage: 1,
+    universe: MAJORS9,
+  }),
+  variantCfg("m33_lev2_majors", "The margin engine, majors only, 12 months, 2x", {
+    ...M32,
+    leverage: 2,
+    universe: MAJORS9,
+  }),
+  variantCfg("m33_lev3_majors", "The margin engine, majors only, 12 months, 3x", {
+    ...M32,
+    leverage: 3,
+    universe: MAJORS9,
+  }),
+  variantCfg("m33_lev2_avax", "The margin engine, majors + AVAX, 12 months, 2x", {
+    ...M32,
+    leverage: 2,
+    universe: MAJORS_AVAX,
+  }),
+];
+
+// Round 34: more trades WITHOUT diluting - loosen the score bar on the
+// profitable majors universe, plus one candidate universe with the fresh
+// liquid candidates in place of the bleeding small caps.
+const ROUND34_VARIANTS = [
+  variantCfg("m34_ref", "Reference: majors only, score bar 70, 2x", {
+    ...M32,
+    leverage: 2,
+    universe: MAJORS9,
+  }),
+  variantCfg("m34_s65", "Majors only + score bar lowered to 65 (more trades)", {
+    ...M32,
+    leverage: 2,
+    universe: MAJORS9,
+    min_score: 65,
+  }),
+  variantCfg("m34_s62", "Majors only + score bar lowered to 62 (even more trades)", {
+    ...M32,
+    leverage: 2,
+    universe: MAJORS9,
+    min_score: 62,
+  }),
+  variantCfg("m34_wide_best", "Fresh liquid universe (majors + AVAX/KAS/TAO/SUI/TIA/INJ), 2x", {
+    ...M32,
+    leverage: 2,
+    universe: [...MAJORS_AVAX, "KAS", "TAO", "SUI", "TIA", "INJ"],
+  }),
+];
+
+// Round 35: loosen each quality-stack gate one at a time on the settled
+// majors+AVAX universe, hunting for profitable extra trades.
+const M35 = { ...M32, leverage: 2, universe: MAJORS_AVAX };
+const ROUND35_VARIANTS = [
+  variantCfg("m35_ref", "Reference: majors + AVAX, score 70 stack, 2x", M35),
+  variantCfg("m35_body50", "Conviction loosened to 50%", { ...M35, min_body: 0.5 }),
+  variantCfg("m35_nostoch", "Stochastic agreement removed", { ...M35, stoch_must_agree: false }),
+  variantCfg("m35_norsi", "RSI chase block removed", { ...M35, rsi_chase_block: false }),
+  variantCfg("m35_vol15", "Volume floor lowered to 1.5x", { ...M35, min_vol_ratio: 1.5 }),
+  variantCfg("m35_noband", "Upper volume band removed", { ...M35, max_vol_ratio: 0 }),
+  variantCfg("m35_cool3", "Cooldown halved to 3 bars", { ...M35, cooldown_bars: 3 }),
+];
+
+// Round 36: final check - the settled stack (3R, conviction 50%, majors +
+// AVAX) across the leverage ladder on a fresh data refetch.
+const M36 = { ...M32, min_body: 0.5, universe: MAJORS_AVAX };
+const ROUND36_VARIANTS = [
+  variantCfg("m36_lev1", "The settled margin engine at 1x leverage", { ...M36, leverage: 1 }),
+  variantCfg("m36_lev2", "The settled margin engine at 2x leverage", { ...M36, leverage: 2 }),
+  variantCfg("m36_lev3", "The settled margin engine at 3x leverage", { ...M36, leverage: 3 }),
+];
+
+const MARGIN_ROUNDS = { 29: ROUND29_VARIANTS, 30: ROUND30_VARIANTS, 31: ROUND31_VARIANTS, 32: ROUND32_VARIANTS, 33: ROUND33_VARIANTS, 34: ROUND34_VARIANTS, 35: ROUND35_VARIANTS, 36: ROUND36_VARIANTS };
 
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
@@ -699,16 +790,18 @@ export default async function (req) {
       const variants = MARGIN_ROUNDS[round] || MARGIN_VARIANTS;
       const { coins } = await fetchMarkets();
       const result = await runOptimize(coins, variants, {
-        maxSymbols: 20,
+        maxSymbols: Math.min(Number(body.max_symbols) || 20, 40),
         timeframe: "1h",
-        months: 6,
+        months: Number(body.months) || 6,
+        ...(Number(body.step) ? { step: Number(body.step) } : {}),
+        ...(Array.isArray(body.symbols) && body.symbols.length ? { symbols: body.symbols } : {}),
         marginOnly: true,
       });
       const saved = await base44.asServiceRole.entities.AuditRun
         .create({
           label: round
-            ? `Kraken margin optimizer round ${round} - 6 months, ${result.symbols} leverage pairs`
-            : `Kraken margin backtest - 6 months, ${result.symbols} leverage pairs`,
+            ? `Kraken margin optimizer round ${round} - ${result.days}d, ${result.symbols} leverage pairs`
+            : `Kraken margin backtest - ${result.days}d, ${result.symbols} leverage pairs`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,

@@ -31,6 +31,70 @@ export function krakenPairs() {
   return KRAKEN_PAIRS;
 }
 
+// Kraken's AssetPairs endpoint lists 120 USD-quoted pairs with sell leverage.
+// These are the liquid ones beyond the USDT list, majors and mid-caps first.
+// The margin optimizer's candle history comes from Binance US, so only the
+// symbols the engine's market feed tracks actually resolve - the rest are
+// skipped automatically.
+export const KRAKEN_USD_MARGIN_PAIRS = [
+  { pair: "BCHUSD", symbol: "BCH" },
+  { pair: "AVAXUSD", symbol: "AVAX" },
+  { pair: "UNIUSD", symbol: "UNI" },
+  { pair: "ATOMUSD", symbol: "ATOM" },
+  { pair: "AAVEUSD", symbol: "AAVE" },
+  { pair: "FILUSD", symbol: "FIL" },
+  { pair: "TRXUSD", symbol: "TRX" },
+  { pair: "XETCZUSD", symbol: "ETC" },
+  { pair: "XTZUSD", symbol: "XTZ" },
+  { pair: "GRTUSD", symbol: "GRT" },
+  { pair: "NEARUSD", symbol: "NEAR" },
+  { pair: "FLOWUSD", symbol: "FLOW" },
+  { pair: "RENDERUSD", symbol: "RENDER" },
+  { pair: "INJUSD", symbol: "INJ" },
+  { pair: "SUIUSD", symbol: "SUI" },
+  { pair: "TIAUSD", symbol: "TIA" },
+  { pair: "ARBUSD", symbol: "ARB" },
+  { pair: "OPUSD", symbol: "OP" },
+  { pair: "APTUSD", symbol: "APT" },
+  { pair: "SEIUSD", symbol: "SEI" },
+  { pair: "LDOUSD", symbol: "LDO" },
+  { pair: "PEPEUSD", symbol: "PEPE" },
+  { pair: "SHIBUSD", symbol: "SHIB" },
+  { pair: "FETUSD", symbol: "FET" },
+  { pair: "HBARUSD", symbol: "HBAR" },
+  { pair: "ICPUSD", symbol: "ICP" },
+  { pair: "STXUSD", symbol: "STX" },
+  { pair: "RUNEUSD", symbol: "RUNE" },
+  { pair: "SANDUSD", symbol: "SAND" },
+  { pair: "MANAUSD", symbol: "MANA" },
+  { pair: "CRVUSD", symbol: "CRV" },
+  { pair: "COMPUSD", symbol: "COMP" },
+  { pair: "SNXUSD", symbol: "SNX" },
+  { pair: "WLDUSD", symbol: "WLD" },
+  { pair: "JUPUSD", symbol: "JUP" },
+  { pair: "ONDOUSD", symbol: "ONDO" },
+  { pair: "ENAUSD", symbol: "ENA" },
+  { pair: "TAOUSD", symbol: "TAO" },
+  { pair: "QNTUSD", symbol: "QNT" },
+  { pair: "KASUSD", symbol: "KAS" },
+  { pair: "XXLMZUSD", symbol: "XLM" },
+  { pair: "DYDXUSD", symbol: "DYDX" },
+  { pair: "ENSUSD", symbol: "ENS" },
+  { pair: "WIFUSD", symbol: "WIF" },
+  { pair: "PENGUUSD", symbol: "PENGU" },
+  { pair: "ZKUSD", symbol: "ZK" },
+  { pair: "STRKUSD", symbol: "STRK" },
+  { pair: "IMXUSD", symbol: "IMX" },
+  { pair: "GALAUSD", symbol: "GALA" },
+  { pair: "KAVAUSD", symbol: "KAVA" },
+  { pair: "ZRXUSD", symbol: "ZRX" },
+];
+
+/** Every tracked Kraken margin pair: the USDT list first, then the USD list. */
+export function krakenMarginUniverse() {
+  return [...KRAKEN_PAIRS, ...KRAKEN_USD_MARGIN_PAIRS];
+}
+
 let marginCache = null;
 let marginCacheAt = 0;
 
@@ -45,7 +109,7 @@ export async function fetchKrakenMarginSymbols() {
   const j = await fetchJson(`${KRAKEN_API}/AssetPairs`);
   if (!j || (j.error && j.error.length)) return null;
   const out = [];
-  for (const { pair, symbol } of KRAKEN_PAIRS) {
+  for (const { pair, symbol } of krakenMarginUniverse()) {
     const d = (j.result || {})[pair];
     if (d && (d.status || "online") === "online" && Array.isArray(d.leverage_sell) && d.leverage_sell.length)
       out.push(symbol);

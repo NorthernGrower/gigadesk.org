@@ -6,7 +6,7 @@
 import { fetchCandles, fetchCandlesHistory, chunk } from "./market.ts";
 import { analyzeCoin } from "./strategy.ts";
 import { pickCandidates } from "./scan.ts";
-import { KRAKEN_PAIRS, fetchKrakenCandles, fetchKrakenMarginSymbols } from "./kraken.ts";
+import { KRAKEN_PAIRS, krakenMarginUniverse, fetchKrakenCandles, fetchKrakenMarginSymbols } from "./kraken.ts";
 
 const WARMUP = 300;
 // Bounded indicator lookback for long backtest windows: every series
@@ -480,6 +480,7 @@ export function variantCfg(id, description, over = {}) {
     max_bb_width_low: null,
     min_body: 0,
     entry_hours: null,
+    universe: null,
     margin: false,
     leverage: 1,
     margin_rollover_bars: 4,
@@ -793,11 +794,17 @@ export async function runOptimize(coins, variants, opts = {}) {
   // margin mode: only the pairs Kraken's AssetPairs endpoint lists with sell
   // leverage - the markets a margin account can actually open and short
   const marginSymbols = opts.marginOnly ? await fetchKrakenMarginSymbols() : null;
+  // an explicit symbol list (opts.symbols) overrides the default ranking
+  const wanted = opts.symbols && opts.symbols.length ? new Set(opts.symbols) : null;
   const universe = [];
-  for (const { pair, symbol } of KRAKEN_PAIRS) {
+  const seen = new Set();
+  for (const { pair, symbol } of opts.marginOnly ? krakenMarginUniverse() : KRAKEN_PAIRS) {
+    if (seen.has(symbol)) continue;
+    if (wanted && !wanted.has(symbol)) continue;
     const cap = capMap.get(symbol);
     if (!cap) continue;
     if (marginSymbols && !marginSymbols.has(symbol)) continue;
+    seen.add(symbol);
     universe.push({ ...cap, kraken_pair: pair });
     if (universe.length >= maxSymbols) break;
   }
@@ -832,10 +839,13 @@ export async function runOptimize(coins, variants, opts = {}) {
   const perCoin = {};
   const symbolsUsed = [];
   for (const { coin, candles } of eligible) {
-    const ready = prepSymbol(coin, candles, candles.length - 1, barsPerDay, months > 1 ? 2 : 1);
+    const ready = prepSymbol(coin, candles, candles.length - 1, barsPerDay, opts.step || (months > 1 ? 2 : 1));
     if (!ready) continue;
     symbolsUsed.push(coin.symbol);
     for (const cfg of variants) {
+      // a variant may restrict itself to a symbol subset - used to test
+      // whether widening the margin universe adds or dilutes the edge
+      if (Array.isArray(cfg.universe) && !cfg.universe.includes(coin.symbol)) continue;
       const slot = (slots[cfg.id] = slots[cfg.id] || { trades: [], missed: 0 });
       const sim = simulateCfg(candles, ready.rowsByJ, cfg, btcByTime);
       slot.trades.push(...sim.trades);
