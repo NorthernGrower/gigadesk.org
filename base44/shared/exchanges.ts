@@ -392,19 +392,47 @@ export const KRAKEN_MESSAGES = {
   "EGeneral:Temporary lockout": "Kraken temporarily locked this key after repeated failed attempts — wait about 15 minutes, then reconnect",
 };
 
-export async function krakenSignedCall(cfg, path, extraBody = "") {
-  const nonce = krakenNonce();
-  const body = `nonce=${nonce}${extraBody}`;
-  const sign = await krakenSign(cfg.api_secret, path, String(nonce), body);
-  return callJson(`https://api.kraken.com${path}`, {
-    method: "POST",
-    headers: {
-      "API-Key": cfg.api_key,
-      "API-Sign": sign,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
+// Serialize every signed Kraken call this process makes and space them a
+// little apart: when the user returns after time away the desk fires a burst
+// of signed reads and orders at once, and two landing in the same instant
+// get handed the same nonce (or land inside Kraken's per-key request window)
+// — each rejection counts toward Kraken's 15-minute temporary lockout.
+const KRAKEN_SPACING_MS = 350;
+let krakenChain = Promise.resolve();
+let lastKrakenSentAt = 0;
+export async function withKrakenSlot(task) {
+  const slot = krakenChain.then(async () => {
+    const gap = lastKrakenSentAt + KRAKEN_SPACING_MS - Date.now();
+    if (gap > 0) await new Promise((r) => setTimeout(r, gap));
+    lastKrakenSentAt = Date.now();
   });
+  krakenChain = slot.catch(() => {});
+  await slot;
+  return task();
+}
+
+export async function krakenSignedCall(cfg, path, extraBody = "") {
+  // a nonce-rejected call was refused before Kraken processed it, never
+  // executed, so retrying with a strictly higher nonce is safe
+  for (let attempt = 0; ; attempt++) {
+    const res = await withKrakenSlot(async () => {
+      const nonce = krakenNonce() + attempt * 1000000;
+      const body = `nonce=${nonce}${extraBody}`;
+      const sign = await krakenSign(cfg.api_secret, path, String(nonce), body);
+      return callJson(`https://api.kraken.com${path}`, {
+        method: "POST",
+        headers: {
+          "API-Key": cfg.api_key,
+          "API-Sign": sign,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body,
+      });
+    });
+    const failed = res.data && Array.isArray(res.data.error) ? res.data.error : [];
+    if (failed.includes("EAPI:Invalid nonce") && attempt < 2) continue;
+    return res;
+  }
 }
 
 async function krakenCall(cfg, nonce) {

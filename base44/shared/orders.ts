@@ -1,7 +1,7 @@
 // Market order execution for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every request is bounded by
 // a 10s timeout and refusals are returned as values, never thrown.
-import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, KRAKEN_MESSAGES, fetchMarketConstraints, readAccount } from "./exchanges.ts";
+import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, krakenSignedCall, withKrakenSlot, KRAKEN_MESSAGES, fetchMarketConstraints, readAccount } from "./exchanges.ts";
 import { decryptSecret } from "./crypto.ts";
 import { round, fetchLivePrices } from "./market.ts";
 
@@ -142,17 +142,19 @@ export async function convertFiatToUsd(cfg, { amount, currency }) {
   if (orderMin && vol < orderMin)
     return { ok: false, message: `Convert amount is below the ${orderMin} USDT order minimum` };
   const path = "/0/private/AddOrder";
-  const nonce = String(krakenNonce());
-  const body = `nonce=${nonce}&pair=${pairRow.altname}&type=buy&ordertype=market&volume=${vol}`;
-  const sign = await krakenSign(cfg.api_secret, path, nonce, body);
-  const res = await callJson(`https://api.kraken.com${path}`, {
-    method: "POST",
-    headers: {
-      "API-Key": cfg.api_key,
-      "API-Sign": sign,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
+  const res = await withKrakenSlot(async () => {
+    const nonce = String(krakenNonce());
+    const body = `nonce=${nonce}&pair=${pairRow.altname}&type=buy&ordertype=market&volume=${vol}`;
+    const sign = await krakenSign(cfg.api_secret, path, nonce, body);
+    return callJson(`https://api.kraken.com${path}`, {
+      method: "POST",
+      headers: {
+        "API-Key": cfg.api_key,
+        "API-Sign": sign,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
   });
   const data = res.data || {};
   const failed = Array.isArray(data.error) ? data.error : [];
@@ -398,22 +400,24 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price, validate, margin
   );
   if (!(vol > 0)) return { ok: false, message: "No usable price to size a market order on Kraken" };
   const path = "/0/private/AddOrder";
-  const nonce = String(krakenNonce());
   // Kraken's `type` is the direction (buy/sell) and `ordertype` is market —
   // anything else comes back as EGeneral:Invalid arguments:type
   // a margin order carries a leverage level: that is what lets the account
   // sell an asset it holds none of (opening a short)
   const marginLeverage = margin === true && Number(leverage) > 0 ? Number(leverage) : null;
-  const body = `nonce=${nonce}&pair=${pair}&type=${side}&ordertype=market&volume=${vol}${validate ? "&validate=true" : ""}${marginLeverage ? `&leverage=${marginLeverage}` : ""}`;
-  const sign = await krakenSign(cfg.api_secret, path, nonce, body);
-  const res = await callJson(`https://api.kraken.com${path}`, {
-    method: "POST",
-    headers: {
-      "API-Key": cfg.api_key,
-      "API-Sign": sign,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
+  const res = await withKrakenSlot(async () => {
+    const nonce = String(krakenNonce());
+    const body = `nonce=${nonce}&pair=${pair}&type=${side}&ordertype=market&volume=${vol}${validate ? "&validate=true" : ""}${marginLeverage ? `&leverage=${marginLeverage}` : ""}`;
+    const sign = await krakenSign(cfg.api_secret, path, nonce, body);
+    return callJson(`https://api.kraken.com${path}`, {
+      method: "POST",
+      headers: {
+        "API-Key": cfg.api_key,
+        "API-Sign": sign,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
   });
   const data = res.data || {};
   const failed = Array.isArray(data.error) ? data.error : [];
