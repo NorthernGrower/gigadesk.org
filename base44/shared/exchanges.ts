@@ -400,7 +400,11 @@ export const KRAKEN_MESSAGES = {
 // of signed reads and orders at once, and two landing in the same instant
 // get handed the same nonce (or land inside Kraken's per-key request window)
 // — each rejection counts toward Kraken's 15-minute temporary lockout.
-const KRAKEN_SPACING_MS = 350;
+// Kraken's limiter refills its per-key counter roughly one request every
+// 0.3-1s (tier-dependent) and every rejected call still counts — a fast
+// spacing full of rejected pages spirals into a temporary lockout. 1.5s
+// keeps sustained traffic (the hourly history pull included) under it.
+const KRAKEN_SPACING_MS = 1500;
 let krakenChain = Promise.resolve();
 let lastKrakenSentAt = 0;
 export async function withKrakenSlot(task) {

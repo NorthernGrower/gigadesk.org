@@ -28,7 +28,7 @@
       "trigger_type": "scheduled",
       "events": [],
       "schedule_mode": "recurring",
-      "cron_expression": "1-56/5 * * * *",
+      "cron_expression": "1-59/10 * * * *",
       "one_time_date": null,
       "timezone": "America/Edmonton",
       "interval_value": null,
@@ -40,5 +40,5 @@
     }
   },
   "name": "Balance Saver",
-  "description": "Every 5 minutes: reads Kraken balances and reconciles the live desk's open positions with what the exchange actually holds. Paired with Position Sync (offset) this lands a full sync roughly every 2.5 minutes."
+  "description": "Every 10 minutes: reads Kraken balances and reconciles the live desk's open positions with what the exchange actually holds. Position Sync runs 5 minutes offset, so a full sync still lands every 10 minutes without piling signed calls onto one key."
 }
