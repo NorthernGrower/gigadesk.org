@@ -7,6 +7,7 @@ import CoinAvatar from '@/components/common/CoinAvatar';
 import IndicatorGrid from '@/components/coin/IndicatorGrid';
 import { EmptyState, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
 import { VERDICT_LABEL, ensureBotConfig, getCoinDetail, tradeAction } from '@/lib/market';
 import { fmtDate, fmtPct, fmtPrice, fmtUsd } from '@/lib/format';
@@ -44,6 +45,7 @@ export default function TradeCallCard() {
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [savingHandling, setSavingHandling] = useState(false);
   const [detailFailed, setDetailFailed] = useState(false);
 
   useEffect(() => {
@@ -120,6 +122,30 @@ export default function TradeCallCard() {
     }
   };
 
+  // bot handling: off (manual mode) = the desk leaves the trade alone; on =
+  // the bot manages the sell logic only — stop, target and trailing, never a
+  // sentiment flip or thesis-decay close on a manual buy
+  const handlingOn = trade ? trade.bot_handling !== false : true;
+  const toggleHandling = async (next) => {
+    const prev = trade;
+    setTrade({ ...trade, bot_handling: next });
+    setSavingHandling(true);
+    try {
+      await base44.entities.Trade.update(trade.id, { bot_handling: next });
+      toast({
+        title: next ? 'Bot handling on' : 'Manual mode on',
+        description: next
+          ? "The bot manages this trade's sell logic from the next cycle."
+          : 'The desk leaves this trade alone entirely.',
+      });
+    } catch (err) {
+      setTrade(prev);
+      toast({ title: 'Could not update bot handling', description: err.message, variant: 'destructive' });
+    } finally {
+      setSavingHandling(false);
+    }
+  };
+
   if (loading) return <LoadingBlock label="Building the call card" />;
 
   if (missing || !trade) {
@@ -176,6 +202,11 @@ export default function TradeCallCard() {
             <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
               {trade.mode === 'real' ? 'real money' : 'paper'}
             </span>
+            {trade.manual ? (
+              <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-accent">
+                manual buy
+              </span>
+            ) : null}
             <span
               className={`rounded-full px-1.5 py-0.5 text-[10px] uppercase ${
                 open ? 'bg-accent/15 text-accent' : 'bg-secondary text-muted-foreground'
@@ -221,6 +252,22 @@ export default function TradeCallCard() {
           <Stat label="P&L" value="—" hint={trade.status === 'proposed' ? 'Awaiting approval' : undefined} />
         )}
       </div>
+
+      {open && trade.mode === 'real' ? (
+        <div className="surface mt-2.5 flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0">
+            <p className="font-heading text-sm font-semibold">
+              Bot handling{trade.manual ? ' · manual buy' : ''}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {handlingOn
+                ? 'The bot manages the sell logic only: stop, target and trailing. It never sentiment-sells this trade.'
+                : 'Manual mode — the desk leaves this trade alone entirely. Turn on for stop, target and trailing management.'}
+            </p>
+          </div>
+          <Switch checked={handlingOn} onCheckedChange={toggleHandling} disabled={savingHandling} />
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="space-y-4">

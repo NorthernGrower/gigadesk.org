@@ -83,6 +83,16 @@
       "type": "string",
       "description": "The side and cap tier the bot traded, e.g. long/small; drives its self-learning"
     },
+    "manual": {
+      "type": "boolean",
+      "default": false,
+      "description": "A buy the user placed by hand from the scanner, outside the bot's scan and entry gates; manual buys trade the sell logic only"
+    },
+    "bot_handling": {
+      "type": "boolean",
+      "default": true,
+      "description": "When off (manual mode), the bot leaves this trade alone entirely; when on, the bot manages its sell logic \u2014 stop, target and trailing \u2014 but never sentiment-sells a manual buy"
+    },
     "exchange": {
       "type": "string",
       "enum": [

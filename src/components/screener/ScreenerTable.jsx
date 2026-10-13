@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronsUpDown, Star } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsUpDown, ShoppingBag, Star } from 'lucide-react';
 import CoinAvatar from '@/components/common/CoinAvatar';
 import { EmptyState } from '@/components/common/States';
 import { TIER_LABEL } from '@/lib/market';
@@ -28,7 +28,7 @@ function ScoreBar({ score, side }) {
   );
 }
 
-export default function ScreenerTable({ rows = [], onSelect, onWatch, watchSymbols = [], targetPct = 2 }) {
+export default function ScreenerTable({ rows = [], onSelect, onWatch, onBuy, watchSymbols = [], targetPct = 2 }) {
   const [sortKey, setSortKey] = useState('score');
   const [asc, setAsc] = useState(false);
 
@@ -143,17 +143,30 @@ export default function ScreenerTable({ rows = [], onSelect, onWatch, watchSymbo
                     </div>
                   </td>
                   <td className="px-2 py-2.5 text-right">
-                    <button
-                      type="button"
-                      title={watched ? 'Remove from watchlist' : 'Add to watchlist'}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onWatch(row);
-                      }}
-                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                    >
-                      <Star className={`h-3.5 w-3.5 ${watched ? 'fill-primary text-primary' : ''}`} />
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        title={`Manual buy ${row.symbol}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onBuy(row);
+                        }}
+                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-primary"
+                      >
+                        <ShoppingBag className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title={watched ? 'Remove from watchlist' : 'Add to watchlist'}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onWatch(row);
+                        }}
+                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                      >
+                        <Star className={`h-3.5 w-3.5 ${watched ? 'fill-primary text-primary' : ''}`} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

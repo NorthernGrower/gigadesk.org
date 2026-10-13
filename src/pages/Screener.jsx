@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import FiltersBar from '@/components/screener/FiltersBar';
 import ScreenerTable from '@/components/screener/ScreenerTable';
+import ManualBuyDialog from '@/components/screener/ManualBuyDialog';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { ensureBotConfig, getLastBot, pageItems, scanMarket } from '@/lib/market';
@@ -21,6 +22,8 @@ export default function Screener() {
   const [error, setError] = useState(null);
   const [watchSymbols, setWatchSymbols] = useState([]);
   const [targetPct, setTargetPct] = useState(2);
+  const [buyRow, setBuyRow] = useState(null);
+  const [defaultBuyUsd, setDefaultBuyUsd] = useState(100);
 
   const scan = async (options = {}) => {
     // quiet = the board already shows the last scan, so this is a background refresh
@@ -56,6 +59,8 @@ export default function Screener() {
         if (!alive) return;
         setWatchSymbols(symbols);
         setTargetPct(target);
+        // the manual-buy dialog pre-fills the live desk's fixed order size
+        setDefaultBuyUsd(Number(config.live_rules?.fixed_order_usd ?? config.fixed_order_usd) || 100);
         // revisits render the bot's last scan immediately, then the fresh
         // scan below quietly replaces it with the requested depth
         const cached = getLastBot();
@@ -156,9 +161,11 @@ export default function Screener() {
             rows={rows}
             onSelect={(row) => navigate(`/coin/${row.symbol}`)}
             onWatch={toggleWatch}
+            onBuy={(row) => setBuyRow(row)}
             watchSymbols={watchSymbols}
             targetPct={targetPct}
           />
+          <ManualBuyDialog row={buyRow} defaultUsd={defaultBuyUsd} onClose={() => setBuyRow(null)} />
         </>
       )}
     </div>

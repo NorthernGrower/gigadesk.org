@@ -453,6 +453,9 @@ export default async function (req) {
       // a real fill the user logged by hand is theirs to manage — the bot only
       // touches its own real positions (those carry an exchange order id)
       if ((t.mode || "paper") === "real" && !t.exchange_order_id) continue;
+      // manual mode: a buy the user placed by hand with bot handling off is
+      // theirs alone — no stops, exits or sentiment until handling is turned on
+      if (t.bot_handling === false) continue;
       const price = priceMap.get(t.symbol)?.price ?? null;
       if (!price) continue;
       const side = t.side === "short" ? "short" : "long";
@@ -663,6 +666,9 @@ export default async function (req) {
       await sentimentPass("live", liveView, sentinel.filter((t) => (t.mode || "paper") === "real"));
     }
     for (const t of sentinel) {
+      // manual buys trade the sell logic only: stops, targets and trailing —
+      // never a sentiment flip or a thesis-decay close
+      if (t.manual === true) continue;
       const row = sentimentReads.get(`${(t.mode || "paper") === "real" ? "live" : "paper"}:${t.symbol}`);
       if (!row) continue;
       const side = t.side === "short" ? "short" : "long";

@@ -250,6 +250,11 @@ export async function tradeAction(action, tradeId = '') {
   return unwrap(await base44.functions.invoke('tradeAction', { action, trade_id: tradeId }));
 }
 
+/** A manual buy from the scanner: a real market order, opened in manual mode. */
+export async function manualBuy({ symbol, usd }) {
+  return unwrap(await base44.functions.invoke('manualBuy', { symbol, usd }));
+}
+
 /** Broadcasts a finished bot cycle to every page listening. */
 export function emitBotTick(data) {
   window.dispatchEvent(new CustomEvent('bot:tick', { detail: data }));
