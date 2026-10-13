@@ -34,7 +34,9 @@ async function guardConstraints(cfg, { usd, quantity, price, side, pair }) {
   const m = cons ? cons.get(pair) : null;
   if (!m) return { ok: true };
   if (side === "buy") {
-    const spend = Number(usd) || 0;
+    // a buy can be sized by quote amount or, when closing a margin short, by
+    // the base quantity recorded on the position
+    const spend = Number(usd) || (price && Number(quantity) > 0 ? Number(quantity) * price : 0);
     if (m.minNotional && spend < m.minNotional) {
       return { ok: false, message: `Order of ${round(spend, 2)} is below ${pair}'s minimum order value of ${m.minNotional}` };
     }
@@ -46,7 +48,9 @@ async function guardConstraints(cfg, { usd, quantity, price, side, pair }) {
     }
     return { ok: true, usd: spend };
   }
-  let qty = Number(quantity) || 0;
+  // a margin short open sells a USD amount (no base quantity on hand): the
+  // volume is derived from the price like a buy's
+  let qty = Number(quantity) || (price && Number(usd) > 0 ? Number(usd) / price : 0);
   if (m.qtyStep && m.qtyStep > 0) qty = Math.floor(qty / m.qtyStep) * m.qtyStep;
   if (m.minQty && qty < m.minQty) {
     return { ok: false, message: `Order quantity ${round(qty, 8)} is below ${pair}'s minimum of ${m.minQty}` };
@@ -65,7 +69,11 @@ export async function placeMarketOrder(cfg, paramsIn) {
   // recorded buy quantity, and selling the recorded amount is refused with
   // EOrder:Insufficient funds — stranding the position. Cap the sell to the
   // real holding, minus a small buffer so the fee never overshoots again.
-  if (side === "sell") {
+  // A margin short OPEN also sells without holdings: it is placed as a Kraken
+  // margin order backed by the margin account, not by owned assets, so the
+  // hold cap and dust check below (which are about closing a spot position)
+  // do not apply to it.
+  if (side === "sell" && params.margin !== true) {
     const acct = await readAccount({
       exchange: cfg.exchange,
       testnet: Boolean(cfg.testnet),
@@ -377,12 +385,15 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
 }
 
 // ---- Kraken (HMAC-SHA512 over path + sha256(nonce + body)) ----
-async function krakenOrder(cfg, { symbol, usd, quantity, price, validate }, side, pair, idem) {
+async function krakenOrder(cfg, { symbol, usd, quantity, price, validate, margin, leverage }, side, pair, idem) {
   const px = Number(price) || 0;
   const guard = await guardConstraints(cfg, { usd, quantity, price, side, pair });
   if (!guard.ok) return { ok: false, message: guard.message };
   const vol = trunc(
-    side === "buy" ? (px ? usd / px : 0) : Number(guard.quantity != null ? guard.quantity : quantity) || 0,
+    side === "buy"
+      ? // a short close buys back the recorded base quantity; a spot buy spends quote
+        Number(usd) > 0 ? (px ? usd / px : 0) : Number(quantity) || 0
+      : Number(guard.quantity != null ? guard.quantity : quantity) || 0,
     8,
   );
   if (!(vol > 0)) return { ok: false, message: "No usable price to size a market order on Kraken" };
@@ -390,7 +401,10 @@ async function krakenOrder(cfg, { symbol, usd, quantity, price, validate }, side
   const nonce = String(krakenNonce());
   // Kraken's `type` is the direction (buy/sell) and `ordertype` is market —
   // anything else comes back as EGeneral:Invalid arguments:type
-  const body = `nonce=${nonce}&pair=${pair}&type=${side}&ordertype=market&volume=${vol}${validate ? "&validate=true" : ""}`;
+  // a margin order carries a leverage level: that is what lets the account
+  // sell an asset it holds none of (opening a short)
+  const marginLeverage = margin === true && Number(leverage) > 0 ? Number(leverage) : null;
+  const body = `nonce=${nonce}&pair=${pair}&type=${side}&ordertype=market&volume=${vol}${validate ? "&validate=true" : ""}${marginLeverage ? `&leverage=${marginLeverage}` : ""}`;
   const sign = await krakenSign(cfg.api_secret, path, nonce, body);
   const res = await callJson(`https://api.kraken.com${path}`, {
     method: "POST",

@@ -125,6 +125,9 @@ export default async function (req) {
     // 3R, conviction loosened to 50%, restricted to the tested majors + AVAX
     // universe. Off by default — leverage moves losses as fast as gains.
     const marginOn = config.margin_engine === true;
+    // margin shorts open at this leverage level on Kraken; gains and losses
+    // both scale with it
+    const marginLeverage = Math.max(1, Math.min(5, Number(config.margin_leverage) || 2));
 
     // entity reads cap each page, so a plain read silently missed open trades
     // once the desk held more than a page — the exact window that let already
@@ -268,9 +271,10 @@ export default async function (req) {
             await base44.entities.Trade.update(t.id, extraUpdates);
           return false;
         }
+        // a margin short closes by buying the base quantity back, not selling
         const sell = await placeMarketOrder(managed.conn, {
           symbol: t.symbol,
-          side: "sell",
+          side: side === "short" ? "buy" : "sell",
           quantity: Number(t.quantity) || 0,
         });
         // dust: the exchange can never sell this little — book the close on
@@ -847,11 +851,15 @@ export default async function (req) {
         const rl = plan ? plan.r : atLive(r);
         if (plan && live.conn && liveBudget >= 10 && spendableQuote >= 10) {
           realSizeUsd = plan.size;
+          const isShort = r.side === "short";
           real = await placeMarketOrder(live.conn, {
             symbol: r.symbol,
-            side: "buy",
+            side: isShort ? "sell" : "buy",
             usd: realSizeUsd,
             price: rl.entry,
+            // a live short is a Kraken margin order: the account sells an
+            // asset it holds none of, backed by the margin account
+            ...(isShort ? { margin: true, leverage: marginLeverage } : {}),
           });
           if (!real.ok) {
             await base44.entities.Alert.create({

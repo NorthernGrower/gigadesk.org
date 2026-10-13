@@ -17,7 +17,9 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
   return {
     // the combo stack's tested score bar; styles keep bending sizing, not the bar
     min_score: combo ? 70 : style === "timid" ? 68 : style === "aggressive" ? 58 : 62,
-    allow_shorts: desk === "paper" && config.allow_shorts !== false,
+    // shorts on the live desk are a margin-engine feature: the margin account
+    // can open them without holdings, a spot account cannot
+    allow_shorts: config.allow_shorts !== false && (desk === "paper" || margin),
     combo,
     margin,
     target_r: margin ? 3 : combo ? 4.5 : null,
@@ -27,8 +29,8 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
 
 export function gateReason(row, desk, rules) {
   if ((Number(row.score) || 0) < rules.min_score) return "score under the managed minimum";
-  if (row.side !== "long" && (desk === "live" || !rules.allow_shorts))
-    return desk === "live" ? "short setup (real orders take longs only)" : "shorts are switched off";
+  if (row.side !== "long" && !rules.allow_shorts)
+    return desk === "live" ? "short setup (live desk takes longs only — margin engine off)" : "shorts are switched off";
   const entry = Number(row.entry), stop = Number(row.stop), target = Number(row.target);
   if (![entry, stop, target].every(n => Number.isFinite(n) && n > 0)) return "invalid trade levels";
   const long = row.side === "long";

@@ -75,6 +75,11 @@
       "default": false,
       "description": "The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Leverage moves losses as fast as gains \u2014 off by default"
     },
+    "margin_leverage": {
+      "type": "number",
+      "default": 2,
+      "description": "Leverage level margin-engine shorts open at on Kraken (1-5); gains and losses both scale with it"
+    },
     "starting_balance": {
       "type": "number",
       "default": 10000
