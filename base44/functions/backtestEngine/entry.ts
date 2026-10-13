@@ -729,6 +729,64 @@ const ROUND37_VARIANTS = [
   }),
 ];
 
+// ---------------------------------------------------------------------------
+// SHORT-ONLY OPTIMIZER (round 38): a dedicated short-tuned stack hunt. The
+// reference is the desk's short policy exactly as it gates shorts today
+// (every trending tape allowed, flat tape blocked, full quality stack). Each
+// candidate changes ONE thing for the short leg; a change is only carried
+// forward if it wins consistently in BOTH 6-month blocks.
+// ---------------------------------------------------------------------------
+const S38_REF = {
+  ...COMBO_ENGINE,
+  long_riskoff_only: true,
+  short_riskon_only: false,
+  skip_sideways: true,
+  short_only: true,
+};
+const ROUND38_VARIANTS = [
+  variantCfg("s38_ref", "Reference: the desk's short policy, shorts only", S38_REF),
+  variantCfg("s38_t3", "Shorts + 3R targets", { ...S38_REF, target_r: 3 }),
+  variantCfg("s38_t6", "Shorts + 6R targets (the live combo engine's target)", { ...S38_REF, target_r: 6 }),
+  variantCfg("s38_be05", "Shorts + break-even earlier, at +0.5R", { ...S38_REF, be_stop_r: 0.5 }),
+  variantCfg("s38_norsi", "Shorts + RSI chase block removed (oversold bounces allowed)", {
+    ...S38_REF,
+    rsi_chase_block: false,
+  }),
+  variantCfg("s38_stoch_off", "Shorts + stochastic agreement removed", { ...S38_REF, stoch_must_agree: false }),
+  variantCfg("s38_cool24", "Shorts + 1-day cooldown (more short entries)", { ...S38_REF, cooldown_bars: 24 }),
+  variantCfg("s38_stopatr", "Shorts + stop must clear 1x ATR (no noise-tight stops)", { ...S38_REF, min_stop_atr: 1 }),
+];
+
+// ---------------------------------------------------------------------------
+// SHORT-ONLY OPTIMIZER (round 39): the round-38 winners stacked. Both 6R
+// targets and the RSI-chase removal won consistently in both blocks; this
+// round checks they hold together (interaction), against fresh references
+// of each winner alone.
+// ---------------------------------------------------------------------------
+const S39_NORSI = { ...S38_REF, rsi_chase_block: false };
+const S39_T6 = { ...S38_REF, target_r: 6 };
+const ROUND39_VARIANTS = [
+  variantCfg("s39_norsi", "Reference: shorts, RSI chase block removed (round-38 winner)", S39_NORSI),
+  variantCfg("s39_t6", "Reference: shorts, 6R targets (round-38 winner)", S39_T6),
+  variantCfg("s39_stack", "Winners stacked: RSI chase removed + 6R targets", {
+    ...S38_REF,
+    rsi_chase_block: false,
+    target_r: 6,
+  }),
+  variantCfg("s39_stack_cool24", "Winners stacked + 1-day cooldown", {
+    ...S38_REF,
+    rsi_chase_block: false,
+    target_r: 6,
+    cooldown_bars: 24,
+  }),
+  variantCfg("s39_stack_stoch", "Winners stacked + stochastic agreement removed", {
+    ...S38_REF,
+    rsi_chase_block: false,
+    target_r: 6,
+    stoch_must_agree: false,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -871,6 +929,30 @@ export default async function (req) {
       const saved = await base44.asServiceRole.entities.AuditRun
         .create({
           label: `Short-trade audit - ${result.days}d${body.end_offset_months ? ` -${body.end_offset_months}m offset` : ""}, ${result.symbols} symbols`,
+          ran_at: new Date().toISOString(),
+          timeframe: "1h",
+          window_days: result.days,
+          symbols: result.symbols,
+          results: result,
+        })
+        .catch(() => null);
+      return Response.json({ run_id: saved ? saved.id : null, ...result });
+    }
+
+    // SHORT-ONLY OPTIMIZER (round 38): a dedicated short-tuned stack hunt,
+    // run as two six-month blocks (a backdated second block) - 12-month
+    // single passes exceed the CPU allocation.
+    if (body.mode === "short_opt") {
+      const { coins } = await fetchMarkets();
+      const result = await runOptimize(coins, Number(body.round) >= 39 ? ROUND39_VARIANTS : ROUND38_VARIANTS, {
+        maxSymbols: Math.min(Number(body.max_symbols) || 6, 8),
+        timeframe: "1h",
+        months: Number(body.months) || 6,
+        ...(Number(body.end_offset_months) ? { end_offset_months: Number(body.end_offset_months) } : {}),
+      });
+      const saved = await base44.asServiceRole.entities.AuditRun
+        .create({
+          label: `Short-only optimizer round ${Number(body.round) >= 39 ? 39 : 38} - ${result.days}d${body.end_offset_months ? ` -${body.end_offset_months}m offset` : ""}, ${result.symbols} symbols`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,
