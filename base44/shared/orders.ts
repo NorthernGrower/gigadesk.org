@@ -3,7 +3,7 @@
 // a 10s timeout and refusals are returned as values, never thrown.
 import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, KRAKEN_MESSAGES, fetchMarketConstraints, readAccount } from "./exchanges.ts";
 import { decryptSecret } from "./crypto.ts";
-import { round } from "./market.ts";
+import { round, fetchLivePrices } from "./market.ts";
 
 export const QUOTE_ASSET = { binance_us: "USD", binance: "USDT", bybit: "USDT", kucoin: "USDT", kraken: "USD" };
 
@@ -77,8 +77,26 @@ export async function placeMarketOrder(cfg, paramsIn) {
     const asset = String(params.symbol || "").toUpperCase();
     const held = (acct.balances || []).find((b) => b && b.asset === asset);
     const total = held ? Number(held.total) || 0 : 0;
-    if (!(total > 0)) return { ok: false, message: `The account holds no ${asset} to close` };
-    params = { ...params, quantity: Math.min(Number(params.quantity) || 0, total * 0.995) };
+    const capped = total > 0 ? Math.min(Number(params.quantity) || 0, total * 0.995) : 0;
+    // dust: the account holds less than the pair's minimum sellable amount and
+    // the leftover is worth under a dollar — no exchange order can ever close
+    // this position, so the caller books the close on the desk instead of
+    // stranding it open behind an order the exchange always refuses
+    const pair0 = `${asset}${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
+    const cons = total > 0 ? await fetchMarketConstraints(cfg) : null;
+    const minQty = cons && cons.get(pair0) ? Number(cons.get(pair0).minQty) || 0 : 0;
+    const px =
+      total > 0 && minQty > 0 && capped < minQty
+        ? (await fetchLivePrices([asset])).get(asset) || 0
+        : 0;
+    if (total <= 0 || (minQty > 0 && capped < minQty && total * px < 1))
+      return {
+        ok: false,
+        dust: true,
+        held_qty: round(total, 8),
+        message: `The account holds ${round(total, 8)} ${asset}, below the exchange's minimum sellable amount`,
+      };
+    params = { ...params, quantity: capped };
   }
   // quoteAsset is the funding asset resolved from the account's balances
   // (USD or USDT on Kraken) — orders settle in the pair's quote currency
@@ -176,7 +194,13 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
     // verified fine
     const owned = await base44.asServiceRole.entities.ExchangeConnection
       .filter(
-        { created_by_id: config.created_by_id, status: "connected", allow_trading: true },
+        {
+          created_by_id: config.created_by_id,
+          allow_trading: true,
+          // in a management close the check flag is only a stale snapshot, so
+          // the dead-id fallback may pick a connection a check once flagged
+          ...(manage ? {} : { status: "connected" }),
+        },
         { limit: 2 },
       )
       .catch(() => null);
@@ -209,7 +233,14 @@ export async function resolveLiveConnection(base44, config, opts = {}) {
     balance_usd: stored.balance_usd != null ? Number(stored.balance_usd) : null,
     balance_updated_at: stored.balance_updated_at || null,
   };
-  if (stored.status !== "connected" || stored.allow_trading !== true) {
+  if (stored.allow_trading !== true) {
+    return { conn: null, reason: `${info.label} has trading disabled`, info };
+  }
+  // management (closing real positions) still works on a connection whose last
+  // check failed: the flag is only a stale snapshot, and a close must be able
+  // to attempt the real order — the exchange itself is the final gate. New
+  // entries are gated separately and still require a verified connection.
+  if (stored.status !== "connected" && !manage) {
     return { conn: null, reason: `${info.label} is not verified and enabled for trading`, info };
   }
   return {

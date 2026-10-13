@@ -70,6 +70,7 @@ export default async function (req) {
       let pnlTotal = 0;
       for (const openTrade of closeable) {
         let closePrice = priceOf(openTrade.symbol);
+        let dustNote = "";
         // a bot-placed real position is closed with a real sell order; a
         // refused order leaves it open and raises an alert
         if (openTrade.mode === "real" && openTrade.exchange_order_id) {
@@ -90,7 +91,9 @@ export default async function (req) {
             side: "sell",
             quantity: Number(openTrade.quantity) || 0,
           });
-          if (!sell.ok) {
+          // dust: the exchange can never sell this little — book the close on
+          // the desk without an order instead of stranding the position
+          if (!sell.ok && !sell.dust) {
             await base44.entities.Alert.create({
               symbol: openTrade.symbol,
               title: `Could not close ${openTrade.symbol} on ${live.conn.label}`,
@@ -102,9 +105,15 @@ export default async function (req) {
             });
             continue;
           }
-          if (sell.avg_price) closePrice = sell.avg_price;
+          if (sell.dust) {
+            dustNote = `The exchange holds ${sell.held_qty} ${openTrade.symbol}, below its minimum sellable amount — closed here without an order.`;
+          } else if (sell.avg_price) closePrice = sell.avg_price;
         }
         const closed = closingValues(openTrade, closePrice);
+        if (dustNote) {
+          closed.alert.message = `${closed.alert.message} ${dustNote}`;
+          closed.alert.severity = "warning";
+        }
         await base44.entities.Trade.update(openTrade.id, closed.update);
         if ((openTrade.mode || "paper") === "paper") cashDelta += closed.size + closed.pnl;
         pnlTotal += closed.pnl;
@@ -250,6 +259,7 @@ export default async function (req) {
         return Response.json({ error: "No live price for this coin right now" }, { status: 502 });
       }
       let closePrice = price;
+      let dustNote = "";
       // closing a bot-placed real position sends a real sell order first
       if (trade.mode === "real" && trade.exchange_order_id) {
         const live = await resolveLiveConnection(base44, config, { manage: true });
@@ -259,12 +269,22 @@ export default async function (req) {
           side: "sell",
           quantity: Number(trade.quantity) || 0,
         });
-        if (!sell.ok) {
+        // dust: the exchange can never sell this little — book the close on
+        // the desk without an order instead of stranding the position
+        if (!sell.ok && !sell.dust) {
           return Response.json({ error: `The exchange refused the close: ${sell.message}` }, { status: 502 });
         }
-        if (sell.avg_price) closePrice = sell.avg_price;
+        if (sell.dust) {
+          dustNote = `The exchange holds ${sell.held_qty} ${trade.symbol}, below its minimum sellable amount — closed here without an order.`;
+        } else if (sell.avg_price) {
+          closePrice = sell.avg_price;
+        }
       }
       const closed = closingValues(trade, closePrice);
+      if (dustNote) {
+        closed.alert.message = `${closed.alert.message} ${dustNote}`;
+        closed.alert.severity = "warning";
+      }
       await base44.entities.Trade.update(tradeId, closed.update);
       if (isPaper && config) {
         await base44.entities.BotConfig.update(config.id, {

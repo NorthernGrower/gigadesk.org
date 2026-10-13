@@ -162,6 +162,12 @@ export default async function (req) {
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
+    // a check can flag a key (temporary lockout, a revoked permission) without
+    // the key being unusable — management still attempts real orders through
+    // it, but new live entries keep requiring a verified, trading-enabled
+    // connection, so flagged keys never fire fresh buys
+    const liveVerified =
+      !!managed.info && managed.info.status === "connected" && managed.info.allow_trading === true;
     // real orders settle in the exchange's native quote currency (USD on
     // Kraken), so fiat held in another currency — however it converts for
     // display — can never fund an order. Real sizing reads the native quote
@@ -262,7 +268,9 @@ export default async function (req) {
           side: "sell",
           quantity: Number(t.quantity) || 0,
         });
-        if (!sell.ok) {
+        // dust: the exchange can never sell this little — book the close on
+        // the desk without an order instead of stranding the position
+        if (!sell.ok && !sell.dust) {
           await base44.entities.Alert.create({
             symbol: t.symbol,
             title: `Could not close ${t.symbol} on ${managed.conn.label}`,
@@ -304,13 +312,16 @@ export default async function (req) {
         exit_reason: reason,
       });
       const meta = alertFor ? alertFor(pnl, pnlPct) : {};
+      const dustNote = sell && sell.dust
+        ? `The exchange holds ${sell.held_qty} ${t.symbol}, below its minimum sellable amount — closed on the desk without an order. `
+        : "";
       await base44.entities.Alert.create({
         symbol: t.symbol,
         title: `${t.symbol} closed ${pnl >= 0 ? "in profit" : "at a loss"} (${round(pnlPct)}%)`,
-        message: meta.message || "",
+        message: dustNote + (meta.message || ""),
         mode: (t.mode || "paper") === "real" ? "live" : "paper",
         kind: meta.kind || "bot_close",
-        severity: pnl >= 0 ? "success" : "danger",
+        severity: dustNote ? "warning" : pnl >= 0 ? "success" : "danger",
         trade_id: t.id,
       });
       // remember the call: its pattern now carries this result into future scans
@@ -551,7 +562,8 @@ export default async function (req) {
     let scanLog = null;
 
     const scanGateOpen =
-      paperOpenCount < paperMaxOpen || (live.conn != null && liveOpenCount < liveMaxOpen);
+      paperOpenCount < paperMaxOpen ||
+      (live.conn != null && liveVerified && liveOpenCount < liveMaxOpen);
 
     if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight && (dryRun || claimConfirmed)) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
@@ -683,7 +695,7 @@ export default async function (req) {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         return !blocked.has(r.symbol) && entryGate(r, desk) === null;
       };
-      const liveWanted = live.conn && !isBackedOff(connRow)
+      const liveWanted = live.conn && liveVerified && !isBackedOff(connRow)
         ? tradable
             .filter((r) => qualifies(r, "live"))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
@@ -733,7 +745,7 @@ export default async function (req) {
       // old pre-claim starved the paper desk of every qualifying setup the
       // moment live trading was ready but the budget was small.
       const livePlans = [];
-      if (live.conn && !isBackedOff(connRow) && liveBudget >= 10 && spendableQuote >= 10) {
+      if (live.conn && liveVerified && !isBackedOff(connRow) && liveBudget >= 10 && spendableQuote >= 10) {
         let simBudget = liveBudget;
         let simQuote = quoteLeft;
         for (const r of liveWanted) {
@@ -771,7 +783,7 @@ export default async function (req) {
           liveBudget -= size;
         }
         return Response.json({ dry_run: true, mode: config.mode, scanned: board.scannedCount,
-          live: { entry_ready: live.conn != null && !isBackedOff(connRow), reason: live.reason,
+          live: {         entry_ready: live.conn != null && liveVerified && !isBackedOff(connRow), reason: live.reason,
             spendable_quote: spendableQuote, budget_cap: liveBudgetCap, planned: plans },
           paper: { qualifying: paperWanted.filter(r => !stillOpen.some(t => t.symbol === r.symbol))
             .map(r => ({ symbol: r.symbol, side: r.side, score: r.score })) },
@@ -971,7 +983,7 @@ export default async function (req) {
     }
 
     if (dryRun) return Response.json({ dry_run: true, mode: config.mode, scanned: 0,
-      live: { entry_ready: live.conn != null && !isBackedOff(connRow), reason: live.reason, planned: [] },
+      live: {         entry_ready: live.conn != null && liveVerified && !isBackedOff(connRow), reason: live.reason, planned: [] },
       paper: { qualifying: [] }, reason: config.mode === "off" ? "Signals only" : "No open position slots" });
 
     // rule-lock alerts: one warning per desk per 6 hours when the desk's own
@@ -1327,7 +1339,7 @@ export default async function (req) {
       live: {
         enabled: config.real_orders_enabled === true,
         paused: config.real_orders_enabled !== true,
-        entry_ready: config.real_orders_enabled === true && live.conn != null,
+        entry_ready: config.real_orders_enabled === true && live.conn != null && liveVerified,
         connection: managed.info
           ? {
               label: managed.info.label,
