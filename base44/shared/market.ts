@@ -294,14 +294,16 @@ export async function fetchCandles(symbol, interval = "1h", limit = 300) {
  * public kline endpoint allows this freely). Historical bars never change
  * once closed, so the assembled series is cached for ten minutes.
  */
-export async function fetchCandlesHistory(symbol, interval = "1h", months = 6) {
-  const key = `hist:${symbol}:${interval}:${months}`;
+export async function fetchCandlesHistory(symbol, interval = "1h", months = 6, endOffsetMonths = 0) {
+  const key = `hist:${symbol}:${interval}:${months}:${endOffsetMonths}`;
   const cached = cacheGet(key);
   if (cached) return cached;
 
-  const startMs = Date.now() - months * 30 * 24 * 3600 * 1000;
+  // an end offset backdates the window: 6 months ending 6 months ago is the
+  // earlier half of a 12-month test, run in two blocks to bound CPU
+  const endMs = Date.now() - endOffsetMonths * 30 * 24 * 3600 * 1000;
+  const startMs = endMs - months * 30 * 24 * 3600 * 1000;
   const pages = [];
-  let endMs = Date.now();
   for (let page = 0; page < 12; page++) {
     let rows = null;
     try {

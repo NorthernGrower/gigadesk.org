@@ -292,6 +292,7 @@ function metricsFor(rawTrades, missed) {
     trades: list.length,
     win_rate_pct: list.length ? r1((list.filter((t) => t.net_pct > 0).length / list.length) * 100) : 0,
     avg_net_pct: list.length ? r2(list.reduce((a, t) => a + t.net_pct, 0) / list.length) : 0,
+    net_usd: r2(list.reduce((a, t) => a + (t.pnl_usd || 0), 0)),
   });
   const bucketOf = (t) => (t.hold_bars < 12 ? "under_12h" : t.hold_bars < 24 ? "h_12_to_24" : "over_24h");
   const duration = {};
@@ -300,6 +301,8 @@ function metricsFor(rawTrades, missed) {
   const regimes = {};
   for (const key of ["risk_on", "sideways", "risk_off", "unknown"])
     regimes[key] = agg(trades.filter((t) => (t.regime || "unknown") === key));
+  const sides = {};
+  for (const key of ["long", "short"]) sides[key] = agg(trades.filter((t) => t.side === key));
   const exits = {};
   for (const t of trades) exits[t.reason] = (exits[t.reason] || 0) + 1;
   return {
@@ -452,6 +455,12 @@ export function variantCfg(id, description, over = {}) {
     max_stop_pct: 0,
     skip_riskon_long: false,
     skip_sideways_long: false,
+    // the live combo gate's exact tape rules, one knob per side: longs trade
+    // only a risk-off BTC tape, shorts only a risk-on one
+    long_riskoff_only: false,
+    short_riskon_only: false,
+    // with skip_sideways on, apply the flat-tape skip to longs only
+    flat_skip_longs_only: false,
     cooldown_bars: 6,
     target_r: null,
     be_stop_r: null,
@@ -738,19 +747,28 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
       // regime gates: BTC's 24h tape at entry time. Risk-on longs measured the
       // weakest in every round - a moon-chasing tape is where this engine's
       // entries are least reliable - and sideways longs second weakest.
-      if (row.side === "long" && (cfg.skip_riskon_long || cfg.skip_sideways_long)) {
-        const regime = regimeLabel(btcByTime.get(bar.t));
-        if (
-          (cfg.skip_riskon_long && regime === "risk_on") ||
-          (cfg.skip_sideways_long && regime === "sideways")
-        ) {
-          missed += 1;
-          continue;
-        }
+      const regime = regimeLabel(btcByTime.get(bar.t));
+      if (
+        row.side === "long" &&
+        ((cfg.skip_riskon_long && regime === "risk_on") ||
+          (cfg.skip_sideways_long && regime === "sideways") ||
+          (cfg.long_riskoff_only && regime !== "risk_off"))
+      ) {
+        missed += 1;
+        continue;
       }
-      // a flat BTC tape is where this engine's entries win least, on either
-      // side: skip every trade opened into it
-      if (cfg.skip_sideways && regimeLabel(btcByTime.get(bar.t)) === "sideways") {
+      // the live gate for shorts: a short only trades a risk-on BTC tape
+      if (row.side === "short" && cfg.short_riskon_only && regime !== "risk_on") {
+        missed += 1;
+        continue;
+      }
+      // a flat BTC tape is where this engine's entries win least: skip every
+      // trade opened into it, or longs only when the variant says so
+      if (
+        cfg.skip_sideways &&
+        regime === "sideways" &&
+        !(cfg.flat_skip_longs_only && row.side === "short")
+      ) {
         missed += 1;
         continue;
       }
