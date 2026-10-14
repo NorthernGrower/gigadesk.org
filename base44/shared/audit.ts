@@ -305,6 +305,9 @@ function metricsFor(rawTrades, missed) {
   for (const key of ["long", "short"]) sides[key] = agg(trades.filter((t) => t.side === key));
   const exits = {};
   for (const t of trades) exits[t.reason] = (exits[t.reason] || 0) + 1;
+  // flat sales: trades booked within half a point of zero after costs —
+  // the cohort the desk burns slot-time on for nothing
+  const flatSales = trades.filter((t) => Math.abs(t.net_pct) <= 0.5);
   return {
     trades: n,
     wins: winners.length,
@@ -326,6 +329,8 @@ function metricsFor(rawTrades, missed) {
     regimes,
     sides,
     exits,
+    flat_sales: flatSales.length,
+    flat_pct: n ? r1((flatSales.length / n) * 100) : 0,
     false_signals_stopped_out: exits.stop || 0,
     missed_opportunities: missed,
   };
@@ -465,6 +470,10 @@ export function variantCfg(id, description, over = {}) {
     cooldown_bars: 6,
     target_r: null,
     be_stop_r: null,
+    // where the break-even stop parks: 0.05% (dead-even, the historic
+    // behavior) by default; a positive floor sells the runner at a small
+    // gain instead of flat, covering the round-trip cost
+    be_floor_pct: 0.05,
     trail_r: null,
     // the live desk's own percent trailing: stop follows the best price once
     // the trade is up by trail_trigger_pct, trail_distance_pct behind it
@@ -685,7 +694,8 @@ function simulateCfg(candles, rowsByJ, cfg, btcByTime) {
         const prevClose = candles[j - 1].c;
         const gainR = long ? (prevClose - pos.entry) / pos.unit : (pos.entry - prevClose) / pos.unit;
         if (cfg.be_stop_r != null && gainR >= cfg.be_stop_r) {
-          const be = long ? pos.entry * 1.0005 : pos.entry * 0.9995;
+          const floor = Number(cfg.be_floor_pct) || 0.05;
+          const be = long ? pos.entry * (1 + floor / 100) : pos.entry * (1 - floor / 100);
           pos.stop = long ? Math.max(pos.stop, be) : Math.min(pos.stop, be);
         }
         if (cfg.trail_r != null && gainR >= cfg.trail_r) {

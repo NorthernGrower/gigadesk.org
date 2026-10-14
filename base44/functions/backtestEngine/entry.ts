@@ -787,6 +787,51 @@ const ROUND39_VARIANTS = [
   }),
 ];
 
+// ---------------------------------------------------------------------------
+// FLAT-SALE REDUCTION (round 40): the desk's complaint — coins booked within
+// half a point of zero after costs. The champion's main flat-sale source is
+// its break-even runner stop: every trade that reaches +1.2R then drifts
+// back fills at dead-even (0.05%), minus the round trip = a flat sale. Each
+// candidate changes only where that stop parks or when it arms.
+// ---------------------------------------------------------------------------
+// The journal's flat-sale cohort is the underwater-stall time cut (41 of the
+// bot's flat bookings) — the champion itself carries no time exit, so the
+// candidates test every way of keeping or softening that cut, plus where the
+// break-even stop parks (a BE fill minus the round trip is its own flat sale).
+const ROUND40_VARIANTS = [
+  variantCfg("r40_ref", "Reference: the combined champion as it runs today (no time exit)", COMBO_ENGINE),
+  variantCfg("r40_u24", "Champion + underwater stalls cut after 24h (the live desk's stagnant rule)", {
+    ...COMBO_ENGINE,
+    time_underwater_bars: 24,
+  }),
+  variantCfg("r40_u48", "Champion + underwater stalls cut after 48h", {
+    ...COMBO_ENGINE,
+    time_underwater_bars: 48,
+  }),
+  variantCfg("r40_u72", "Champion + underwater stalls cut after 72h", {
+    ...COMBO_ENGINE,
+    time_underwater_bars: 72,
+  }),
+  variantCfg("r40_u24_floor06", "24h underwater cut + break-even stop parked at +0.6%", {
+    ...COMBO_ENGINE,
+    time_underwater_bars: 24,
+    be_floor_pct: 0.6,
+  }),
+  variantCfg("r40_u48_floor10", "48h underwater cut + break-even stop parked at +1.0%", {
+    ...COMBO_ENGINE,
+    time_underwater_bars: 48,
+    be_floor_pct: 1,
+  }),
+  variantCfg("r40_befloor06", "Break-even stop parked at +0.6% (above the round-trip cost)", {
+    ...COMBO_ENGINE,
+    be_floor_pct: 0.6,
+  }),
+  variantCfg("r40_nobe", "Break-even removed (control: nothing stops at even)", {
+    ...COMBO_ENGINE,
+    be_stop_r: null,
+  }),
+];
+
 const FEES_PCT = 0.2; // round-trip spot fees, charged on every simulated trade
 
 /**
@@ -953,6 +998,31 @@ export default async function (req) {
       const saved = await base44.asServiceRole.entities.AuditRun
         .create({
           label: `Short-only optimizer round ${Number(body.round) >= 39 ? 39 : 38} - ${result.days}d${body.end_offset_months ? ` -${body.end_offset_months}m offset` : ""}, ${result.symbols} symbols`,
+          ran_at: new Date().toISOString(),
+          timeframe: "1h",
+          window_days: result.days,
+          symbols: result.symbols,
+          results: result,
+        })
+        .catch(() => null);
+      return Response.json({ run_id: saved ? saved.id : null, ...result });
+    }
+
+    // FLAT-SALE REDUCTION (round 40): break-even stop placement candidates
+    // against the combined champion, run as two six-month blocks (a
+    // backdated second block) - 12-month single passes exceed the CPU
+    // allocation. A candidate is accepted only if it wins in BOTH blocks.
+    if (body.mode === "flat_opt") {
+      const { coins } = await fetchMarkets();
+      const result = await runOptimize(coins, ROUND40_VARIANTS, {
+        maxSymbols: Math.min(Number(body.max_symbols) || 16, 20),
+        timeframe: "1h",
+        months: Number(body.months) || 6,
+        ...(Number(body.end_offset_months) ? { end_offset_months: Number(body.end_offset_months) } : {}),
+      });
+      const saved = await base44.asServiceRole.entities.AuditRun
+        .create({
+          label: `Flat-sale optimizer round 40 - ${result.days}d${body.end_offset_months ? ` -${body.end_offset_months}m offset` : ""}, ${result.symbols} symbols`,
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           window_days: result.days,
