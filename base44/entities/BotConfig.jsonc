@@ -24,7 +24,7 @@
     "live_rules": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Rules that govern live trading only \u2014 sizing, slots, score bar, trailing, cooldown and the live budget. The paper desk trades by the desk-level rules"
+      "description": "Rules that govern live trading only \u2014 sizing, slots, score bar, trailing, cooldown, pyramiding, engines and the live budget. Fully separate from the paper rules: a live rule never falls back to a paper value, only to its own live default"
     },
     "profit_mode": {
       "type": "string",

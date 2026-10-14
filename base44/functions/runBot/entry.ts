@@ -8,6 +8,7 @@ import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
+import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 
 const DEFAULT_CONFIG = {
@@ -73,21 +74,15 @@ export default async function (req) {
     if (!config && dryRun) return Response.json({ error: "Save bot rules before checking entries" }, { status: 400 });
     if (!config) config = await base44.entities.BotConfig.create(DEFAULT_CONFIG);
 
-    // Live and paper desks keep separate rules: the paper rules stay on the
-    // config itself, the live rules sit in live_rules and fall back to the
-    // paper value when a live rule was never set. Everything the live leg
-    // decides — sizing, slots, score bar, trailing, cooldown, budget —
-    // reads these, never the paper rules.
+    // fully separate desk rules: the live desk reads only its own saved
+    // live_rules and the standalone live defaults (deskRules) — a paper
+    // value is never a fallback, so changing the paper desk can never move
+    // the live one, and the other way around
     const LR = config.live_rules || {};
-    const lrVal = (key, fb) => (LR[key] != null ? LR[key] : config[key] != null ? config[key] : fb);
+    const lrVal = (key, fb) => liveRule(LR, key, fb);
     const liveConfigView = { ...config, real_connection_id: lrVal("real_connection_id", "") || "" };
-    // fully separate desk rules: the live desk reads its settings from
-    // live_rules (falling back to the config value only where a live rule
-    // was never set), the paper desk reads the config itself
     const deskView = (desk) =>
-      desk === "live"
-        ? { ...config, ...Object.fromEntries(Object.entries(LR).filter(([, v]) => v != null)) }
-        : config;
+      desk === "live" ? liveRulesView(config) : config;
     const liveView = deskView("live");
     const paperView = deskView("paper");
     // per-desk engine stack: engine flags and the target placement each desk
@@ -1419,7 +1414,7 @@ export default async function (req) {
     // exchange balance, saved balance when the live read failed) plus the
     // best and worst closed real trades of the day, so the desk can render
     // its progress and day movers without a second read
-    const liveDayPct = Number(config.live_rules?.daily_target_pct ?? config.daily_target_pct) || 2;
+    const liveDayPct = Number(lrVal("daily_target_pct", 2)) || 2;
     const liveGoalBase =
       exchangeBalance != null
         ? exchangeBalance

@@ -4,6 +4,7 @@ import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts"
 import { readAccount, pickFundingQuote, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
 import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
 import { recordLesson } from "../../shared/learn.ts";
+import { liveRule } from "../../shared/deskRules.ts";
 
 /** Exit maths shared by the single close and the close-everything action. */
 function closingValues(trade, price) {
@@ -197,13 +198,13 @@ export default async function (req) {
           );
         }
         const LR = config.live_rules || {};
-        const liveRiskPct = Math.min(25, Number(LR.risk_per_trade_pct ?? config.risk_per_trade_pct ?? 4) || 4);
+        const liveRiskPct = Math.min(25, Number(liveRule(LR, "risk_per_trade_pct", 4)) || 4);
         // the same sizing the bot entries use: risked between entry and stop,
         // a fee buffer under the spendable balance, and at or above the
         // pair's exchange minimum so Kraken accepts the volume
         const constraints = await fetchMarketConstraints(live.conn);
-        const stop = Number(trade.stop_price) || entry * (1 - (Number(config.default_stop_pct) || 2.5) / 100);
-        const capUsd = Number(LR.live_cap_usd ?? config.live_cap_usd ?? 0) || 0;
+        const stop = Number(trade.stop_price) || entry * (1 - (Number(liveRule(LR, "default_stop_pct", 2.5)) || 2.5) / 100);
+        const capUsd = Number(liveRule(LR, "live_cap_usd", 0)) || 0;
         const openReal = asArray(
           await base44.entities.Trade.filter({ status: "open", mode: "real" }, { limit: 200 }),
         )

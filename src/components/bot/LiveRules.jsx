@@ -23,33 +23,35 @@ export default function LiveRules({ config, onSaved }) {
   const [saving, setSaving] = useState(null);
   const [connections, setConnections] = useState([]);
 
+  // live rules read only their own saved values — never a paper value. A
+  // rule never saved shows and runs on its own live default.
   const fromConfig = (c) => {
     const lr = c?.live_rules || {};
     return {
       real_orders_enabled: c?.real_orders_enabled ?? false,
       real_connection_id: lr.real_connection_id || c?.real_connection_id || '',
-      live_cap_usd: lr.live_cap_usd ?? c?.live_cap_usd ?? 0,
+      live_cap_usd: lr.live_cap_usd ?? 0,
       score_bar: lr.score_bar ?? 70,
-      risk_per_trade_pct: lr.risk_per_trade_pct ?? c?.risk_per_trade_pct ?? 4,
-      max_open_positions: lr.max_open_positions ?? c?.max_open_positions ?? 8,
-      daily_target_pct: lr.daily_target_pct ?? c?.daily_target_pct ?? 2,
-      cooldown_minutes: lr.cooldown_minutes ?? c?.cooldown_minutes ?? 120,
-      trailing_stop: lr.trailing_stop ?? c?.trailing_stop ?? true,
-      trailing_trigger_pct: lr.trailing_trigger_pct ?? c?.trailing_trigger_pct ?? 3,
-      trailing_distance_pct: lr.trailing_distance_pct ?? c?.trailing_distance_pct ?? 1.5,
-      trading_style: lr.trading_style ?? c?.trading_style ?? 'mild',
-      timeframe: lr.timeframe ?? c?.timeframe ?? '1h',
-      market_cap_scope: lr.market_cap_scope ?? c?.market_cap_scope ?? 'all',
-      sentiment_watch: lr.sentiment_watch ?? c?.sentiment_watch ?? true,
-      confluence_v2: lr.confluence_v2 ?? (c?.confluence_v2 !== false),
-      engine_v2: lr.engine_v2 ?? (c?.engine_v2 !== false),
-      champion_engine: lr.champion_engine ?? (c?.champion_engine !== false),
-      btc_gate: lr.btc_gate ?? (c?.btc_gate !== false),
+      risk_per_trade_pct: lr.risk_per_trade_pct ?? 4,
+      max_open_positions: lr.max_open_positions ?? 8,
+      daily_target_pct: lr.daily_target_pct ?? 2,
+      cooldown_minutes: lr.cooldown_minutes ?? 120,
+      trailing_stop: lr.trailing_stop ?? true,
+      trailing_trigger_pct: lr.trailing_trigger_pct ?? 3,
+      trailing_distance_pct: lr.trailing_distance_pct ?? 1.5,
+      trading_style: lr.trading_style ?? 'mild',
+      timeframe: lr.timeframe ?? '1h',
+      market_cap_scope: lr.market_cap_scope ?? 'all',
+      sentiment_watch: lr.sentiment_watch ?? true,
+      confluence_v2: lr.confluence_v2 ?? true,
+      engine_v2: lr.engine_v2 ?? true,
+      champion_engine: lr.champion_engine ?? true,
+      btc_gate: lr.btc_gate ?? true,
       margin_engine: lr.margin_engine === true,
-      margin_leverage: lr.margin_leverage ?? c?.margin_leverage ?? 2,
-      max_trade_loss_pct: lr.max_trade_loss_pct ?? c?.max_trade_loss_pct ?? 20,
+      margin_leverage: lr.margin_leverage ?? 2,
+      max_trade_loss_pct: lr.max_trade_loss_pct ?? 20,
       pyramid: lr.pyramid === true,
-      pyramid_trigger_pct: lr.pyramid_trigger_pct ?? c?.pyramid_trigger_pct ?? 1.5,
+      pyramid_trigger_pct: lr.pyramid_trigger_pct ?? 1.5,
     };
   };
   const [live, setLive] = useState(() => fromConfig(config));

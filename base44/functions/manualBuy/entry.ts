@@ -3,6 +3,7 @@ import { fetchLivePrices, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, pickFundingQuote, fetchMarketConstraints, fetchListedSymbols, isBackedOff } from "../../shared/exchanges.ts";
 import { entryMinimum } from "../../shared/entryRules.ts";
+import { liveRule } from "../../shared/deskRules.ts";
 
 /**
  * A manual buy from the scanner: a real market order on the connected
@@ -108,7 +109,7 @@ export default async function (req) {
     // the stop and target sit at the live desk's own stop rule, so turning
     // bot handling on later hands the trade sensible sell logic
     const LR = config.live_rules || {};
-    const stopPct = Math.min(50, Number(LR.default_stop_pct ?? config.default_stop_pct ?? 2.5)) || 2.5;
+    const stopPct = Math.min(50, Number(liveRule(LR, "default_stop_pct", 2.5))) || 2.5;
     const stop = round(avg * (1 - stopPct / 100), 8);
     const targetR = 2.5;
     const target = round(avg + (avg - stop) * targetR, 8);

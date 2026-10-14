@@ -3,6 +3,7 @@ import { readAccount, accountValueUsd, isBackedOff, backoffUntil, balanceJustRea
 import { decryptSecret } from '../../shared/crypto.ts';
 import { syncExchangePositions } from '../../shared/reconcile.ts';
 import { asArray } from '../../shared/market.ts';
+import { liveRule } from '../../shared/deskRules.ts';
 
 // Refreshes every connected exchange's quote balance and stores it on the
 // connection, so the desk always has a saved balance to show even when a
@@ -97,8 +98,8 @@ export default async function (req) {
               account.balances,
               {
               ownerId: conn.created_by_id,
-              stopPct: rules ? (rules.live_rules?.default_stop_pct ?? rules.default_stop_pct) : undefined,
-              targetR: rules && rules.engine_v2 !== false && rules.champion_engine !== false ? 2.5 : 0,
+              stopPct: rules ? Number(liveRule(rules.live_rules, "default_stop_pct", 2.5)) : undefined,
+              targetR: rules && (liveRule(rules.live_rules, "engine_v2", true)) !== false && (liveRule(rules.live_rules, "champion_engine", true)) !== false ? 2.5 : 0,
             });
           } catch (e) {
             wallet_sync = { reason: (e && e.message) || 'sync failed' };

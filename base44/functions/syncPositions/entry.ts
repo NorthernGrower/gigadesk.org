@@ -3,6 +3,7 @@ import { resolveLiveConnection } from "../../shared/orders.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { readAccount, isBackedOff } from "../../shared/exchanges.ts";
 import { asArray } from "../../shared/market.ts";
+import { liveRule } from "../../shared/deskRules.ts";
 
 // On-demand wallet sync: reads the connected exchange's wallet and reconciles
 // the live desk's positions with it (imports untracked holdings, closes sold
@@ -54,8 +55,8 @@ export default async function (req) {
 
     const result = await syncExchangePositions(base44, managed.conn, balances, {
       ownerId: config.created_by_id || user.id,
-      stopPct: config.live_rules?.default_stop_pct ?? config.default_stop_pct,
-      targetR: config.engine_v2 !== false && config.champion_engine !== false ? 2.5 : 0,
+      stopPct: Number(liveRule(config.live_rules, "default_stop_pct", 2.5)),
+      targetR: liveRule(config.live_rules, "engine_v2", true) !== false && liveRule(config.live_rules, "champion_engine", true) !== false ? 2.5 : 0,
     });
     return Response.json(result);
   } catch (error) {
