@@ -86,7 +86,7 @@ export default function TradeTicket({ snapshot, onOpened }) {
   return (
     <div className="surface space-y-3 p-4">
       <div className="flex items-center justify-between">
-        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Paper ticket</p>
+        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Manual buy</p>
         <div className="flex items-center gap-1 rounded-xl border border-border/70 bg-secondary/40 p-0.5">
           <button
             type="button"
