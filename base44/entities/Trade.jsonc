@@ -64,6 +64,11 @@
       "default": false,
       "description": "Set once the 3R scale-out has booked half the position; the runner keeps its target with its stop at break-even"
     },
+    "adds": {
+      "type": "number",
+      "default": 0,
+      "description": "Pyramiding: how many add-on legs have joined the opening position (position max is twice the opening size, two adds)"
+    },
     "peak_price": {
       "type": "number"
     },

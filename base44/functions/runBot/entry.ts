@@ -37,6 +37,8 @@ const DEFAULT_CONFIG = {
   trading_style: "mild",
   profit_mode: "compound",
   max_trade_loss_pct: 20,
+  pyramid: false,
+  pyramid_trigger_pct: 1.5,
   combo_engine: true,
   margin_engine: false,
   sentiment_watch: true,
@@ -448,7 +450,7 @@ export default async function (req) {
       const price = priceMap.get(t.symbol)?.price ?? null;
       if (!price) continue;
       const side = t.side === "short" ? "short" : "long";
-      const entry = Number(t.entry_price) || 0;
+      let entry = Number(t.entry_price) || 0;
       if (!entry) continue;
       // each position follows its own desk's rules: real positions are live-
       // desk trades, everything else is paper
@@ -556,6 +558,80 @@ export default async function (req) {
         }));
         if (!ok) continue;
       } else {
+        // pyramiding: a desk that opts in adds to its winners. Once a trade
+        // is up by the add trigger, another leg — half the opening size —
+        // joins at market and the entry becomes the weighted average, so
+        // exits and P&L stay honest. Position max is twice the opening
+        // size: two add legs, never after the 3R scale-out, never on a
+        // manual buy. The higher entry also re-arms break-even and
+        // trailing against it on the next cycle, so the added size
+        // manages exactly like the opening leg.
+        const addsSoFar = Number(t.adds) || 0;
+        const pyramidOn = isRealPos ? lrVal("pyramid", false) === true : config.pyramid === true;
+        if (pyramidOn && t.manual !== true && !t.scaled && addsSoFar < 2) {
+          const trigger =
+            Number(isRealPos ? lrVal("pyramid_trigger_pct", 1.5) : (config.pyramid_trigger_pct ?? 1.5)) || 1.5;
+          const origSize = (Number(t.size_usd) || 0) / (1 + 0.5 * addsSoFar);
+          const addSize = round(origSize * 0.5, 2);
+          if (gainPct >= trigger && origSize >= 10 && addSize >= 5) {
+            let ok = true;
+            let fill = price;
+            if (isRealPos) {
+              ok = false;
+              if (
+                live.conn != null && liveVerified && !isBackedOff(connRow) &&
+                quoteLeft >= addSize * 1.01 && liveBudget >= addSize
+              ) {
+                const add = await placeMarketOrder(live.conn, {
+                  symbol: t.symbol,
+                  side: side === "short" ? "sell" : "buy",
+                  usd: addSize,
+                  price,
+                  ...(side === "short" ? { margin: true, leverage: deskEng.leverage } : {}),
+                });
+                if (add.ok) {
+                  fill = add.avg_price || price;
+                  liveBudget -= addSize;
+                  quoteLeft -= addSize * 1.005;
+                  ok = true;
+                } else {
+                  console.log("pyramid order refused for " + t.symbol + ": " + (add.message || "unknown"));
+                }
+              } else {
+                console.log("pyramid skipped for " + t.symbol + ": live desk not ready or over budget");
+              }
+            } else {
+              cash -= addSize;
+            }
+            if (ok) {
+              const addQty = round(addSize / fill, 8);
+              const newQty = round((Number(t.quantity) || 0) + addQty, 8);
+              const newEntry = round(
+                ((entry * (Number(t.quantity) || 0)) + fill * addQty) / newQty,
+                8,
+              );
+              entry = newEntry;
+              t.entry_price = newEntry;
+              t.quantity = newQty;
+              t.size_usd = round((Number(t.size_usd) || 0) + addSize, 2);
+              t.adds = addsSoFar + 1;
+              updates.entry_price = newEntry;
+              updates.quantity = newQty;
+              updates.size_usd = t.size_usd;
+              updates.adds = t.adds;
+              await base44.entities.Alert.create({
+                symbol: t.symbol,
+                title: `${t.symbol} pyramided`,
+                message: `Add ${t.adds} of 2: ${round(addSize, 2)} USD joined at ${round(fill, 8)} — the position now runs ${round(t.size_usd, 2)} USD with its entry at ${round(newEntry, 8)}.`,
+                mode: isRealPos ? "live" : "paper",
+                kind: "bot_open",
+                severity: "info",
+                trade_id: t.id,
+              });
+            }
+          }
+        }
+
         // a surviving position the sentiment pass below re-reads
         sentinel.push(t);
         // mark-to-market writes are batched after the loop: one bulk write

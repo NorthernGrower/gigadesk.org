@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
-import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, marginFields } from '@/components/bot/ruleFields';
+import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, marginFields, pyramidFields } from '@/components/bot/ruleFields';
 
 const EXCHANGE_LABELS = {
   binance_us: 'Binance US',
@@ -48,6 +48,8 @@ export default function LiveRules({ config, onSaved }) {
       margin_engine: lr.margin_engine === true,
       margin_leverage: lr.margin_leverage ?? c?.margin_leverage ?? 2,
       max_trade_loss_pct: lr.max_trade_loss_pct ?? c?.max_trade_loss_pct ?? 20,
+      pyramid: lr.pyramid === true,
+      pyramid_trigger_pct: lr.pyramid_trigger_pct ?? c?.pyramid_trigger_pct ?? 1.5,
     };
   };
   const [live, setLive] = useState(() => fromConfig(config));
@@ -99,6 +101,8 @@ export default function LiveRules({ config, onSaved }) {
           margin_engine: live.margin_engine,
           margin_leverage: Math.max(1, Math.min(5, Math.round(Number(live.margin_leverage) || 2))),
           max_trade_loss_pct: roundTo(live.max_trade_loss_pct, 1),
+          pyramid: live.pyramid === true,
+          pyramid_trigger_pct: roundTo(Number(live.pyramid_trigger_pct) || 1.5, 2),
         },
       });
       toast({ title: 'Live rules saved', description: 'Real orders pick them up on the next cycle. Paper rules are untouched.' });
@@ -157,6 +161,8 @@ export default function LiveRules({ config, onSaved }) {
       <ScoreBarField form={live} setNum={setLiveNum} />
 
       {riskFields(live, setLiveNum, setLiveV)}
+
+      {pyramidFields(live, setLiveNum, setLiveV)}
 
       {scanEngineFields(live, setLiveNum, setLiveV)}
 

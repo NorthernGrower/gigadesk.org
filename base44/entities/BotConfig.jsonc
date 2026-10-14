@@ -85,6 +85,16 @@
       "default": 2,
       "description": "Leverage level margin-engine shorts open at on Kraken (1-5); gains and losses both scale with it"
     },
+    "pyramid": {
+      "type": "boolean",
+      "default": false,
+      "description": "Pyramiding: winners earn size \u2014 when a trade is up by the add trigger, another leg of half the opening size joins at market, up to position max (twice the opening size, two add legs)"
+    },
+    "pyramid_trigger_pct": {
+      "type": "number",
+      "default": 1.5,
+      "description": "The gain a trade must hold before the bot adds to it"
+    },
     "starting_balance": {
       "type": "number",
       "default": 10000

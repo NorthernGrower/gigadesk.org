@@ -224,6 +224,41 @@ export function scanEngineFields(form, setNum, setV) {
   );
 }
 
+// Pyramiding: winners earn size — the bot adds to a trade that is up by the
+// trigger, up to position max (twice the opening size). Each desk turns it
+// on separately.
+export function pyramidFields(form, setNum, setV) {
+  return (
+    <>
+      <Toggle
+        label="Pyramiding"
+        hint="The bot adds to a trade that is doing good: once it is up by the trigger, half the opening size joins at market. Position max is twice the opening size (two adds)."
+        checked={form.pyramid === true}
+        onChange={setV('pyramid')}
+      />
+      {form.pyramid ? (
+        <Field label="Add trigger %" hint="The gain a trade must hold before the bot adds to it.">
+          <Select value={String(form.pyramid_trigger_pct ?? 1.5)} onValueChange={(v) => setV('pyramid_trigger_pct')(Number(v))}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Array.from(new Set([0.5, 1, 1.5, 2, 3, 5, Number(form.pyramid_trigger_pct) ?? 1.5]))
+                .filter((n) => Number.isFinite(n) && n > 0)
+                .sort((a, b) => a - b)
+                .map((pct) => (
+                  <SelectItem key={pct} value={String(pct)}>
+                    {pct}% gain
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
 // The margin engine is a live-desk feature only: leveraged Kraken shorts have
 // no place on the paper desk's rules panel.
 export function marginFields(form, setNum, setV) {
