@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
 import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields } from '@/components/bot/ruleFields';
+// The margin engine is live-desk only — the paper panel never shows or saves it.
 
 // The paper desk's own rules — nothing here touches the live desk.
 export default function PaperRules({ config, onSaved }) {
@@ -33,8 +34,6 @@ export default function PaperRules({ config, onSaved }) {
     engine_v2: c?.engine_v2 !== false,
     champion_engine: c?.champion_engine !== false,
     btc_gate: c?.btc_gate !== false,
-    margin_engine: c?.margin_engine === true,
-    margin_leverage: c?.margin_leverage ?? 2,
     max_trade_loss_pct: c?.max_trade_loss_pct ?? 20,
   });
   const [paper, setPaper] = useState(() => fromConfig(config));
@@ -71,8 +70,6 @@ export default function PaperRules({ config, onSaved }) {
         engine_v2: paper.engine_v2,
         champion_engine: paper.champion_engine,
         btc_gate: paper.btc_gate,
-        margin_engine: paper.margin_engine,
-        margin_leverage: Math.max(1, Math.min(5, Math.round(Number(paper.margin_leverage) || 2))),
         max_trade_loss_pct: roundTo(paper.max_trade_loss_pct, 1),
       });
       toast({ title: 'Paper rules saved', description: 'The paper desk picks them up on its next cycle. Live rules are untouched.' });

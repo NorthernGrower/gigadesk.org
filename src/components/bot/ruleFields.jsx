@@ -219,13 +219,22 @@ export function scanEngineFields(form, setNum, setV) {
             onChange={setV('btc_gate')}
           />
         ) : null}
-        <Toggle
-          label="Margin engine"
-          hint="The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Gains and losses both move faster."
-          checked={form.margin_engine}
-          onChange={setV('margin_engine')}
-        />
       </div>
+    </>
+  );
+}
+
+// The margin engine is a live-desk feature only: leveraged Kraken shorts have
+// no place on the paper desk's rules panel.
+export function marginFields(form, setNum, setV) {
+  return (
+    <>
+      <Toggle
+        label="Margin engine"
+        hint="The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Gains and losses both move faster."
+        checked={form.margin_engine}
+        onChange={setV('margin_engine')}
+      />
       {form.margin_engine ? (
         <div className="space-y-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-destructive">Margin engine warning</p>

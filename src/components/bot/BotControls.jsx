@@ -66,7 +66,7 @@ export default function BotControls({ config, stats, desk = 'live', onModeChange
           <Button
             variant="outline"
             onClick={() => document.getElementById('risk-rules')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-            title="Live bot rules"
+            title={paper ? 'Paper bot rules' : 'Live bot rules'}
           >
             <SlidersHorizontal className="mr-2 h-4 w-4" />
             Rules
