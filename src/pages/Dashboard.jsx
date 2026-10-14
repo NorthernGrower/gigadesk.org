@@ -25,7 +25,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
 import { onTradesChange } from '@/lib/live';
 import { emitBotTick, getLastBot, getLastPulse, lastBotAgeMs, rememberPulse, requestBotRun, runBot, scanMarket, tradeAction } from '@/lib/market';
-import { fmtUsd } from '@/lib/format';
+import { fmtUsd, fmtPct } from '@/lib/format';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -294,7 +294,7 @@ export default function Dashboard() {
             <StatCard
               label="Today realised"
               value={fmtUsd(bot?.realized_today || 0)}
-              sub={`${goalPct.toFixed(0)}% of your ${fmtUsd(bot?.daily_goal || 0)} target`}
+              sub={`${fmtPct(goalPct)} of your ${fmtUsd(bot?.daily_goal || 0)} target`}
               tone={(bot?.realized_today || 0) >= 0 ? 'up' : 'down'}
             />
             <StatCard
