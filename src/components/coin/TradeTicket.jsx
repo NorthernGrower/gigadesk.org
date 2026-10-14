@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowDownRight, ArrowUpRight, Loader2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
@@ -7,11 +7,37 @@ import { useToast } from '@/components/ui/use-toast';
 import { ensureBotConfig, emitBotTick, roundTo } from '@/lib/market';
 import { fmtPrice, fmtUsd } from '@/lib/format';
 
+// Shorting needs a margin-capable API on the connected exchange. Kraken
+// margin is geo-restricted and Binance US is spot-only, so their imported
+// APIs can't short; Binance, Bybit and KuCoin futures can.
+const SHORT_CAPABLE = new Set(['binance', 'bybit', 'kucoin']);
+
 export default function TradeTicket({ snapshot, onOpened }) {
   const { toast } = useToast();
   const [side, setSide] = useState(snapshot?.side || 'long');
   const [size, setSize] = useState('1000');
   const [busy, setBusy] = useState(false);
+  const [shortCapable, setShortCapable] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const conns = await base44.entities.ExchangeConnection.filter({ status: 'connected', allow_trading: true });
+        const rows = Array.isArray(conns) ? conns : conns.items || [];
+        const capable = rows.some((c) => SHORT_CAPABLE.has(c.exchange));
+        if (alive) {
+          setShortCapable(capable);
+          if (!capable) setSide((current) => (current === 'short' ? 'long' : current));
+        }
+      } catch {
+        if (alive) setShortCapable(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   if (!snapshot) return null;
 
@@ -97,15 +123,17 @@ export default function TradeTicket({ snapshot, onOpened }) {
           >
             <ArrowUpRight className="h-3.5 w-3.5" /> Long
           </button>
-          <button
-            type="button"
-            onClick={() => setSide('short')}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] ${
-              side === 'short' ? 'bg-destructive/15 text-destructive ring-1 ring-destructive/30' : 'text-muted-foreground'
-            }`}
-          >
-            <ArrowDownRight className="h-3.5 w-3.5" /> Short
-          </button>
+          {shortCapable ? (
+            <button
+              type="button"
+              onClick={() => setSide('short')}
+              className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] ${
+                side === 'short' ? 'bg-destructive/15 text-destructive ring-1 ring-destructive/30' : 'text-muted-foreground'
+              }`}
+            >
+              <ArrowDownRight className="h-3.5 w-3.5" /> Short
+            </button>
+          ) : null}
         </div>
       </div>
 
