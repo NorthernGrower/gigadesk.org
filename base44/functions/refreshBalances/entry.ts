@@ -28,6 +28,28 @@ export default async function (req) {
     for (const c of configs)
       if (!rulesByOwner.has(c.created_by_id)) rulesByOwner.set(c.created_by_id, c);
 
+    // a connection in backoff still gets a live balance: its saved holdings
+    // are repriced from public tickers (no keys involved, so a lockout cannot
+    // touch them) — the next signed read verifies the figure once backoff
+    // clears. Quantities only refresh when the signed read resumes.
+    const backedOff = (conns || []).filter(
+      (c) => c.api_key && isBackedOff(c) && Array.isArray(c.balances) && c.balances.length,
+    );
+    for (const conn of backedOff) {
+      try {
+        const balance = await accountValueUsd(
+          { exchange: conn.exchange, testnet: Boolean(conn.testnet) },
+          conn.balances,
+          { skipSigned: true },
+        );
+        if (balance > 0) {
+          await base44.asServiceRole.entities.ExchangeConnection.update(conn.id, { balance_usd: balance });
+        }
+      } catch (e) {
+        console.log("public reprice failed for connection " + conn.id + ": " + (e && e.message));
+      }
+    }
+
     const results = [];
     for (let i = 0; i < usable.length; i += 6) {
       const batch = usable.slice(i, i + 6);

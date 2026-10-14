@@ -569,8 +569,8 @@ export function pickFundingQuote(balances = [], exchange) {
  * fallback) value each asset: quote stables 1:1, fiat at the FX rate, crypto
  * at live exchange prices — an asset no feed prices contributes 0.
  */
-export async function accountValueUsd(cfg, balances = []) {
-  if (cfg && cfg.exchange === "kraken") {
+export async function accountValueUsd(cfg, balances = [], opts = {}) {
+  if (cfg && cfg.exchange === "kraken" && !opts.skipSigned) {
     const res = await krakenSignedCall(cfg, "/0/private/TradeBalance", "&asset=ZUSD");
     const data = res.data || {};
     const failed = Array.isArray(data.error) ? data.error : [];
