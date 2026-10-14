@@ -202,62 +202,144 @@ async function loadCaps(db = null) {
   return lastGoodCaps;
 }
 
+/** A function instance is short-lived: when the live feed 429s or times out,
+ * the only durable copy of the markets snapshot is this desk-cache row —
+ * without it, every cycle inside the outage window fails the bot page. */
+async function readMarketsFromDb(db) {
+  if (!db) return null;
+  try {
+    const rows = asArray(
+      await db.entities.MarketCache.filter({ key: "markets" }, { limit: 1 }),
+    );
+    const value = rows[0] && rows[0].value;
+    if (!value || !Array.isArray(value.slim) || !value.slim.length) return null;
+    const savedAt = Date.parse(value.saved_at || "");
+    // prices age: beyond an hour a snapshot is too stale to size trades on
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > 60 * 60 * 1000) return null;
+    return value.slim;
+  } catch {
+    // the desk cache is an optimisation, never a hard dependency
+    return null;
+  }
+}
+
+/** Persists the last good markets snapshot as slim tuples: symbol, price, volume, 24h change. */
+async function saveMarketsToDb(db, coins) {
+  if (!db) return;
+  try {
+    await db.entities.MarketCache.upsert(
+      [
+        {
+          key: "markets",
+          value: {
+            slim: coins.map((c) => [
+              c.symbol,
+              round(c.price, 8),
+              round(c.volume24h),
+              round(c.change24h, 2),
+            ]),
+            saved_at: new Date().toISOString(),
+          },
+        },
+      ],
+      { key: "key" },
+    );
+  } catch (err) {
+    console.log(`markets desk-cache save failed: ${err && err.message}`);
+  }
+}
+
 /** Whole-market snapshot: every tradable market on the exchange, ranked by traded volume. */
 export async function fetchMarkets(db = null) {
   const cached = cacheGet("markets");
   if (cached) return { ...cached, capsDebug: -2 };
 
-  const rows = await fetchJson(`${BASE}/ticker/24hr`, 20000);
-  if (!Array.isArray(rows) || !rows.length) {
-    throw new Error("The market feed is unavailable right now - try again shortly.");
+  let rows = null;
+  try {
+    rows = await fetchJson(`${BASE}/ticker/24hr`, 20000);
+  } catch (err) {
+    console.log(`markets feed failed: ${err && err.message}`);
   }
 
-  const coins = rows
-    .filter(
-      (r) =>
-        typeof r.symbol === "string" &&
-        r.symbol.endsWith("USDT") &&
-        !LEVERAGED.test(r.symbol),
-    )
-    .map((r) => {
-      const symbol = r.symbol.slice(0, -4);
-      return {
-        symbol,
-        name: symbol,
+  if (Array.isArray(rows) && rows.length) {
+    const coins = rows
+      .filter(
+        (r) =>
+          typeof r.symbol === "string" &&
+          r.symbol.endsWith("USDT") &&
+          !LEVERAGED.test(r.symbol),
+      )
+      .map((r) => {
+        const symbol = r.symbol.slice(0, -4);
+        return {
+          symbol,
+          name: symbol,
+          coingecko_id: "",
+          image: "",
+          price: Number(r.lastPrice) || 0,
+          market_cap: 0,
+          volume24h: Number(r.quoteVolume) || 0,
+          change24h: Number(r.priceChangePercent) || 0,
+          change7d: 0,
+          rank: 0,
+        };
+      })
+      .filter((c) => c.price > 0 && !isStable(c.symbol))
+      .sort((a, b) => b.volume24h - a.volume24h);
+
+    // Real market caps (best effort): coins the cap feed has no data for stay
+    // at 0 and are skipped when the bot picks candidates.
+    const caps = await loadCaps(db);
+    console.log(`caps loaded: ${caps ? caps.size : "none"}`);
+    if (caps && caps.size) {
+      for (const c of coins) c.market_cap = caps.get(c.symbol) || 0;
+    }
+
+    coins.forEach((c, i) => {
+      c.bucket = tierFor(i);
+      c.rank = i + 1;
+    });
+
+    if (coins.length) {
+      saveMarketsToDb(db, coins);
+      return cacheSet(
+        "markets",
+        { coins, source: "binance_us", capsDebug: caps && caps.size ? caps.size : -1 },
+        60000,
+      );
+    }
+  }
+
+  // the live feed is down (rate limit or outage): serve the last good desk
+  // snapshot instead of failing the whole cycle with a 500
+  const slim = await readMarketsFromDb(db);
+  if (slim) {
+    const caps = await loadCaps(db);
+    const coins = slim
+      .map((s) => ({
+        symbol: s[0],
+        name: s[0],
         coingecko_id: "",
         image: "",
-        price: Number(r.lastPrice) || 0,
+        price: Number(s[1]) || 0,
         market_cap: 0,
-        volume24h: Number(r.quoteVolume) || 0,
-        change24h: Number(r.priceChangePercent) || 0,
+        volume24h: Number(s[2]) || 0,
+        change24h: Number(s[3]) || 0,
         change7d: 0,
         rank: 0,
-      };
-    })
-    .filter((c) => c.price > 0 && !isStable(c.symbol))
-    .sort((a, b) => b.volume24h - a.volume24h);
-
-  // Real market caps (best effort): coins the cap feed has no data for stay at
-  // 0 and are skipped when the bot picks candidates.
-  const caps = await loadCaps(db);
-  console.log(`caps loaded: ${caps ? caps.size : "none"}`);
-  if (caps && caps.size) {
-    for (const c of coins) c.market_cap = caps.get(c.symbol) || 0;
+      }))
+      .sort((a, b) => b.volume24h - a.volume24h);
+    if (caps && caps.size) {
+      for (const c of coins) c.market_cap = caps.get(c.symbol) || 0;
+    }
+    coins.forEach((c, i) => {
+      c.bucket = tierFor(i);
+      c.rank = i + 1;
+    });
+    console.log(`markets served from desk cache: ${coins.length} symbols`);
+    return cacheSet("markets", { coins, source: "desk_cache", capsDebug: -3 }, 60000);
   }
-
-  coins.forEach((c, i) => {
-    c.bucket = tierFor(i);
-    c.rank = i + 1;
-  });
-
-  if (!coins.length) {
-    throw new Error("The market feed is unavailable right now - try again shortly.");
-  }
-  return cacheSet(
-    "markets",
-    { coins, source: "binance_us", capsDebug: caps && caps.size ? caps.size : -1 },
-    60000,
-  );
+  throw new Error("The market feed is unavailable right now - try again shortly.");
 }
 
 /** OHLCV candles. Returns null when a coin has no tradable pair. */
