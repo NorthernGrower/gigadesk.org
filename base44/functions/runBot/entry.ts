@@ -45,17 +45,6 @@ const DEFAULT_CONFIG = {
   active_desk: "paper",
 };
 
-// An aggressive-style trade that has gone nowhere for a quarter of the scan
-// timeframe is cut so the capital moves on to fresher setups.
-const TIMEFRAME_MS = {
-  "15m": 15 * 60000,
-  "1h": 60 * 60000,
-  "4h": 4 * 60 * 60000,
-  "12h": 12 * 3600000,
-  "1d": 24 * 60 * 60000,
-  "1w": 7 * 24 * 60 * 60000,
-  "1M": 30 * 24 * 60 * 60000,
-};
 
 export default async function (req) {
   try {
@@ -517,17 +506,6 @@ export default async function (req) {
           : price <= target
         : false;
       const hitStop = side === "long" ? price <= stop : price >= stop;
-      // aggressive style: a trade that has sat going nowhere for STAGNANT_HOURS
-      // is cut so the capital moves on to fresher setups
-      const openedMs = t.opened_at ? Date.parse(t.opened_at) : 0;
-      const stagnant =
-        (deskCfg.trading_style || "mild") === "aggressive" &&
-        openedMs > 0 &&
-        Date.now() - openedMs > (TIMEFRAME_MS[deskCfg.timeframe || "1h"] || TIMEFRAME_MS["1h"]) / 4 &&
-        // time must never close a position just because it is winning or
-        // flat: only underwater stalls are cut here, the trailing stop and
-        // the target own the profitable side of time
-        gainPct < 0;
       // per-trade max loss guard: a trade down more than max_trade_loss_pct
       // of its own deployed size is force-closed at market — the backstop
       // when a stop sits too wide or the tape moved past the desk's checks
@@ -540,7 +518,7 @@ export default async function (req) {
       // and closes whole; break-even already protects the runner at +1.2R.
       const rUnitPct = targetR && target ? (Math.abs(target - entry) / targetR / entry) * 100 : 0;
       if (
-        !hitTarget && !hitStop && !hitMaxLoss && !stagnant &&
+        !hitTarget && !hitStop && !hitMaxLoss &&
         targetR >= 4 && rUnitPct && !t.scaled &&
         gainPct >= rUnitPct * 3
       ) {
@@ -548,7 +526,7 @@ export default async function (req) {
         const newStop = side === "long" ? Math.max(stop, be) : Math.min(stop, be);
         if (await scaleOut(t, side, price, newStop)) continue;
       }
-      const exit = hitTarget || hitStop || stagnant || hitMaxLoss;
+      const exit = hitTarget || hitStop || hitMaxLoss;
 
       if (exit) {
         // the stop always wins: a breached stop fills at its level — the same
@@ -561,13 +539,11 @@ export default async function (req) {
           ? updates.stop_price
             ? "trailing"
             : "stop"
-          : stagnant
-            ? "time"
-            : hitMaxLoss
-              ? "max_loss"
-              : "target";
+          : hitMaxLoss
+            ? "max_loss"
+            : "target";
         const ok = await closeOut(t, side, exitPrice, reason, updates, (pnl, pnlPct) => ({
-          kind: reason === "time" ? "bot_close" : reason === "target" ? "target_hit" : "stop_hit",
+          kind: reason === "target" ? "target_hit" : "stop_hit",
           message: `${
             reason === "target"
               ? "Target reached"
@@ -575,9 +551,7 @@ export default async function (req) {
                 ? "Trailing stop hit"
                 : reason === "max_loss"
                   ? "Max loss guard: the trade reached its per-trade loss cap"
-                  : reason === "time"
-                    ? "Stagnant trade cut after sitting still too long"
-                    : "Stop hit"
+                  : "Stop hit"
           } at ${round(exitPrice, 8)}. P&L ${round(pnl)} USD.`,
         }));
         if (!ok) continue;
