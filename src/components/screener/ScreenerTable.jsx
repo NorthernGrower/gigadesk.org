@@ -144,17 +144,19 @@ export default function ScreenerTable({ rows = [], onSelect, onWatch, onBuy, wat
                   </td>
                   <td className="px-2 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        title={`Manual buy ${row.symbol}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onBuy(row);
-                        }}
-                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-primary"
-                      >
-                        <ShoppingBag className="h-3.5 w-3.5" />
-                      </button>
+                      {row.listed_on ? (
+                        <button
+                          type="button"
+                          title={`Manual buy ${row.symbol}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onBuy(row);
+                          }}
+                          className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-primary"
+                        >
+                          <ShoppingBag className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         title={watched ? 'Remove from watchlist' : 'Add to watchlist'}

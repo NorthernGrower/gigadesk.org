@@ -68,6 +68,13 @@ export default async function (req) {
       db: base44.asServiceRole,
     });
 
+    // when the connected exchange's listing filter ran, every row is a coin
+    // that exchange actually lists — tag it so the scanner only offers the
+    // manual buy (a real order) on tradeable coins
+    if (exchangeFilter) {
+      for (const row of board.rows || []) row.listed_on = exchangeFilter.exchange;
+    }
+
     let persisted = { created: 0, updated: 0 };
     let alerts = 0;
     if (body.persist) {
