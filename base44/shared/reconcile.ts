@@ -228,20 +228,18 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
   const holdings = (balances || [])
     .map((b) => ({ asset: String(b.asset || "").toUpperCase(), total: Number(b.total) || 0 }))
     .filter((b) => b.asset && !CASH_ASSETS.has(b.asset) && b.total > 0);
-  if (!holdings.length) {
-    out.reason = "Only cash on the account";
-    return out;
-  }
 
   // price every holding so dust is skipped and imports are valued
   const prices = await fetchLivePrices(holdings.map((b) => b.asset));
   const valued = holdings
     .map((b) => ({ ...b, price: prices.get(b.asset) || 0, value: b.total * (prices.get(b.asset) || 0) }))
     .filter((b) => b.price > 0 && b.value >= MIN_IMPORT_USD);
-  if (!valued.length) {
-    out.reason = "Only dust holdings (nothing priced above dust)";
-    return out;
-  }
+  // nothing worth importing — but the desk may still hold rows for coins this
+  // wallet no longer has, so the sync carries on and closes them below
+  if (!valued.length)
+    out.reason = holdings.length
+      ? "Only dust holdings (nothing priced above dust)"
+      : "Only cash on the account";
 
   // average-cost entry from the fill history; a fill feed without the asset
   // (deposited, never traded, or the history is unavailable) imports at the
@@ -250,8 +248,12 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
   // calls): it only refreshes once an hour per connection, and a fresh
   // history's sync runs on balances alone — imports price at the live price
   const historyFresh = Date.now() - (Date.parse(conn.fills_fetched_at) || 0) < 60 * 60000;
-  const fills = await fetchFills(conn, valued.map((b) => b.asset), historyFresh ? { skipHistory: true } : {});
-  if (!historyFresh && conn.id)
+  // a wallet with nothing worth importing needs no fill history (and the
+  // history is the sync's heaviest signed read)
+  const fills = valued.length
+    ? await fetchFills(conn, valued.map((b) => b.asset), historyFresh ? { skipHistory: true } : {})
+    : [];
+  if (valued.length && !historyFresh && conn.id)
     await base44.asServiceRole.entities.ExchangeConnection
       .update(conn.id, { fills_fetched_at: new Date().toISOString() })
       .catch(() => {});
@@ -493,7 +495,7 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
     });
   }
 
-  if (!out.imported.length && !out.closed.length && !out.adjusted.length) {
+  if (!out.imported.length && !out.closed.length && !out.adjusted.length && out.reason == null) {
     out.reason = fillsOk ? null : "The exchange's trade history was unavailable — holdings were valued at the live price";
   }
   return out;
