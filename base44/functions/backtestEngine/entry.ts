@@ -3,6 +3,7 @@ import { fetchMarkets, fetchCandles, chunk } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { pickCandidates } from "../../shared/scan.ts";
 import { runAudit, runOptimize, variantCfg } from "../../shared/audit.ts";
+import { canWriteAuditLog } from "../../shared/auditlog.ts";
 
 // Optimizer round variants: candidate rule changes, each a pure config over
 // the shared Kraken data pass. Edited between rounds as results come in.
@@ -845,6 +846,10 @@ export default async function (req) {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    // every mode below archives its result to AuditRun, the admin-only research
+    // log, written with the service role (bypassing that entity's RLS) — so
+    // only an admin may run one
+    if (!canWriteAuditLog(user)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
 

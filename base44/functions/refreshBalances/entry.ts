@@ -7,10 +7,35 @@ import { liveRule } from '../../shared/deskRules.ts';
 
 // Refreshes every connected exchange's quote balance and stores it on the
 // connection, so the desk always has a saved balance to show even when a
-// later live read fails. Runs on a one-minute schedule.
+// later live read fails. Runs on a schedule.
+
+// The schedule fires every 10 minutes. One run per window keeps a repeated hit
+// on this public URL from firing signed calls into every user's exchange again.
+const RUN_KEY = "balance_refresh";
+const RUN_COOLDOWN_MS = 8 * 60 * 1000;
+
 export default async function (req) {
   try {
     const base44 = createClientFromRequest(req);
+    // The platform scheduler calls this with no user session. Anyone else
+    // reaching the endpoint must be a signed-in admin: the run decrypts and
+    // spends every user's stored exchange credentials.
+    const user = await base44.auth.me().catch(() => null);
+    if (user && user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+
+    // single run per cooldown window, whoever calls: the scheduler and an
+    // on-demand refresh never double up, and repeated anonymous hits reuse the
+    // last run instead of burning every user's exchange rate budget
+    const lastRun = asArray(
+      await base44.asServiceRole.entities.MarketCache.filter({ key: RUN_KEY }, { limit: 1 }),
+    )[0];
+    const lastAt = Number((lastRun && lastRun.value && lastRun.value.at) || 0);
+    if (Date.now() - lastAt < RUN_COOLDOWN_MS)
+      return Response.json({ checked: 0, skipped: "recent_run" });
+    await base44.asServiceRole.entities.MarketCache
+      .upsert([{ key: RUN_KEY, value: { at: Date.now() } }], { key: "key" })
+      .catch(() => {});
+
     const conns = await base44.asServiceRole.entities.ExchangeConnection.filter({});
     // a connection in backoff is left alone: its key failed a signed read
     // recently and retrying keeps the exchange-side lockout alive. Errored
@@ -112,6 +137,10 @@ export default async function (req) {
       }
     }
 
+    // each result carries a connection's label, exchange message and balance
+    // figures for OTHER users' accounts: an admin caller gets them, the
+    // unauthenticated scheduler gets a count only
+    if (!user) return Response.json({ checked: usable.length });
     return Response.json({ checked: usable.length, results });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

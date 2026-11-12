@@ -1,5 +1,11 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { runFlatLab, DEFAULT_VARIANTS, metricsFor } from "../../shared/flattape.ts";
+import { canWriteAuditLog, auditLabel } from "../../shared/auditlog.ts";
+
+// pool mode takes its trade legs straight from the request body: bounded so one
+// call cannot inflate the archived record
+const MAX_VARIANTS = 50;
+const MAX_LEGS = 5000;
 
 // Flat-tape lab: a pure research backtest. Reads public candle history,
 // writes nothing to the database, changes nothing in the live engine.
@@ -8,6 +14,10 @@ export default async function (req) {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    // every mode below archives its run to AuditRun, the admin-only research
+    // log, written with the service role (bypassing that entity's RLS) — so the
+    // admin check has to happen here, before any run starts
+    if (!canWriteAuditLog(user)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
 
@@ -16,14 +26,15 @@ export default async function (req) {
     // becomes a statistically meaningful verdict. Pure math, no data fetch.
     if (body.mode === "pool" && body.trades && typeof body.trades === "object") {
       const variantsOut = {};
-      for (const [id, legs] of Object.entries(body.trades)) {
-        variantsOut[id] = metricsFor(Array.isArray(legs) ? legs : []);
+      const input = Object.entries(body.trades).slice(0, MAX_VARIANTS);
+      for (const [id, legs] of input) {
+        variantsOut[id] = metricsFor(Array.isArray(legs) ? legs.slice(0, MAX_LEGS) : []);
       }
       await base44.asServiceRole.entities.AuditRun
         .create({
-          label: body.label || `Flat-tape lab pooled: ${Object.keys(variantsOut).length} variants, ${
-            Object.values(body.trades).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0
-          )} trade legs`,
+          label: auditLabel(body.label || `Flat-tape lab pooled: ${input.length} variants, ${
+            input.reduce((a, [, l]) => a + (Array.isArray(l) ? Math.min(l.length, MAX_LEGS) : 0), 0
+          )} trade legs`),
           ran_at: new Date().toISOString(),
           timeframe: "1h",
           symbols: 6,
