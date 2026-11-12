@@ -255,16 +255,24 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
     await base44.asServiceRole.entities.ExchangeConnection
       .update(conn.id, { fills_fetched_at: new Date().toISOString() })
       .catch(() => {});
+  // average-cost basis: walking the fills in time order leaves the true cost
+  // of what is still held. Dividing all-time buy cost by all-time buy volume
+  // (the old method) overstated the basis whenever a position had been
+  // trimmed and re-bought, and every imported P&L inherited that error.
   const agg = new Map();
-  for (const f of fills) {
+  for (const f of [...fills].sort((a, b) => (a.time || 0) - (b.time || 0))) {
     const a = String(f.asset || "").toUpperCase();
     if (!a) continue;
-    const row = agg.get(a) || { buyVol: 0, buyCost: 0, sellVol: 0, first: null };
+    const row = agg.get(a) || { qty: 0, cost: 0, first: null };
+    const q = Number(f.qty) || 0;
+    const px = Number(f.price) || 0;
     if (f.side === "buy") {
-      row.buyVol += f.qty;
-      row.buyCost += f.qty * f.price;
-    } else {
-      row.sellVol += f.qty;
+      row.qty += q;
+      row.cost += q * px;
+    } else if (row.qty > 0) {
+      const sold = Math.min(q, row.qty);
+      row.cost -= (row.cost / row.qty) * sold;
+      row.qty -= sold;
     }
     if (f.time && (row.first == null || f.time < row.first)) row.first = f.time;
     agg.set(a, row);
@@ -284,13 +292,101 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
     cursor = page && page.next_cursor;
   } while (cursor);
 
+  // one position per holding: a sync that re-imported the same holding left
+  // several rows for one asset — the desk then showed duplicate positions and
+  // booked the same result once per copy. Imported rows are folded into one:
+  // re-imports of the identical quantity keep the freshest row, genuinely
+  // different sizes merge at their weighted average entry. Rows the bot
+  // placed carry an exchange order id — each is a real order and never merges.
+  const importedBySymbol = new Map();
+  for (const t of desk) {
+    if (t.status !== "open" || t.exchange_order_id) continue;
+    const sym = String(t.symbol || "").toUpperCase();
+    if (!sym) continue;
+    const rows = importedBySymbol.get(sym) || [];
+    rows.push(t);
+    importedBySymbol.set(sym, rows);
+  }
+  for (const [sym, rows] of importedBySymbol) {
+    if (rows.length < 2) continue;
+    const newest = rows
+      .slice()
+      .sort((a, b) => String(b.created_date || "").localeCompare(String(a.created_date || "")))[0];
+    const newQty = Number(newest.quantity) || 0;
+    const sameQty = rows.every((t) => Math.abs((Number(t.quantity) || 0) - newQty) <= newQty * 0.01);
+    if (!sameQty) {
+      const qty = rows.reduce((a, t) => a + (Number(t.quantity) || 0), 0);
+      const size = rows.reduce((a, t) => a + (Number(t.size_usd) || 0), 0);
+      if (qty > 0) {
+        const merged = {
+          quantity: round(qty, 8),
+          size_usd: round(size),
+          entry_price: round(size / qty, 8),
+        };
+        await base44.entities.Trade.update(newest.id, merged);
+        Object.assign(newest, merged);
+      }
+    }
+    for (const dup of rows) if (dup.id !== newest.id) await base44.entities.Trade.delete(dup.id);
+    for (let i = desk.length - 1; i >= 0; i--)
+      if (desk[i].id !== newest.id && !desk[i].exchange_order_id &&
+          String(desk[i].symbol || "").toUpperCase() === sym) desk.splice(i, 1);
+    out.adjusted.push({ symbol: sym, quantity: round(Number(newest.quantity) || 0, 8) });
+  }
+
+  // a symbol the desk tracks but the wallet no longer holds (sold off, or
+  // fallen below dust) never appears in `valued`, so the per-holding loop
+  // would leave those rows open forever — the desk kept showing positions the
+  // exchange had already sold. Price them from the public feed and close them.
+  // Rows the user logged by hand carry no exchange or import marker and are
+  // the user's own bookkeeping: never closed here.
+  const heldSymbols = new Set(valued.map((v) => v.asset));
+  const unheldRows = desk.filter(
+    (t) =>
+      t.status === "open" &&
+      (t.exchange || t.pattern) &&
+      !heldSymbols.has(String(t.symbol || "").toUpperCase()),
+  );
+  if (unheldRows.length) {
+    const unheldSymbols = [...new Set(unheldRows.map((t) => String(t.symbol).toUpperCase()))];
+    const freshPrices = await fetchLivePrices(unheldSymbols);
+    for (const sym of unheldSymbols) {
+      const px = Number(freshPrices.get(sym)) || 0;
+      if (!(px > 0)) continue; // cannot price it: leave the row for the next sync
+      for (const t of unheldRows.filter((r) => String(r.symbol).toUpperCase() === sym)) {
+        const e = Number(t.entry_price) || 0;
+        const q = Number(t.quantity) || 0;
+        const size = Number(t.size_usd) || 0;
+        const pnl = (px - e) * q;
+        await base44.entities.Trade.update(t.id, {
+          status: "closed",
+          exit_price: round(px, 8),
+          pnl_usd: round(pnl),
+          pnl_pct: size ? round((pnl / size) * 100) : 0,
+          closed_at: new Date().toISOString(),
+          exit_reason: "manual",
+        });
+        out.closed.push({ symbol: sym, pnl_usd: round(pnl) });
+        await base44.entities.Alert.create({
+          symbol: sym,
+          title: `${sym} closed (no longer held on ${conn.label})`,
+          message: `The wallet no longer holds ${sym}, so its desk position closed at ${round(px, 8)}. P&L ${round(pnl)} USD.`,
+          mode: "live",
+          kind: "bot_close",
+          severity: pnl >= 0 ? "success" : "danger",
+          trade_id: t.id,
+          created_by_id: ownerId,
+        });
+      }
+    }
+  }
+
   for (const h of valued) {
     const openRows = desk.filter((t) => String(t.symbol).toUpperCase() === h.asset && t.status === "open");
     const proposedRows = desk.filter((t) => String(t.symbol).toUpperCase() === h.asset && t.status === "proposed");
     const deskQty = openRows.reduce((a, t) => a + (Number(t.quantity) || 0), 0);
     const aggRow = agg.get(h.asset) || null;
-    const netVol = aggRow && aggRow.buyVol - aggRow.sellVol > 0 ? aggRow.buyVol - aggRow.sellVol : 0;
-    const avgEntry = netVol > 0 && aggRow.buyCost > 0 ? aggRow.buyCost / aggRow.buyVol : null;
+    const avgEntry = aggRow && aggRow.qty > 0 && aggRow.cost > 0 ? aggRow.cost / aggRow.qty : null;
     const entry = avgEntry || h.price;
     const qty = h.total;
     const diff = qty - deskQty;
@@ -342,9 +438,9 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
 
     // diff < 0: the wallet holds less than the desk tracks
     if (qty * h.price < FULLY_SOLD_USD) {
-      // everything was sold off on the exchange: close each desk row at the
-      // live price
-      for (const t of openRows) {
+      // everything was sold off on the exchange: close each wallet-backed
+      // desk row at the live price (hand-logged rows stay the user's own)
+      for (const t of openRows.filter((r) => r.exchange || r.pattern)) {
         const e = Number(t.entry_price) || 0;
         const q = Number(t.quantity) || 0;
         const size = Number(t.size_usd) || 0;
