@@ -207,7 +207,7 @@ export function scanEngineFields(form, setNum, setV) {
         />
         <Toggle
           label="Champion rules"
-          hint="Keeps the champion target and break-even management. Entry quality is managed automatically, without a BTC-regime or volume-spike veto."
+          hint="Keeps the champion's own layer: its target and break-even management, plus the BTC tape filter below. Turn it off and the V2 engine trades its own entries in any BTC tape, as it did before the champion."
           checked={form.champion_engine}
           onChange={setV('champion_engine')}
         />

@@ -4,6 +4,7 @@ import { analyzeCoin } from "../../shared/strategy.ts";
 import { ema, rsi, macd, bollinger } from "../../shared/indicators.ts";
 import { asArray } from "../../shared/market.ts";
 import { entryRulesFor, gateReason } from "../../shared/entryRules.ts";
+import { liveRulesView } from "../../shared/deskRules.ts";
 
 const CACHE = new Map();
 const AI_TTL = 10 * 60 * 1000;
@@ -98,7 +99,8 @@ export default async function (req) {
     const config = asArray(await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }))[0];
     const desk = config?.active_desk === "live" ? "live" : "paper";
     const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
-    const rules = entryRulesFor(config, desk, btcChange);
+    // the live desk gates by its own saved rules, never the paper config's
+    const rules = entryRulesFor(desk === "live" ? liveRulesView(config) : config, desk, btcChange);
     snapshot.entry_check = { desk, min_score: rules.min_score,
       reason: gateReason(snapshot, desk, rules) };
 
