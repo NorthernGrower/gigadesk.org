@@ -266,7 +266,7 @@ export function marginFields(form, setNum, setV) {
     <>
       <Toggle
         label="Margin engine"
-        hint="The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Gains and losses both move faster."
+        hint="The optimizer's margin stack: 3R targets, 50% conviction candles, majors + AVAX only, placed through the Kraken margin account or KuCoin cross margin. Gains and losses both move faster."
         checked={form.margin_engine}
         onChange={setV('margin_engine')}
       />

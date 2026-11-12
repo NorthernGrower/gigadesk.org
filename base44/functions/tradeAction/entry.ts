@@ -99,10 +99,16 @@ export default async function (req) {
             });
             continue;
           }
+          // a short closes by buying the base quantity back through the venue's
+          // margin route, a long by selling what it holds
+          const shortClose = openTrade.side === "short";
           const sell = await placeMarketOrder(live.conn, {
             symbol: openTrade.symbol,
-            side: "sell",
+            side: shortClose ? "buy" : "sell",
             quantity: Number(openTrade.quantity) || 0,
+            ...(shortClose
+              ? { margin: true, leverage: Number(liveRule(config.live_rules, "margin_leverage", 2)) || 2 }
+              : {}),
           });
           // dust: the exchange can never sell this little — book the close on
           // the desk without an order instead of stranding the position
@@ -278,10 +284,14 @@ export default async function (req) {
       if (trade.mode === "real" && trade.exchange_order_id) {
         const live = await resolveLiveConnection(base44, config, { manage: true });
         if (!live.conn) return Response.json({ error: live.reason }, { status: 409 });
+        const shortClose = trade.side === "short";
         const sell = await placeMarketOrder(live.conn, {
           symbol: trade.symbol,
-          side: "sell",
+          side: shortClose ? "buy" : "sell",
           quantity: Number(trade.quantity) || 0,
+          ...(shortClose
+            ? { margin: true, leverage: Number(liveRule(config.live_rules, "margin_leverage", 2)) || 2 }
+            : {}),
         });
         // dust: the exchange can never sell this little — book the close on
         // the desk without an order instead of stranding the position

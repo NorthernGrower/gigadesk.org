@@ -1,9 +1,9 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
-import { scanBoard } from "../../shared/scan.ts";
+import { scanBoard, resolveDeskVenue } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
@@ -135,7 +135,11 @@ export default async function (req) {
     // batched live feed, so the whole-market fetch (and its cap-feed probes,
     // which took tens of seconds whenever a provider was down) is skipped
     // entirely: the desk load waits on this call, so it must stay fast
-    const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole);
+    // the venue this desk trades on: its own market snapshot, candles and
+    // listings drive the scan, so every exchange the user connected is scanned
+    // on the coins it actually lists
+    const scanVenue = light ? null : await resolveDeskVenue(base44, config);
+    const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole, scanVenue);
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
     // Engine stacks resolve per desk (deskEngine above): each desk trades by
@@ -291,11 +295,13 @@ export default async function (req) {
             await base44.entities.Trade.update(t.id, extraUpdates);
           return false;
         }
-        // a margin short closes by buying the base quantity back, not selling
+        // a margin short closes by buying the base quantity back, not selling —
+        // through the venue's margin route so the debt is repaid with it
         const sell = await placeMarketOrder(managed.conn, {
           symbol: t.symbol,
           side: side === "short" ? "buy" : "sell",
           quantity: Number(t.quantity) || 0,
+          ...(side === "short" ? { margin: true, leverage: liveEngine.leverage } : {}),
         });
         // dust: the exchange can never sell this little — book the close on
         // the desk without an order instead of stranding the position
@@ -380,6 +386,7 @@ export default async function (req) {
           symbol: t.symbol,
           side: side === "short" ? "buy" : "sell",
           quantity: halfQty,
+          ...(side === "short" ? { margin: true, leverage: liveEngine.leverage } : {}),
         });
         if (!sell.ok) return false;
         if (sell.avg_price) scalePrice = sell.avg_price;
@@ -800,6 +807,7 @@ export default async function (req) {
         extraSymbols: watch.map((w) => w.symbol),
         ...(listed ? { onlySymbols: listed } : {}),
         confluenceV2: config.confluence_v2 !== false,
+        feed: scanVenue,
       });
       // the live desk scans its own board when its scan settings differ from
       // the paper desk's — separate desks, separate scans; matching settings
@@ -818,6 +826,7 @@ export default async function (req) {
           extraSymbols: watch.map((w) => w.symbol),
           ...(listed ? { onlySymbols: listed } : {}),
           confluenceV2: liveView.confluence_v2 !== false,
+          feed: scanVenue,
         });
       }
 
@@ -931,9 +940,13 @@ export default async function (req) {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         return !blocked.has(r.symbol) && entryGate(r, desk) === null;
       };
+      // a live short is a margin order: only a venue whose margin API the desk
+      // can place through may take one, so a spot-only account is never handed
+      // a setup it would fill as a plain sell
+      const liveShorts = live.conn ? SHORT_VENUES.has(live.conn.exchange) : false;
       const liveWanted = live.conn && liveVerified && !isBackedOff(connRow)
         ? tradableLive
-            .filter((r) => qualifies(r, "live"))
+            .filter((r) => qualifies(r, "live") && (r.side === "long" || liveShorts))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
         : [];
       // a desk with qualifying setups but nothing to pay with should say so

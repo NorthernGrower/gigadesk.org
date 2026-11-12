@@ -5,6 +5,7 @@ import { ema, rsi, macd, bollinger } from "../../shared/indicators.ts";
 import { asArray } from "../../shared/market.ts";
 import { entryRulesFor, gateReason } from "../../shared/entryRules.ts";
 import { liveRulesView } from "../../shared/deskRules.ts";
+import { resolveDeskVenue } from "../../shared/scan.ts";
 
 const CACHE = new Map();
 const AI_TTL = 10 * 60 * 1000;
@@ -75,13 +76,17 @@ export default async function (req) {
       : "1h";
     const withAi = body.withAi === true;
 
-    const { coins } = await fetchMarkets();
+    // the desk's own venue supplies the market and the chart, so a coin listed
+    // only on the exchange the user connected still opens here
+    const deskConfig = asArray(await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }))[0];
+    const venue = await resolveDeskVenue(base44, deskConfig || {});
+    const { coins } = await fetchMarkets(base44.asServiceRole, venue);
     const coin = coins.find((c) => c.symbol === symbol);
     if (!coin) {
       return Response.json({ error: `${symbol} is not in the tracked market` }, { status: 404 });
     }
 
-    const candles = await fetchCandles(symbol, timeframe, 300);
+    const candles = await fetchCandles(symbol, timeframe, 300, venue);
     if (!candles || candles.length < 80) {
       return Response.json(
         { error: `Not enough chart history for ${symbol} on this timeframe` },
@@ -96,7 +101,7 @@ export default async function (req) {
       return Response.json({ error: "Not enough data to analyse this coin" }, { status: 422 });
     }
 
-    const config = asArray(await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }))[0];
+    const config = deskConfig;
     const desk = config?.active_desk === "live" ? "live" : "paper";
     const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
     // the live desk gates by its own saved rules, never the paper config's

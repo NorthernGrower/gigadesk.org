@@ -111,7 +111,12 @@ export async function placeMarketOrder(cfg, paramsIn) {
   const pair = `${String(params.symbol || "").toUpperCase()}${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
   const idem = idemKey(params.symbol);
   if (cfg.exchange === "bybit") return bybitOrder(cfg, params, side, pair, idem);
-  if (cfg.exchange === "kucoin") return kucoinOrder(cfg, params, side, pair, idem);
+  // a KuCoin short is a margin order: it sells an asset the account does not
+  // own (auto-borrowed) and buys it back with the debt repaid
+  if (cfg.exchange === "kucoin")
+    return params.margin === true
+      ? kucoinMarginOrder(cfg, params, side, pair, idem)
+      : kucoinOrder(cfg, params, side, pair, idem);
   if (cfg.exchange === "kraken") return krakenOrder(cfg, params, side, pair, idem);
   return binanceOrder(cfg, params, side, pair, idem);
 }
@@ -384,6 +389,76 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
     return { ok: true, order_id: String(orderId), filled_qty: null, avg_price: null, message: `Market ${side} sent to KuCoin` };
   }
   return { ok: false, message: `KuCoin said: ${data.msg || data.code || res.text || "no response from KuCoin"}` };
+}
+
+// ---- KuCoin cross margin (shorting) ----
+// KuCoin's spot endpoint can never open a short: the margin endpoint borrows
+// the base asset, sells it, and later buys it back to repay. `autoBorrow` on
+// the opening sell and `autoRepay` on the closing buy make that one call each,
+// so the desk manages a KuCoin short exactly like any other position.
+async function kucoinMarginOrder(cfg, { symbol, usd, quantity, price, leverage }, side, pair, idem) {
+  const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+  const endpoint = "/api/v1/margin/order";
+  const asset = String(symbol || "").toUpperCase();
+  const quote = cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT";
+  const guard = await guardConstraints(cfg, { usd, quantity, price, side, pair });
+  if (!guard.ok) return { ok: false, message: guard.message };
+  const px =
+    Number(price) > 0
+      ? Number(price)
+      : (await fetchLivePrices([asset])).get(asset) || 0;
+  const payload = {
+    clientOid: idem,
+    symbol: `${asset}-${quote}`,
+    side: side.toUpperCase(),
+    type: "market",
+  };
+  if (side === "buy") {
+    // closing the short: spend the position's quote value and let KuCoin repay
+    // the borrowed asset out of the proceeds
+    const spend = Number(usd) > 0 ? Number(usd) : (Number(quantity) || 0) * px;
+    if (!(spend > 0)) return { ok: false, message: "No usable price to size the margin close" };
+    payload.funds = String(round(spend, 2));
+    payload.autoRepay = true;
+  } else {
+    // opening the short: sell the borrowed base quantity
+    const qty =
+      Number(guard.quantity != null ? guard.quantity : quantity) ||
+      (px > 0 && Number(usd) > 0 ? Number(usd) / px : 0);
+    if (!(qty > 0)) return { ok: false, message: "No usable price to size the margin order" };
+    payload.size = String(trunc(qty, 8));
+    payload.autoBorrow = true;
+  }
+  const body = JSON.stringify(payload);
+  const ts = String(Date.now());
+  const sign = await hmacB64(cfg.api_secret, ts + "POST" + endpoint + body);
+  const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
+  const res = await callJson(base + endpoint, {
+    method: "POST",
+    headers: {
+      "KC-API-KEY": cfg.api_key,
+      "KC-API-SIGN": sign,
+      "KC-API-TIMESTAMP": ts,
+      "KC-API-PASSPHRASE": pass,
+      "KC-API-KEY-VERSION": "2",
+      "Content-Type": "application/json",
+    },
+    body,
+  });
+  const data = res.data || {};
+  const orderId = ((data.data || {}).orderId) || "";
+  if (data.code === "200000" && orderId) {
+    return {
+      ok: true,
+      order_id: String(orderId),
+      filled_qty: side === "sell" ? Number(payload.size) || null : null,
+      avg_price: null,
+      message: `Margin ${side} sent to KuCoin`,
+    };
+  }
+  // KuCoin refuses pairs that cannot be borrowed, and keys without margin
+  // trading permission — its own wording is the clearest thing to show
+  return { ok: false, message: `KuCoin margin said: ${data.msg || data.code || res.text || "no response from KuCoin"}` };
 }
 
 // ---- Kraken (HMAC-SHA512 over path + sha256(nonce + body)) ----

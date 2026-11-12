@@ -1,8 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { scanBoard, persistSignals, raiseSetupAlerts } from "../../shared/scan.ts";
+import { scanBoard, persistSignals, raiseSetupAlerts, resolveDeskVenue } from "../../shared/scan.ts";
 import { asArray } from "../../shared/market.ts";
 import { fetchListedSymbols, pickFundingQuote } from "../../shared/exchanges.ts";
-import { decryptSecret } from "../../shared/crypto.ts";
 
 const TIMEFRAMES = ["15m", "1h", "4h", "12h", "1d", "1w", "1M"];
 const SCOPES = ["all", "large", "mid", "small"];
@@ -22,39 +21,29 @@ export default async function (req) {
       ? body.symbols.slice(0, 60).map((s) => String(s))
       : [];
 
-    // live desk: when an exchange account is attached for real orders, the
-    // scanner only considers coins that exchange actually lists — anything
-    // else could never be traded there
+    // the venue the desk actually trades on: the scanner reads that exchange's
+    // own market, candles and listing, so coins only that venue lists are
+    // scanned instead of silently missing from the US feed
     let onlySymbols = null;
     let exchangeFilter = null;
     const configs = asArray(
       await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
     );
     const cfg = configs[0];
-    const connectionId = cfg?.live_rules?.real_connection_id || cfg?.real_connection_id;
-    if (cfg && connectionId) {
-      const stored = await base44.asServiceRole.entities.ExchangeConnection
-        .get(connectionId)
-        .catch(() => null);
-      if (
-        stored &&
-        (!cfg.created_by_id || stored.created_by_id === cfg.created_by_id) &&
-        stored.status === "connected" &&
-        stored.allow_trading === true
-      ) {
-        const conn = {
-          exchange: stored.exchange,
-          testnet: Boolean(stored.testnet),
-          api_key: await decryptSecret(stored.api_key),
-          api_secret: await decryptSecret(stored.api_secret),
-          passphrase: await decryptSecret(stored.passphrase || ""),
-        };
-        const funding = pickFundingQuote(stored.balances, stored.exchange);
-        const listed = await fetchListedSymbols(conn, funding ? [funding.asset] : null);
-        if (listed && listed.size) {
-          onlySymbols = listed;
-          exchangeFilter = { exchange: stored.exchange, label: stored.label || stored.exchange, listed: listed.size };
-        }
+    const venue = await resolveDeskVenue(base44, cfg || {});
+    if (venue) {
+      const conn = {
+        exchange: venue.exchange,
+        testnet: venue.testnet,
+        api_key: "",
+        api_secret: "",
+        passphrase: "",
+      };
+      const funding = pickFundingQuote(venue.balances, venue.exchange);
+      const listed = await fetchListedSymbols(conn, funding ? [funding.asset] : null);
+      if (listed && listed.size) {
+        onlySymbols = listed;
+        exchangeFilter = { exchange: venue.exchange, label: venue.label, listed: listed.size };
       }
     }
 
@@ -65,6 +54,7 @@ export default async function (req) {
       dailyTargetPct,
       extraSymbols,
       ...(onlySymbols ? { onlySymbols } : {}),
+      feed: venue,
       db: base44.asServiceRole,
     });
 

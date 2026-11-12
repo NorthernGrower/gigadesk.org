@@ -249,10 +249,280 @@ async function saveMarketsToDb(db, coins) {
   }
 }
 
-/** Whole-market snapshot: every tradable market on the exchange, ranked by traded volume. */
-export async function fetchMarkets(db = null) {
-  const cached = cacheGet("markets");
+// ---- Venue-native market data -------------------------------------------
+// A desk that trades on Kraken, Bybit or KuCoin must scan that venue's own
+// market: coins listed only there would never appear in the US feed. These
+// public endpoints need no keys, so the scan works for any connected exchange.
+const VENUE_BASE = {
+  kucoin: "https://api.kucoin.com",
+  bybit: "https://api.bybit.com",
+  kraken: "https://api.kraken.com",
+};
+
+const VENUE_INTERVAL = {
+  kucoin: { "15m": "15min", "1h": "1hour", "4h": "4hour", "12h": "12hour", "1d": "1day", "1w": "1week", "1M": "1week" },
+  bybit: { "15m": "15", "1h": "60", "4h": "240", "12h": "720", "1d": "D", "1w": "W", "1M": "M" },
+  kraken: { "15m": 15, "1h": 60, "4h": 240, "12h": 720, "1d": 1440, "1w": 10080, "1M": 21600 },
+};
+
+const VENUE_QUOTES = ["USDT", "USD", "USDC"];
+
+const KUCOIN_BAR_MS = {
+  "15min": 900000,
+  "1hour": 3600000,
+  "4hour": 14400000,
+  "12hour": 43200000,
+  "1day": 86400000,
+  "1week": 604800000,
+};
+
+// Kraken names assets its own way (XBT for BTC, Z-prefixed fiat)
+const KRAKEN_ALIAS = {
+  XXBT: "BTC", XBT: "BTC", XETH: "ETH", XXDG: "DOGE", XDG: "DOGE", XXRP: "XRP",
+  XLTC: "LTC", XXLM: "XLM", XZEC: "ZEC", XMLN: "MLN", XREP: "REP", XETC: "ETC",
+  ZUSD: "USD", ZEUR: "EUR", ZGBP: "GBP", ZCAD: "CAD", ZAUD: "AUD", ZJPY: "JPY",
+  ZCHF: "CHF",
+};
+const krakenBase = (a) => KRAKEN_ALIAS[String(a || "").toUpperCase()] || String(a || "").toUpperCase();
+
+/** Kraken pair names as the desk reads them: canonical key and altname both. */
+async function krakenPairIndex() {
+  const cached = cacheGet("kraken:pairs");
+  if (cached) return cached;
+  const res = await fetchJson(`${VENUE_BASE.kraken}/0/public/AssetPairs`, 12000);
+  const byCanonical = new Map();
+  const byAlt = new Map();
+  for (const p of Object.values((res && res.result) || {})) {
+    if (!p || (p.status && p.status !== "online")) continue;
+    const entry = {
+      base: krakenBase(p.base),
+      quote: krakenBase(p.quote),
+      altname: String(p.altname || "").toUpperCase(),
+    };
+    byCanonical.set(`${String(p.base || "").toUpperCase()}${String(p.quote || "").toUpperCase()}`, entry);
+    if (entry.altname) byAlt.set(entry.altname, entry);
+  }
+  return cacheSet("kraken:pairs", { byCanonical, byAlt }, 30 * 60000);
+}
+
+/** The venue's own 24h ticker as the desk's coin rows (no market caps here). */
+export async function fetchVenueMarkets(feed) {
+  const ex = String((feed && feed.exchange) || "");
+  const base = VENUE_BASE[ex];
+  if (!base || ex === "binance" || ex === "binance_us") return [];
+  const out = [];
+  if (ex === "kucoin") {
+    const res = await fetchJson(`${base}/api/v1/market/allTickers`, 15000);
+    for (const t of ((res && res.data) || {}).ticker || []) {
+      const [sym, quote] = String(t.symbol || "").split("-");
+      const price = Number(t.last) || 0;
+      if (!sym || !VENUE_QUOTES.includes(quote) || !(price > 0)) continue;
+      out.push({
+        symbol: sym.toUpperCase(),
+        price,
+        volume24h: Number(t.volValue) || 0,
+        change24h: (Number(t.changeRate) || 0) * 100,
+      });
+    }
+  } else if (ex === "bybit") {
+    const res = await fetchJson(`${base}/v5/market/tickers?category=spot`, 15000);
+    for (const t of ((res && res.data) || {}).result?.list || []) {
+      const sym = String(t.symbol || "").toUpperCase();
+      const quote = VENUE_QUOTES.find((q) => sym.endsWith(q));
+      const price = Number(t.lastPrice) || 0;
+      if (!quote || !(price > 0)) continue;
+      out.push({
+        symbol: sym.slice(0, -quote.length),
+        price,
+        volume24h: Number(t.turnover24h) || 0,
+        change24h: (Number(t.price24hPcnt) || 0) * 100,
+      });
+    }
+  } else if (ex === "kraken") {
+    // Kraken has no bulk ticker: the pairs are read in groups, then each
+    // result's pair name is mapped back to its base asset
+    const idx = await krakenPairIndex();
+    // the desk's Kraken orders settle in USD, so only USD/USDT markets matter
+    const pairs = [...idx.byCanonical.values()].filter((p) => p.quote === "USD" || p.quote === "USDT");
+    for (const group of chunk(pairs, 80)) {
+      try {
+        const res = await fetchJson(
+          `${base}/0/public/Ticker?pair=${group.map((p) => p.altname).join(",")}`,
+          12000,
+        );
+        for (const [key, t] of Object.entries((res && res.result) || {})) {
+          const p = idx.byCanonical.get(String(key).toUpperCase()) || idx.byAlt.get(String(key).toUpperCase());
+          if (!p || !t) continue;
+          const last = Number(t.c && t.c[0]) || 0;
+          const open = Number(t.o && t.o[1]) || 0;
+          const vwap = Number(t.p && t.p[1]) || last;
+          if (!(last > 0)) continue;
+          out.push({
+            symbol: p.base,
+            price: last,
+            volume24h: (Number(t.v && t.v[1]) || 0) * vwap,
+            change24h: open > 0 ? (last / open - 1) * 100 : 0,
+          });
+        }
+      } catch (err) {
+        console.log(`kraken ticker batch failed: ${err && err.message}`);
+      }
+    }
+  }
+  return out;
+}
+
+/** The venue's OHLCV for one coin, oldest bar first. Null when it has no pair. */
+export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 300) {
+  const ex = String((feed && feed.exchange) || "");
+  const base = VENUE_BASE[ex];
+  const iv = VENUE_INTERVAL[ex] && VENUE_INTERVAL[ex][interval];
+  const sym = String(symbol || "").toUpperCase();
+  if (!base || !iv || !sym) return null;
+  try {
+    if (ex === "kucoin") {
+      // KuCoin's candle endpoint answers with the last 100 bars unless the
+      // window is asked for: the analyser needs a full series (EMA200, RSI,
+      // Bollinger), so the range is set from the bar count wanted
+      const spanMs = limit * (KUCOIN_BAR_MS[iv] || 3600000);
+      const now = Math.floor(Date.now() / 1000);
+      const startAt = Math.floor((Date.now() - spanMs) / 1000);
+      const res = await fetchJson(
+        `${base}/api/v1/market/candles?type=${iv}&symbol=${sym}-USDT&startAt=${startAt}&endAt=${now}`,
+        12000,
+      );
+      // KuCoin rows are [time, open, close, high, low, volume, turnover],
+      // newest first
+      const rows = Array.isArray(res && res.data) ? res.data : [];
+      return rows
+        .map((r) => ({ t: Number(r[0]) * 1000, o: +r[1], h: +r[3], l: +r[4], c: +r[2], v: +r[5] }))
+        .sort((a, b) => a.t - b.t)
+        .slice(-limit);
+    }
+    if (ex === "bybit") {
+      const res = await fetchJson(
+        `${base}/v5/market/kline?category=spot&symbol=${sym}USDT&interval=${iv}&limit=${limit}`,
+        12000,
+      );
+      const rows = ((res && res.data) || {}).result?.list || [];
+      return rows
+        .map((r) => ({ t: Number(r[0]), o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }))
+        .sort((a, b) => a.t - b.t);
+    }
+    if (ex === "kraken") {
+      const idx = await krakenPairIndex();
+      const pair =
+        [...idx.byCanonical.values()].find((p) => p.base === sym && p.quote === "USD") ||
+        [...idx.byCanonical.values()].find((p) => p.base === sym && VENUE_QUOTES.includes(p.quote));
+      if (!pair) return null;
+      const res = await fetchJson(
+        `${base}/0/public/OHLC?pair=${pair.altname}&interval=${iv}`,
+        12000,
+      );
+      const result = (res && res.result) || {};
+      const rows = result[pair.altname] || Object.entries(result).find(([k]) => k !== "last")?.[1] || [];
+      // [time(sec), open, high, low, close, vwap, volume, count]
+      return (Array.isArray(rows) ? rows : [])
+        .map((r) => ({ t: Number(r[0]) * 1000, o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[6] }))
+        .sort((a, b) => a.t - b.t)
+        .slice(-limit);
+    }
+  } catch (err) {
+    console.log(`${ex} candles for ${sym} failed: ${err && err.message}`);
+  }
+  return null;
+}
+
+/** Last prices for coins neither the US feed nor Kraken lists (wallet holdings
+ * on another venue still get valued instead of showing as zero). */
+async function venuePriceFallback(symbols) {
+  const out = new Map();
+  const missing = symbols.filter((s) => s);
+  if (!missing.length) return out;
+  const take = (sym, px) => {
+    if (px > 0 && missing.includes(sym) && !out.has(sym)) out.set(sym, px);
+  };
+  try {
+    const res = await fetchJson(`${VENUE_BASE.kucoin}/api/v1/market/allTickers`, 10000);
+    for (const t of ((res && res.data) || {}).ticker || []) {
+      const [sym, quote] = String(t.symbol || "").split("-");
+      if (quote !== "USDT") continue;
+      take(String(sym || "").toUpperCase(), Number(t.last) || 0);
+    }
+  } catch (err) {
+    // a venue outage never blocks a valuation
+  }
+  if (out.size < missing.length) {
+    try {
+      const res = await fetchJson(`${VENUE_BASE.bybit}/v5/market/tickers?category=spot`, 10000);
+      for (const t of ((res && res.data) || {}).result?.list || []) {
+        const sym = String(t.symbol || "").toUpperCase();
+        if (!sym.endsWith("USDT")) continue;
+        take(sym.slice(0, -4), Number(t.lastPrice) || 0);
+      }
+    } catch (err) {
+      // same
+    }
+  }
+  return out;
+}
+
+/** Caps, liquidity tiers and rank applied to a venue's raw ticker rows. */
+async function finalizeCoins(db, list) {
+  const coins = (list || [])
+    .filter((c) => c && c.price > 0 && !isStable(c.symbol))
+    .sort((a, b) => b.volume24h - a.volume24h);
+  if (!coins.length) return [];
+  const caps = await loadCaps(db);
+  console.log(`caps loaded: ${caps ? caps.size : "none"}`);
+  if (caps && caps.size) {
+    for (const c of coins) c.market_cap = caps.get(c.symbol) || 0;
+  }
+  // one row per coin: a venue quoting the same base in USD and USDT lists it twice
+  const seen = new Set();
+  const unique = [];
+  for (const c of coins) {
+    if (seen.has(c.symbol)) continue;
+    seen.add(c.symbol);
+    unique.push(c);
+  }
+  unique.forEach((c, i) => {
+    c.name = c.symbol;
+    c.coingecko_id = c.coingecko_id || "";
+    c.image = c.image || "";
+    c.market_cap = c.market_cap || 0;
+    c.change7d = c.change7d || 0;
+    c.bucket = tierFor(i);
+    c.rank = i + 1;
+  });
+  return unique;
+}
+
+/** Whole-market snapshot: the desk's own venue when it has a bulk ticker
+ * (`feed` = {exchange}), else the shared Binance US feed. Ranked by volume. */
+export async function fetchMarkets(db = null, feed = null) {
+  const venue = String((feed && feed.exchange) || "");
+  const source = venue && venue !== "binance_us" && venue !== "binance" ? venue : "binance_us";
+  const cacheKey = `markets:${source}`;
+  const cached = cacheGet(cacheKey);
   if (cached) return { ...cached, capsDebug: -2 };
+
+  if (source !== "binance_us") {
+    let venueRows = [];
+    try {
+      venueRows = await fetchVenueMarkets(feed);
+    } catch (err) {
+      console.log(`${source} markets failed: ${err && err.message}`);
+    }
+    const venueCoins = await finalizeCoins(db, venueRows);
+    if (venueCoins.length) {
+      return cacheSet(
+        cacheKey,
+        { coins: venueCoins, source, capsDebug: venueCoins.some((c) => c.market_cap > 0) ? 1 : -1 },
+        60000,
+      );
+    }
+  }
 
   let rows = null;
   try {
@@ -303,7 +573,7 @@ export async function fetchMarkets(db = null) {
     if (coins.length) {
       saveMarketsToDb(db, coins);
       return cacheSet(
-        "markets",
+        cacheKey,
         { coins, source: "binance_us", capsDebug: caps && caps.size ? caps.size : -1 },
         60000,
       );
@@ -337,16 +607,24 @@ export async function fetchMarkets(db = null) {
       c.rank = i + 1;
     });
     console.log(`markets served from desk cache: ${coins.length} symbols`);
-    return cacheSet("markets", { coins, source: "desk_cache", capsDebug: -3 }, 60000);
+    return cacheSet(cacheKey, { coins, source: "desk_cache", capsDebug: -3 }, 60000);
   }
   throw new Error("The market feed is unavailable right now - try again shortly.");
 }
 
-/** OHLCV candles. Returns null when a coin has no tradable pair. */
-export async function fetchCandles(symbol, interval = "1h", limit = 300) {
-  const key = `k:${symbol}:${interval}:${limit}`;
+/** OHLCV candles for one coin: from the desk's own venue when a `feed` is
+ * given, else Binance US. Returns null when no pair has data. */
+export async function fetchCandles(symbol, interval = "1h", limit = 300, feed = null) {
+  const venue = String((feed && feed.exchange) || "");
+  const tag = venue && venue !== "binance_us" && venue !== "binance" ? venue : "us";
+  const key = `k:${tag}:${symbol}:${interval}:${limit}`;
   const cached = cacheGet(key);
   if (cached) return cached;
+
+  if (tag !== "us") {
+    const venueCandles = await fetchVenueCandles(feed, symbol, interval, limit);
+    if (venueCandles && venueCandles.length) return cacheSet(key, venueCandles, 45000);
+  }
 
   let rows = null;
   try {
@@ -465,6 +743,14 @@ export async function fetchLivePrices(symbols, quoteAsset = "USDT") {
     } catch (err) {
       console.log(`kraken live prices failed: ${err && err.message}`);
     }
+  }
+
+  // coins only a KuCoin or Bybit account holds still get a live price, so a
+  // wallet position is never valued at zero and never exits on a stale figure
+  const stillMissing = wanted.filter((s) => !map.has(s));
+  if (stillMissing.length) {
+    const extra = await venuePriceFallback(stillMissing);
+    for (const [sym, px] of extra) map.set(sym, px);
   }
   return cacheSet(key, map, 30000);
 }

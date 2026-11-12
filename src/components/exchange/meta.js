@@ -21,7 +21,7 @@ export const EXCHANGE_META = {
     name: 'KuCoin',
     testnet: true,
     needsPassphrase: true,
-    note: 'Needs the API passphrase in addition to the key and secret.',
+    note: 'Needs the API passphrase in addition to the key and secret. Enable margin trading on the key to short through KuCoin — spot funds sit in the trading account and short collateral in the margin account.',
   },
   kraken: {
     name: 'Kraken',

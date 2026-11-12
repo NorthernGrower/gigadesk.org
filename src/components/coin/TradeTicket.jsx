@@ -7,10 +7,10 @@ import { useToast } from '@/components/ui/use-toast';
 import { ensureBotConfig, emitBotTick, roundTo } from '@/lib/market';
 import { fmtPrice, fmtUsd } from '@/lib/format';
 
-// Shorting needs a margin-capable API on the connected exchange. Kraken
-// margin is geo-restricted and Binance US is spot-only, so their imported
-// APIs can't short; Binance, Bybit and KuCoin futures can.
-const SHORT_CAPABLE = new Set(['binance', 'bybit', 'kucoin']);
+// Shorting needs a margin-capable API the desk can place through: Kraken's
+// margin account and KuCoin's cross margin. Spot-only accounts (Binance US,
+// Bybit spot) can't open one.
+const SHORT_CAPABLE = new Set(['kraken', 'kucoin']);
 
 export default function TradeTicket({ snapshot, onOpened }) {
   const { toast } = useToast();

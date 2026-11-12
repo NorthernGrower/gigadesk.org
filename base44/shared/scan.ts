@@ -11,9 +11,44 @@ function inScope(coin, scope) {
   return coin.bucket === scope;
 }
 
+/**
+ * The venue a desk should scan and settle orders on: its chosen live
+ * connection, else any connected trading-enabled account the user added.
+ * `null` means the desk has no exchange attached and scans the shared feed.
+ */
+export async function resolveDeskVenue(base44, config) {
+  try {
+    const owner = (config && config.created_by_id) || "";
+    const LR = (config && config.live_rules) || {};
+    const id = LR.real_connection_id || (config && config.real_connection_id) || "";
+    let conn = id
+      ? await base44.asServiceRole.entities.ExchangeConnection.get(id).catch(() => null)
+      : null;
+    if (!conn || conn.status !== "connected" || conn.allow_trading !== true) {
+      const rows = asArray(
+        await base44.asServiceRole.entities.ExchangeConnection.filter(
+          { created_by_id: owner, status: "connected", allow_trading: true },
+          { sort: "-updated_date", limit: 1 },
+        ),
+      );
+      conn = rows[0] || null;
+    }
+    if (!conn || conn.status !== "connected") return null;
+    return {
+      exchange: conn.exchange,
+      testnet: Boolean(conn.testnet),
+      label: conn.label || conn.exchange,
+      balances: Array.isArray(conn.balances) ? conn.balances : [],
+    };
+  } catch (err) {
+    console.log(`venue resolution failed: ${err && err.message}`);
+    return null;
+  }
+}
+
 /** Whole-market snapshot plus the market-wide median move used for relative strength. */
-export async function loadUniverse(db = null) {
-  const { coins, source } = await fetchMarkets(db);
+export async function loadUniverse(db = null, feed = null) {
+  const { coins, source } = await fetchMarkets(db, feed);
   const moves = coins
     .map((c) => c.change24h)
     .filter((v) => Number.isFinite(v))
@@ -67,10 +102,11 @@ export async function scanBoard({
   extraSymbols = [],
   onlySymbols = null,
   confluenceV2 = true,
+  feed = null,
   db = null,
 } = {}) {
   const safeScope = SCOPES.has(scope) ? scope : "all";
-  const { coins, source, medianChange24h } = await loadUniverse(db);
+  const { coins, source, medianChange24h } = await loadUniverse(db, feed);
   // coins with no market-cap data (0) are out of consideration whenever the
   // feed carries caps at all
   const hasCaps = coins.some((c) => (c.market_cap || 0) > 0);
@@ -87,7 +123,7 @@ export async function scanBoard({
   // wider batch shortens the scan's serial rounds from ~10 to ~6
   for (const group of chunk(candidates, 10)) {
     const settled = await Promise.allSettled(
-      group.map((c) => fetchCandles(c.symbol, timeframe, 300)),
+      group.map((c) => fetchCandles(c.symbol, timeframe, 300, feed)),
     );
     settled.forEach((res, i) => {
       if (res.status !== "fulfilled" || !res.value || !res.value.length) return;

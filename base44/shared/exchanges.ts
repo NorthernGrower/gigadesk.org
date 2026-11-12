@@ -1,7 +1,12 @@
 // Signed account reads for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every outbound request is
 // bounded by a 10s timeout and errors are returned, never thrown.
-import { cacheGet, cacheSet, fetchLivePrices } from "./market.ts";
+import { cacheGet, cacheSet, fetchLivePrices, round } from "./market.ts";
+
+// Venues whose margin API this desk can actually place a short through: a
+// short is a margin order, so a spot-only account (Binance US, Bybit spot)
+// could never fill one.
+export const SHORT_VENUES = new Set(["kraken", "kucoin"]);
 
 export const enc = new TextEncoder();
 
@@ -209,6 +214,18 @@ export async function fetchMarketConstraints(cfg) {
         cursor = result.nextPageCursor || "";
         if (!cursor) break;
       }
+    } else if (cfg.exchange === "kucoin") {
+      const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+      const res = await callJson(`${base}/api/v1/symbols`);
+      for (const s of Array.isArray(res.data) ? res.data : []) {
+        if (s.enableTrading === false) continue;
+        const pair = `${String(s.baseCurrency || "").toUpperCase()}${String(s.quoteCurrency || "").toUpperCase()}`;
+        map.set(pair, {
+          minQty: Number(s.baseMinSize) || null,
+          qtyStep: Number(s.baseIncrement) || null,
+          minNotional: Number(s.quoteMinSize) || null,
+        });
+      }
     } else if (cfg.exchange === "kraken") {
       const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
       const pairs = Object.values(((res.data || {}).result) || {});
@@ -309,37 +326,80 @@ async function bybitAccount(cfg) {
 }
 
 // ---- KuCoin (HMAC-SHA256 base64 signatures + encrypted passphrase) ----
+// KuCoin splits funds across wallets: spot sits in the main and trade accounts,
+// a cross-margin account holds short collateral. The default account list
+// returns one row per currency per wallet type, so reading it flat made the desk
+// see a slice of each currency (funding sized off a partial balance) and hid the
+// margin account entirely. Both are read here and merged per currency:
+// `total` is the whole holding shown on the desk, `spot` the part an order can
+// spend without moving funds first.
 async function kucoinAccount(cfg) {
   const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
-  const endpoint = "/api/v1/accounts";
-  const ts = String(Date.now());
-  const sign = await hmacB64(cfg.api_secret, ts + "GET" + endpoint);
-  const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
-  const res = await callJson(base + endpoint, {
-    headers: {
-      "KC-API-KEY": cfg.api_key,
-      "KC-API-SIGN": sign,
-      "KC-API-TIMESTAMP": ts,
-      "KC-API-PASSPHRASE": pass,
-      "KC-API-KEY-VERSION": "2",
-    },
-  });
+  const get = async (path) => {
+    const ts = String(Date.now());
+    const sign = await hmacB64(cfg.api_secret, ts + "GET" + path);
+    const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
+    return callJson(base + path, {
+      headers: {
+        "KC-API-KEY": cfg.api_key,
+        "KC-API-SIGN": sign,
+        "KC-API-TIMESTAMP": ts,
+        "KC-API-PASSPHRASE": pass,
+        "KC-API-KEY-VERSION": "2",
+      },
+    });
+  };
+  const res = await get("/api/v1/accounts");
   const data = res.data || {};
-  if (data.code === "200000" && Array.isArray(data.data)) {
+  if (data.code !== "200000" || !Array.isArray(data.data)) {
     return {
-      ok: true,
+      ok: false,
       canTrade: null,
-      message: "Key verified with a live account read",
-      balances: sortBalances(
-        data.data.map((a) => ({ asset: a.currency, total: Number(a.total) || 0 })),
-      ),
+      message: `KuCoin error: ${data.msg || data.code || res.text || "no response from the exchange"}`,
+      balances: [],
     };
   }
+  const totals = new Map();
+  for (const a of data.data) {
+    const asset = String(a.currency || "").toUpperCase();
+    if (!asset) continue;
+    const row = totals.get(asset) || { asset, spot: 0, total: 0 };
+    const amount = Number(a.total) || 0;
+    row.spot += amount;
+    row.total += amount;
+    totals.set(asset, row);
+  }
+  // cross-margin wallet (best effort: a key without margin permission still
+  // returns a correct spot balance)
+  try {
+    const margin = await get("/api/v1/accounts?type=margin");
+    const m = margin.data || {};
+    if (m.code === "200000" && Array.isArray(m.data)) {
+      for (const a of m.data) {
+        const asset = String(a.currency || "").toUpperCase();
+        if (!asset) continue;
+        const row = totals.get(asset) || { asset, spot: 0, total: 0 };
+        // margin rows report gross holdings beside the borrowed amount: only
+        // the net is the account's own money, so a short's borrowed asset never
+        // inflates the value the desk shows
+        row.total += Math.max(0, (Number(a.total) || 0) - (Number(a.liability) || 0));
+        totals.set(asset, row);
+      }
+    }
+  } catch (err) {
+    console.log(`kucoin margin accounts unavailable: ${err && err.message}`);
+  }
   return {
-    ok: false,
+    ok: true,
     canTrade: null,
-    message: `KuCoin error: ${data.msg || data.code || res.text || "no response from the exchange"}`,
-    balances: [],
+    message: "Key verified with a live account read",
+    balances: sortBalances(
+      [...totals.values()].map((b) => ({
+        asset: b.asset,
+        total: round(b.total, 8),
+        spot: round(b.spot, 8),
+      })),
+    ),
   };
 }
 
@@ -536,10 +596,21 @@ export async function pickQuoteBalance(balances = [], exchange) {
 export async function pickNativeQuoteBalance(balances = [], exchange) {
   const native = (QUOTE_ALIASES[exchange] || ["USDT"])[0];
   const row = (balances || []).find(
-    (b) => String(b.asset || "").toUpperCase() === native && (Number(b.total) || 0) > 0,
+    (b) => String(b.asset || "").toUpperCase() === native && spendable(b) > 0,
   );
-  return row ? Math.round((Number(row.total) || 0) * 100) / 100 : 0;
+  return row ? Math.round(spendable(row) * 100) / 100 : 0;
 }
+
+/**
+ * What an order can actually spend of a holding: the spot wallets when the
+ * venue reports them separately (KuCoin keeps margin collateral in its own
+ * wallet), else the whole holding.
+ */
+const spendable = (b) => {
+  const spot = Number(b && b.spot);
+  if (Number.isFinite(spot) && spot > 0) return spot;
+  return Number(b && b.total) || 0;
+};
 
 /**
  * The asset the account can actually fund orders with, in preference order:
@@ -549,13 +620,11 @@ export async function pickNativeQuoteBalance(balances = [], exchange) {
  */
 export function pickFundingQuote(balances = [], exchange) {
   const order = exchange === "kraken" ? ["USD", "USDT", "USDC"] : (QUOTE_ALIASES[exchange] || ["USDT"]);
-  const list = (balances || []).map((b) => ({
-    asset: String(b.asset || "").toUpperCase(),
-    total: Number(b.total) || 0,
-  }));
   for (const asset of order) {
-    const row = list.find((b) => b.asset === asset && b.total > 0);
-    if (row) return { asset, amount: Math.round(row.total * 100) / 100 };
+    const row = (balances || []).find(
+      (b) => String(b.asset || "").toUpperCase() === asset && spendable(b) > 0,
+    );
+    if (row) return { asset, amount: Math.round(spendable(row) * 100) / 100 };
   }
   return null;
 }
