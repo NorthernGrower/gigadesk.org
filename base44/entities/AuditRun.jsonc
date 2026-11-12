@@ -34,8 +34,12 @@
     "ran_at"
   ],
   "rls": {
-    "read": {},
     "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": {
       "user_condition": {
         "role": "admin"
       }
