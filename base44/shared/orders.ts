@@ -1,7 +1,7 @@
 // Market order execution for the supported exchanges. Server-side only: this
 // module must never be imported from the frontend. Every request is bounded by
 // a 10s timeout and refusals are returned as values, never thrown.
-import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, krakenSign, krakenNonce, krakenSignedCall, withKrakenSlot, KRAKEN_MESSAGES, fetchMarketConstraints, readAccount } from "./exchanges.ts";
+import { callJson, hmacHex, hmacB64, sha256Hex, b64ToBytes, enc, toBase64, kucoinAuthHeaders, krakenSign, krakenNonce, krakenSignedCall, withKrakenSlot, KRAKEN_MESSAGES, fetchMarketConstraints, readAccount } from "./exchanges.ts";
 import { decryptSecret } from "./crypto.ts";
 import { round, fetchLivePrices } from "./market.ts";
 
@@ -356,9 +356,28 @@ async function bybitOrder(cfg, { usd, quantity, price }, side, pair, idem) {
 }
 
 // ---- KuCoin (HMAC-SHA256 base64 signature + encrypted passphrase) ----
+
+// KuCoin's public sandbox is retired: orders only ever go to the live venue.
+// The key's own version must be sent in the header (2 or 3, same signature
+// scheme); a 400004 answer means the key is the other version, so the order is
+// retried once with it.
+async function kucoinPost(cfg, endpoint, payload) {
+  const body = JSON.stringify(payload);
+  const send = async (version) =>
+    callJson("https://api.kucoin.com" + endpoint, {
+      method: "POST",
+      headers: {
+        ...(await kucoinAuthHeaders(cfg, "POST", endpoint, body, version)),
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+  const first = await send("2");
+  if (String(((first.data || {}).code) || "") === "400004") return send("3");
+  return first;
+}
+
 async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
-  // KuCoin's public sandbox is retired: orders only ever go to the live venue
-  const base = "https://api.kucoin.com";
   const endpoint = "/api/v1/orders";
   const payload = {
     clientOid: idem,
@@ -368,22 +387,7 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
   };
   if (side === "buy") payload.funds = String(round(usd, 2));
   else payload.size = String(trunc(quantity, 8));
-  const body = JSON.stringify(payload);
-  const ts = String(Date.now());
-  const sign = await hmacB64(cfg.api_secret, ts + "POST" + endpoint + body);
-  const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
-  const res = await callJson(base + endpoint, {
-    method: "POST",
-    headers: {
-      "KC-API-KEY": cfg.api_key,
-      "KC-API-SIGN": sign,
-      "KC-API-TIMESTAMP": ts,
-      "KC-API-PASSPHRASE": pass,
-      "KC-API-KEY-VERSION": "2",
-      "Content-Type": "application/json",
-    },
-    body,
-  });
+  const res = await kucoinPost(cfg, endpoint, payload);
   const data = res.data || {};
   const orderId = ((data.data || {}).orderId) || "";
   if (data.code === "200000" && orderId) {
@@ -398,7 +402,6 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
 // the opening sell and `autoRepay` on the closing buy make that one call each,
 // so the desk manages a KuCoin short exactly like any other position.
 async function kucoinMarginOrder(cfg, { symbol, usd, quantity, price, leverage }, side, pair, idem) {
-  const base = "https://api.kucoin.com";
   const endpoint = "/api/v1/margin/order";
   const asset = String(symbol || "").toUpperCase();
   const quote = cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT";
@@ -430,22 +433,7 @@ async function kucoinMarginOrder(cfg, { symbol, usd, quantity, price, leverage }
     payload.size = String(trunc(qty, 8));
     payload.autoBorrow = true;
   }
-  const body = JSON.stringify(payload);
-  const ts = String(Date.now());
-  const sign = await hmacB64(cfg.api_secret, ts + "POST" + endpoint + body);
-  const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
-  const res = await callJson(base + endpoint, {
-    method: "POST",
-    headers: {
-      "KC-API-KEY": cfg.api_key,
-      "KC-API-SIGN": sign,
-      "KC-API-TIMESTAMP": ts,
-      "KC-API-PASSPHRASE": pass,
-      "KC-API-KEY-VERSION": "2",
-      "Content-Type": "application/json",
-    },
-    body,
-  });
+  const res = await kucoinPost(cfg, endpoint, payload);
   const data = res.data || {};
   const orderId = ((data.data || {}).orderId) || "";
   if (data.code === "200000" && orderId) {

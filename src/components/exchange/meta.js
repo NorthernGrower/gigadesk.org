@@ -21,7 +21,7 @@ export const EXCHANGE_META = {
     name: 'KuCoin',
     testnet: false,
     needsPassphrase: true,
-    note: 'Live keys only: KuCoin has retired its public sandbox. Needs the API passphrase in addition to the key and secret. Enable margin trading on the key to short through KuCoin — spot funds sit in the trading account and short collateral in the margin account.',
+    note: 'Live keys only: KuCoin has retired its public sandbox. Paste the API passphrase exactly as KuCoin shows it (version 3 keys show an encrypted passphrase). Enable margin trading on the key to short through KuCoin — spot funds sit in the trading account and short collateral in the margin account.',
   },
   kraken: {
     name: 'Kraken',

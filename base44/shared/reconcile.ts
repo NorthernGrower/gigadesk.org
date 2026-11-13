@@ -10,7 +10,7 @@ import { asArray, round, fetchLivePrices } from "./market.ts";
 import {
   callJson,
   hmacHex,
-  hmacB64,
+  kucoinAuthHeaders,
   QUOTE_ALIASES,
   krakenSignedCall,
   krakenAsset,
@@ -163,21 +163,25 @@ async function bybitFills(cfg) {
 }
 
 async function kucoinFills(cfg) {
-  const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+  // KuCoin's public sandbox is retired: fills are read from the live venue
+  const base = "https://api.kucoin.com";
   const fills = [];
   const read = async (path, query = "") => {
-    const ts = String(Date.now());
-    const sign = await hmacB64(cfg.api_secret, ts + "GET" + path + query);
-    const res = await callJson(base + path + query, {
-      headers: {
-        "KC-API-KEY": cfg.api_key,
-        "KC-API-SIGN": sign,
-        "KC-API-TIMESTAMP": ts,
-        "KC-API-PASSPHRASE": await hmacB64(cfg.passphrase || "", cfg.api_secret),
-        "KC-API-KEY-VERSION": "2",
-      },
-    });
-    return res.data || {};
+    // the key's own version decides the header; most keys are version 3 now,
+    // so an "Invalid KC-API-KEY-VERSION" answer is retried once with it
+    let version = "2";
+    const call = async () =>
+      callJson(base + path + query, {
+        headers: await kucoinAuthHeaders(cfg, "GET", path + query, "", version),
+      });
+    let res = await call();
+    let data = res.data || {};
+    if (String(data.code || "") === "400004") {
+      version = "3";
+      res = await call();
+      data = res.data || {};
+    }
+    return data;
   };
   for (const path of ["/api/v1/fills", "/api/v1/hist-orders"]) {
     for (let page = 1; page <= 5; page++) {

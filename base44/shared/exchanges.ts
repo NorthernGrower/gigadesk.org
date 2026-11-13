@@ -347,29 +347,63 @@ const KUCOIN_MESSAGES = {
   "400007": "The key is missing permission to read the account (enable General permission on the key)",
 };
 
+/**
+ * KuCoin signs with the key's OWN version: versions 2 and 3 use the identical
+ * scheme (HMAC-SHA256 base64 signature, passphrase encrypted with the secret),
+ * only the KC-API-KEY-VERSION header has to match the key that was created.
+ * A mismatch comes back as 400004, so callers sign for one version and retry
+ * once with the other.
+ */
+export async function kucoinAuthHeaders(cfg, method, path, body, version = "2") {
+  const ts = String(Date.now());
+  const sign = await hmacB64(cfg.api_secret, ts + method + path + (body || ""));
+  // Version 2 keys: you type a passphrase, and the header carries
+  // base64(HMAC-SHA256(key = API secret, message = passphrase)).
+  // Version 3 keys: KuCoin encrypts the passphrase when the key is created and
+  // shows the result on the key page, so that string is sent as-is — hashing it
+  // again is what comes back as "Invalid KC-API-PASSPHRASE".
+  const pass =
+    version === "3"
+      ? cfg.passphrase || ""
+      : await hmacB64(cfg.api_secret, cfg.passphrase || "");
+  return {
+    "KC-API-KEY": cfg.api_key,
+    "KC-API-SIGN": sign,
+    "KC-API-TIMESTAMP": ts,
+    "KC-API-PASSPHRASE": pass,
+    "KC-API-KEY-VERSION": version,
+  };
+}
+
 async function kucoinAccount(cfg) {
   const base = "https://api.kucoin.com";
-  const get = async (path) => {
-    const ts = String(Date.now());
-    const sign = await hmacB64(cfg.api_secret, ts + "GET" + path);
-    const pass = await hmacB64(cfg.passphrase || "", cfg.api_secret);
-    return callJson(base + path, {
-      headers: {
-        "KC-API-KEY": cfg.api_key,
-        "KC-API-SIGN": sign,
-        "KC-API-TIMESTAMP": ts,
-        "KC-API-PASSPHRASE": pass,
-        "KC-API-KEY-VERSION": "2",
-      },
-    });
-  };
-  const res = await get("/api/v1/accounts");
-  const data = res.data || {};
+  // the key's own version decides the header, and most keys created today are
+  // version 3: sign for 2 first, then retry once with 3 when KuCoin says the
+  // version does not match
+  let version = "2";
+  const get = async (path, v = version) =>
+    callJson(base + path, { headers: await kucoinAuthHeaders(cfg, "GET", path, "", v) });
+  let res = await get("/api/v1/accounts");
+  let data = res.data || {};
+  if (String(data.code || "") === "400004") {
+    version = "3";
+    res = await get("/api/v1/accounts");
+    data = res.data || {};
+  }
   if (data.code !== "200000" || !Array.isArray(data.data)) {
+    console.log(`kucoin accounts read: key version tried ${version}, code ${String(data.code)} msg ${String(data.msg)}`);
+    // 400004 covers both a version mismatch and a bad passphrase, so KuCoin's
+    // own wording decides which advice applies
+    const said = String(data.msg || "").toUpperCase();
+    const detail = said.includes("PASSPHRASE")
+      ? "KuCoin rejected the API passphrase — copy it again exactly as shown on the key page (a version 3 key shows an encrypted passphrase)"
+      : said.includes("KEY-VERSION")
+        ? "KuCoin rejected the key version — the key was created under a different version, so recreate it and paste its passphrase"
+        : KUCOIN_MESSAGES[String(data.code || "")] || data.msg || data.code || res.text || "no response from the exchange";
     return {
       ok: false,
       canTrade: null,
-      message: `KuCoin error: ${KUCOIN_MESSAGES[String(data.code || "")] || data.msg || data.code || res.text || "no response from the exchange"}`,
+      message: `KuCoin error: ${detail}`,
       balances: [],
     };
   }
