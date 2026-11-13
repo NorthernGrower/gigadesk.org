@@ -9,6 +9,10 @@ import { resolveDeskVenue } from "../../shared/scan.ts";
 
 const CACHE = new Map();
 const AI_TTL = 10 * 60 * 1000;
+// the analysis bar floor per timeframe: monthly and weekly series only have as
+// many candles as the coin is old (80 monthly bars is ~6.7 years — almost no
+// coin has them), so those floors come down to what the indicators need
+const MIN_BARS = { "15m": 80, "1h": 80, "4h": 80, "12h": 80, "1d": 80, "1w": 60, "1M": 30 };
 const num = (v) => (v == null || Number.isNaN(v) ? null : round(v, 6));
 
 const AI_SCHEMA = {
@@ -86,17 +90,18 @@ export default async function (req) {
       return Response.json({ error: `${symbol} is not in the tracked market` }, { status: 404 });
     }
 
+    const minBars = MIN_BARS[timeframe] || 80;
     const candles = await fetchCandles(symbol, timeframe, 300, venue);
-    if (!candles || candles.length < 80) {
+    if (!candles || candles.length < minBars) {
       return Response.json(
-        { error: `Not enough chart history for ${symbol} on this timeframe` },
+        { error: `Not enough chart history for ${symbol} on this timeframe (${candles ? candles.length : 0} candles, ${minBars} needed)` },
         { status: 404 },
       );
     }
 
     const moves = coins.map((c) => c.change24h).filter(Number.isFinite).sort((a, b) => a - b);
     const medianChange24h = moves.length ? moves[Math.floor(moves.length / 2)] : 0;
-    const snapshot = analyzeCoin(coin, candles, { medianChange24h, dailyTargetPct: 2 });
+    const snapshot = analyzeCoin(coin, candles, { medianChange24h, dailyTargetPct: 2, minBars });
     if (!snapshot) {
       return Response.json({ error: "Not enough data to analyse this coin" }, { status: 422 });
     }

@@ -115,7 +115,14 @@ export function scanMarket(payload = {}) {
 }
 
 export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
-  return unwrap(await base44.functions.invoke('coinDetail', { symbol, timeframe, withAi }));
+  try {
+    return unwrap(await base44.functions.invoke('coinDetail', { symbol, timeframe, withAi }));
+  } catch (err) {
+    // the SDK's own HTTP message ("Request failed with status code 404")
+    // hides the function's reason — surface the body's error when it travels
+    const reason = err?.response?.data?.error || err?.data?.error;
+    throw new Error(reason || err.message || 'Could not load the coin.');
+  }
 }
 
 // The bot cycle gets called from several places at once on page load (the

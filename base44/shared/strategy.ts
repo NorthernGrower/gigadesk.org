@@ -458,7 +458,9 @@ function scoreSide(dir, m) {
 export function analyzeCoin(coin, candles, ctx = {}) {
   const closes = candles.map((c) => c.c);
   const n = closes.length;
-  if (n < 80) return null;
+  // the bar floor scales with the timeframe (a caller sets ctx.minBars):
+  // 80 monthly candles is ~6.7 years, which nearly no coin has
+  if (n < (Number(ctx.minBars) || 80)) return null;
   const price = closes[n - 1];
   if (!price) return null;
 
