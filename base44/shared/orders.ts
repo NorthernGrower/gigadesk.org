@@ -357,7 +357,8 @@ async function bybitOrder(cfg, { usd, quantity, price }, side, pair, idem) {
 
 // ---- KuCoin (HMAC-SHA256 base64 signature + encrypted passphrase) ----
 async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
-  const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+  // KuCoin's public sandbox is retired: orders only ever go to the live venue
+  const base = "https://api.kucoin.com";
   const endpoint = "/api/v1/orders";
   const payload = {
     clientOid: idem,
@@ -397,7 +398,7 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
 // the opening sell and `autoRepay` on the closing buy make that one call each,
 // so the desk manages a KuCoin short exactly like any other position.
 async function kucoinMarginOrder(cfg, { symbol, usd, quantity, price, leverage }, side, pair, idem) {
-  const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+  const base = "https://api.kucoin.com";
   const endpoint = "/api/v1/margin/order";
   const asset = String(symbol || "").toUpperCase();
   const quote = cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT";

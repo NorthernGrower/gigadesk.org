@@ -54,7 +54,10 @@ export const EXCHANGES = {
   binance_us: { name: "Binance US", needsPassphrase: false, testnet: false },
   binance: { name: "Binance", needsPassphrase: false, testnet: true },
   bybit: { name: "Bybit", needsPassphrase: false, testnet: true },
-  kucoin: { name: "KuCoin", needsPassphrase: true, testnet: true },
+  // KuCoin retired its public sandbox: every key is verified against the live
+  // account, so a testnet toggle would only send reads to a dead host (which
+  // answers with an opaque "error code: 1016")
+  kucoin: { name: "KuCoin", needsPassphrase: true, testnet: false },
   kraken: { name: "Kraken", needsPassphrase: false, testnet: false },
 };
 
@@ -136,7 +139,7 @@ export async function fetchListedSymbols(cfg, quotes = null) {
         if (!cursor) break;
       }
     } else if (cfg.exchange === "kucoin") {
-      const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+      const base = "https://api.kucoin.com";
       const res = await callJson(`${base}/api/v1/market/allTickers`);
       const tickers = ((res.data || {}).ticker) || [];
       set = new Set(
@@ -215,7 +218,7 @@ export async function fetchMarketConstraints(cfg) {
         if (!cursor) break;
       }
     } else if (cfg.exchange === "kucoin") {
-      const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+      const base = "https://api.kucoin.com";
       const res = await callJson(`${base}/api/v1/symbols`);
       for (const s of Array.isArray(res.data) ? res.data : []) {
         if (s.enableTrading === false) continue;
@@ -333,8 +336,19 @@ async function bybitAccount(cfg) {
 // margin account entirely. Both are read here and merged per currency:
 // `total` is the whole holding shown on the desk, `spot` the part an order can
 // spend without moving funds first.
+// KuCoin's raw codes are terse; map the common ones to plain advice.
+const KUCOIN_MESSAGES = {
+  "400001": "KuCoin rejected the API key — check it was copied in full",
+  "400002": "KuCoin rejected the signature — the API secret looks wrong or incomplete",
+  "400003": "KuCoin rejected the API passphrase, or the key was created for a different KuCoin site",
+  "400004": "KuCoin rejected the API key version — recreate the key on KuCoin and paste its new passphrase",
+  "400005": "KuCoin does not recognise this API key — check it was copied in full",
+  "400006": "KuCoin rejected the request's IP address — add the desk's IP to the key's whitelist, or remove the whitelist",
+  "400007": "The key is missing permission to read the account (enable General permission on the key)",
+};
+
 async function kucoinAccount(cfg) {
-  const base = cfg.testnet ? "https://sandbox.kucoin.com" : "https://api.kucoin.com";
+  const base = "https://api.kucoin.com";
   const get = async (path) => {
     const ts = String(Date.now());
     const sign = await hmacB64(cfg.api_secret, ts + "GET" + path);
@@ -355,7 +369,7 @@ async function kucoinAccount(cfg) {
     return {
       ok: false,
       canTrade: null,
-      message: `KuCoin error: ${data.msg || data.code || res.text || "no response from the exchange"}`,
+      message: `KuCoin error: ${KUCOIN_MESSAGES[String(data.code || "")] || data.msg || data.code || res.text || "no response from the exchange"}`,
       balances: [],
     };
   }
