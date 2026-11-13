@@ -7,9 +7,11 @@ repositories to the VPS and start the services — that is the whole setup.
 ## 1. One-time setup on the VPS
 
 ```bash
-# tools
-sudo apt-get install -y python3 git curl
+# tools (unzip is required by the Deno installer)
+sudo apt-get install -y python3 git curl unzip
 curl -fsSL https://deno.land/install.sh | sh     # runs the V3 scanner (TypeScript, no npm deps)
+echo 'export PATH="$HOME/.deno/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+deno --version   # prints a version number when Deno is on the PATH
 
 # the research repo (private: use a fine-grained read token or SSH key)
 git clone https://github.com/NorthernGrower/Gigadesk-.git
