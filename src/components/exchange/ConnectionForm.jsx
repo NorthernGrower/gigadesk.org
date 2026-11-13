@@ -95,6 +95,7 @@ export default function ConnectionForm({ onSaved }) {
           <div className="grid gap-1.5">
             <Label className="text-xs uppercase tracking-wider text-muted-foreground">Passphrase</Label>
             <Input type="password" value={form.passphrase} onChange={(e) => set('passphrase', e.target.value)} placeholder="Passphrase" disabled={saving} autoComplete="new-password" />
+            {meta.passphraseHint && <p className="text-xs text-muted-foreground">{meta.passphraseHint}</p>}
           </div>
         )}
 

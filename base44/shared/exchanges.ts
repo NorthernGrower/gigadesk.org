@@ -341,7 +341,7 @@ const KUCOIN_MESSAGES = {
   "400001": "KuCoin rejected the API key — check it was copied in full",
   "400002": "KuCoin rejected the signature — the API secret looks wrong or incomplete",
   "400003": "KuCoin rejected the API passphrase, or the key was created for a different KuCoin site",
-  "400004": "KuCoin rejected the API key version — recreate the key on KuCoin and paste its new passphrase",
+  "400004": "KuCoin rejected the API key version — the desk signs with the key's own version; if this keeps appearing, recreate the key",
   "400005": "KuCoin does not recognise this API key — check it was copied in full",
   "400006": "KuCoin rejected the request's IP address — add the desk's IP to the key's whitelist, or remove the whitelist",
   "400007": "The key is missing permission to read the account (enable General permission on the key)",
@@ -357,15 +357,13 @@ const KUCOIN_MESSAGES = {
 export async function kucoinAuthHeaders(cfg, method, path, body, version = "2") {
   const ts = String(Date.now());
   const sign = await hmacB64(cfg.api_secret, ts + method + path + (body || ""));
-  // Version 2 keys: you type a passphrase, and the header carries
-  // base64(HMAC-SHA256(key = API secret, message = passphrase)).
-  // Version 3 keys: KuCoin encrypts the passphrase when the key is created and
-  // shows the result on the key page, so that string is sent as-is — hashing it
-  // again is what comes back as "Invalid KC-API-PASSPHRASE".
-  const pass =
-    version === "3"
-      ? cfg.passphrase || ""
-      : await hmacB64(cfg.api_secret, cfg.passphrase || "");
+  // The passphrase is the one the user typed when creating the key (KuCoin's
+  // authentication docs: "Encrypt passphrase with HMAC-sha256 via API-Secret,
+  // encode by base64"), and every key version signs it the same way — only
+  // the KC-API-KEY-VERSION header differs. Sending the typed passphrase
+  // unhashed for version 3 keys is what comes back as "Invalid
+  // KC-API-PASSPHRASE".
+  const pass = await hmacB64(cfg.api_secret, cfg.passphrase || "");
   return {
     "KC-API-KEY": cfg.api_key,
     "KC-API-SIGN": sign,
@@ -396,7 +394,7 @@ async function kucoinAccount(cfg) {
     // own wording decides which advice applies
     const said = String(data.msg || "").toUpperCase();
     const detail = said.includes("PASSPHRASE")
-      ? "KuCoin rejected the API passphrase — copy it again exactly as shown on the key page (a version 3 key shows an encrypted passphrase)"
+      ? "KuCoin rejected the API passphrase — paste the exact phrase you typed when you created the key"
       : said.includes("KEY-VERSION")
         ? "KuCoin rejected the key version — the key was created under a different version, so recreate it and paste its passphrase"
         : KUCOIN_MESSAGES[String(data.code || "")] || data.msg || data.code || res.text || "no response from the exchange";
