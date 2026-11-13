@@ -1,8 +1,11 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
+import { fetchCandles } from "../../shared/market.ts";
 
 // One public setup, chosen from the day's top 10 desk picks, for the landing
 // page ad. The choice is anchored to the UTC day, so every visitor sees the
-// same call and it rotates by itself every 24 hours.
+// same call and it rotates by itself every 24 hours. The payload carries what
+// the desk's own call card shows — candles, the indicator snapshot and a full
+// AI read with levels — so the homepage card can mirror the real thing.
 const AI_SCHEMA = {
   type: "object",
   properties: {
@@ -12,6 +15,12 @@ const AI_SCHEMA = {
     },
     confidence: { type: "integer", minimum: 0, maximum: 100 },
     thesis: { type: "string" },
+    entry: { type: "number" },
+    target: { type: "number" },
+    stop: { type: "number" },
+    setup_quality: { type: "string" },
+    invalidation: { type: "string" },
+    horizon: { type: "string" },
     risks: { type: "string" },
   },
   required: ["verdict", "confidence", "thesis", "risks"],
@@ -45,7 +54,7 @@ Coin: ${pick.name || pick.symbol} (${pick.symbol})
 Side: ${pick.side} | price ${pick.price} USD | entry ${pick.entry} | target ${pick.target} | stop ${pick.stop} | required move ${pick.required_move_pct}% | risk/reward ${pick.risk_reward} | score ${pick.score}/100 (${pick.grade})
 Desk reasons: ${(pick.reasons || []).join("; ")}
 
-Write a punchy but honest thesis (max 55 words) on why this setup stands out today, and the main risks (max 35 words). Judge the direction. Never promise a return and never invent data beyond what is given.`,
+Write a punchy but honest thesis (max 55 words) on why this setup stands out today, and the main risks (max 35 words). Judge the direction, refine the entry, target and stop if the numbers above are off, say what would invalidate the setup and the horizon it plays out over, and grade its setup quality. Never promise a return and never invent data beyond what is given.`,
         response_json_schema: AI_SCHEMA,
       }).catch(() => null);
       if (ai) {
@@ -54,6 +63,10 @@ Write a punchy but honest thesis (max 55 words) on why this setup stands out tod
         });
       }
     }
+
+    // the chart behind the call, from the public US feed — the homepage card
+    // is public, so it never depends on anyone's exchange connection
+    const candles = await fetchCandles(pick.symbol, pick.timeframe, 150).catch(() => null);
 
     return Response.json({
       day: new Date().toISOString().slice(0, 10),
@@ -69,12 +82,17 @@ Write a punchy but honest thesis (max 55 words) on why this setup stands out tod
         verdict: pick.verdict,
         confidence: pick.confidence,
         market_cap_bucket: pick.market_cap_bucket,
+        quality: pick.quality || null,
+        confluence: pick.confluence ?? null,
+        categories: pick.categories || null,
+        indicators: pick.indicators || null,
         entry: pick.entry,
         target: pick.target,
         stop: pick.stop,
         required_move_pct: pick.required_move_pct,
         risk_reward: pick.risk_reward,
         reasons: pick.reasons || [],
+        candles: Array.isArray(candles) ? candles : [],
         ai: ai || null,
       },
     });

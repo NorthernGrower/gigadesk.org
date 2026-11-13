@@ -104,6 +104,16 @@
       "type": "object",
       "additionalProperties": true
     },
+    "quality": {
+      "type": "string"
+    },
+    "confluence": {
+      "type": "number"
+    },
+    "categories": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "status": {
       "type": "string",
       "enum": [

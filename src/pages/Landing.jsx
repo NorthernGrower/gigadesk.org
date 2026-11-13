@@ -99,12 +99,13 @@ export default function Landing() {
               the desk that never sleeps
             </p>
             <h1 className="mt-3 font-heading text-4xl font-bold leading-tight tracking-tight md:text-5xl">
-              Your million-dollar desk, running itself.
+              Trade like a desk. Without the desk.
             </h1>
             <p className="mt-4 max-w-lg text-base leading-relaxed text-muted-foreground md:text-lg">
-              GigaDesk scans the entire market, reads the smart money, and works its
-              $1,000,000 desk around the clock — with real stop-loss discipline and a
-              daily profit target. You keep the final word.
+              GigaDesk scans the entire market, reads the smart money, and runs a
+              disciplined trading desk around the clock — real stop-losses, a daily
+              profit target, and every decision it makes is explainable. You keep the
+              final word.
             </p>
             <div className="mt-7 flex flex-wrap items-center gap-3">
               <Link
