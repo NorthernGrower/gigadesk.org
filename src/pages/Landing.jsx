@@ -99,7 +99,7 @@ export default function Landing() {
               the desk that never sleeps
             </p>
             <h1 className="mt-3 font-heading text-4xl font-bold leading-tight tracking-tight md:text-5xl">
-              Trade like a desk. Without the desk.
+              Giga trades. Giga profits. <span className="text-primary">Giga desk.</span>
             </h1>
             <p className="mt-4 max-w-lg text-base leading-relaxed text-muted-foreground md:text-lg">
               GigaDesk scans the entire market, reads the smart money, and runs a
