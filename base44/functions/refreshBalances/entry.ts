@@ -17,11 +17,14 @@ const RUN_COOLDOWN_MS = 8 * 60 * 1000;
 export default async function (req) {
   try {
     const base44 = createClientFromRequest(req);
-    // The platform scheduler calls this with no user session. Anyone else
-    // reaching the endpoint must be a signed-in admin: the run decrypts and
-    // spends every user's stored exchange credentials.
-    const user = await base44.auth.me().catch(() => null);
-    if (user && user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+    // Admin-only: the run decrypts and spends every user's stored exchange
+    // credentials. The scheduled workflows call this as their creator (an app
+    // admin), and anyone else — signed in or not — is refused before any work.
+    const user = await base44.auth
+      .me()
+      .catch((e) => (e.status === 401 ? null : Promise.reject(e)));
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
 
     // single run per cooldown window, whoever calls: the scheduler and an
     // on-demand refresh never double up, and repeated anonymous hits reuse the
@@ -138,9 +141,8 @@ export default async function (req) {
     }
 
     // each result carries a connection's label, exchange message and balance
-    // figures for OTHER users' accounts: an admin caller gets them, the
-    // unauthenticated scheduler gets a count only
-    if (!user) return Response.json({ checked: usable.length });
+    // figures for OTHER users' accounts — only an authenticated admin reaches
+    // this point, so every caller here may see them
     return Response.json({ checked: usable.length, results });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
