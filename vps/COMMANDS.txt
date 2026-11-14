@@ -1,54 +1,52 @@
 GIGADESK VP — COMMANDS TO PASTE (one line at a time)
 ======================================================
 Paste ONE LINE AT A TIME into the VP console and press Enter after each.
-Waiting for each line to finish before the next is what caused last night's
-error (the multiline block got flattened and `sh` tried to run it as a file).
+Waiting for each line to finish before the next is what caused the error
+when the whole block was pasted at once.
 
-If you already cloned the repos last night, the git steps below will just
-say "already exists" — that is fine, keep going.
+FASTEST PATH NOW (repos already cloned, Deno missing):
+  1  sudo apt-get install -y unzip
+  2  curl -fsSL https://deno.land/install.sh | sh
+  3  echo 'export PATH="$HOME/.deno/bin:$PATH"' >> ~/.bashrc
+  4  source ~/.bashrc
+  5  deno --version
+  6  cd ~/gigadesk.org && git fetch origin && git checkout v3-direction-engine && git pull origin v3-direction-engine
+  7  bash vps/setup.sh          <- starts BOTH loops, skips what's done
+  8  pgrep -af continuous.py && pgrep -af direction_scan.ts
 
---- 1. system tools + Deno ---------------------------------------------
-sudo apt-get install -y unzip
-sudo apt-get install -y python3 git curl
-curl -fsSL https://deno.land/install.sh | sh
-echo 'export PATH="$HOME/.deno/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-deno --version
+FULL LIST (if starting from a clean VP):
+  sudo apt-get install -y unzip python3 git curl
+  curl -fsSL https://deno.land/install.sh | sh
+  echo 'export PATH="$HOME/.deno/bin:$PATH"' >> ~/.bashrc
+  source ~/.bashrc
+  deno --version
+  cd ~
+  git clone https://github.com/NorthernGrower/Gigadesk-.git
+  cd Gigadesk- && git checkout research/kraken-btcusd-backtest
+  cd ~
+  git clone https://github.com/NorthernGrower/gigadesk.org.git
+  cd gigadesk.org && git fetch origin && git checkout v3-direction-engine && git pull origin v3-direction-engine
+  cd ~
+  bash gigadesk.org/vps/setup.sh
 
---- 2. the repositories -------------------------------------------------
-cd ~
-git clone https://github.com/NorthernGrower/Gigadesk-.git
-cd Gigadesk- && git checkout research/kraken-btcusd-backtest
-cd ~
-git clone https://github.com/NorthernGrower/gigadesk.org.git
-cd gigadesk.org && git fetch origin && git checkout v3-direction-engine
-cd ~
-(the private repo asks for GitHub credentials: a fine-grained READ-ONLY
- token works; the direction scanner lives on the v3-direction-engine branch)
+START COMMANDS (what setup.sh runs):
+  cd ~/Gigadesk- && nohup python3 research/scripts/continuous.py --every-minutes 30 >> research_loop.log 2>&1 &
+  cd ~/gigadesk.org && nohup deno run --allow-net --allow-read --allow-write vps/direction_scan.ts --every-minutes 60 >> direction_scan.log 2>&1 &
 
---- 3. start the research chain (sweeps, scanner, board, gate) ----------
-cd ~/Gigadesk-
-nohup python3 research/scripts/continuous.py --every-minutes 30 >> research_loop.log 2>&1 &
+CHECK + WATCH:
+  pgrep -af continuous.py
+  pgrep -af direction_scan.ts
+  tail -f ~/Gigadesk-/research_loop.log
+  tail -f ~/gigadesk.org/direction_scan.log
 
---- 4. start the V3 direction scanner (the less-rigid reads) ------------
-cd ~/gigadesk.org
-nohup deno run --allow-net --allow-read --allow-write vps/direction_scan.ts --every-minutes 60 >> direction_scan.log 2>&1 &
+RESULTS LAND IN:
+  ~/gigadesk.org/vps/output/            direction_signals.json + .md (V3 reads)
+  ~/Gigadesk-/research/reports/         sweeps, PATTERN_SCANNER.md, RESEARCH_BOARD.html
+  ~/Gigadesk-/research_loop.log         research chain log
+  ~/gigadesk.org/direction_scan.log     V3 scanner log
 
---- 5. confirm they are alive -------------------------------------------
-pgrep -af "continuous.py"
-pgrep -af "direction_scan.ts"
+NOTE: setup.sh is safe to re-run at any time — it skips what is already
+done and never starts a second copy of a loop. The private repo clone
+asks for GitHub credentials: a fine-grained READ-ONLY token works. The
+V3 scanner lives on the v3-direction-engine branch, not main.
 
---- 6. where the results land -------------------------------------------
-~/Gigadesk-/research/reports/          sweeps, PATTERN_SCANNER.md, RESEARCH_BOARD.html
-~/gigadesk.org/vps/output/             direction_signals.json + .md (V3 reads)
-~/Gigadesk-/research_loop.log          research chain log
-~/gigadesk.org/direction_scan.log      V3 scanner log
-
---- 7. watch the logs ----------------------------------------------------
-tail -f ~/Gigadesk-/research_loop.log
-tail -f ~/gigadesk.org/direction_scan.log
-
---- OR: one idempotent script that does steps 1-5 safely -----------------
-cd ~/gigadesk.org && git pull origin v3-direction-engine
-bash vps/setup.sh
-(it skips whatever is already done and never starts a second copy of a loop)
