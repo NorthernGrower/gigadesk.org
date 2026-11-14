@@ -1,0 +1,24 @@
+THE ONE COMMAND (paste this single line into the VP SSH console)
+=================================================================
+
+bash -c 'cd ~/gigadesk.org && git fetch origin && git checkout v3-direction-engine && git pull origin v3-direction-engine && bash vps/setup.sh'
+
+WHAT IT DOES (in order, automatically):
+  1. grabs the V3 branch (the direction engine + this setup)
+  2. installs unzip, installs Deno, fixes the PATH (skipped if done)
+  3. clones the research repo if missing (skipped if you cloned it last night)
+  4. starts the research chain (sweeps, pattern scanner, board, gate)
+  5. starts the V3 direction scanner
+It is safe to run again at any time — it never starts a second copy of
+a loop and skips whatever is already done.
+
+AFTER IT FINISHES
+  vps/output/direction_signals.md          <- V3 direction reads (conviction, drift band)
+  ~/Gigadesk-/research/reports/            <- sweeps, pattern scanner, RESEARCH_BOARD.html
+  tail -f ~/gigadesk.org/direction_scan.log        <- watch the V3 scanner
+  tail -f ~/Gigadesk-/research_loop.log            <- watch the research chain
+
+IF THE PRIVATE REPO ASKS FOR CREDENTIALS: a fine-grained READ-ONLY
+GitHub token works. First cycle of the research chain downloads the
+market history (~10-15 minutes, once); the V3 scanner's first snapshot
+appears in about a minute.
