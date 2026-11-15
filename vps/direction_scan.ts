@@ -55,9 +55,11 @@ async function fetchCandles(symbol, interval, limit = 400) {
 
 async function scanSymbol(symbol) {
   const reads = {};
+  let dailyScore = null;
   for (const interval of TIMEFRAMES) {
     const candles = await fetchCandles(symbol, interval);
-    const read = directionRead(candles);
+    const read = directionRead(candles, { timeframe: interval, htfScore: dailyScore });
+    if (interval === "1d") dailyScore = read.score;
     reads[interval] = {
       direction: read.direction,
       score: read.score,

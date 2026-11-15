@@ -29,7 +29,8 @@
 //
 // Output: vps/output/indicator_ranking.json + .md (one board per timeframe).
 
-import { INDICATORS } from "./ranking_indicators.ts";
+import { INDICATORS, type Indicator } from "../base44/shared/ranking_indicators.ts";
+import { WEIGHTS_BY_TF } from "../base44/shared/direction.ts";
 
 const KLINES_URL = "https://api.binance.com/api/v3/klines";
 const REQUEST_DELAY_MS = 700;
@@ -54,6 +55,32 @@ const startMs = Date.parse(argValue("--start", "2018-12-01T00:00:00Z"));
 const everyHours = hasFlag("--every-hours") ? Number(argValue("--every-hours", "24")) : 0;
 const minTrainSignals = Number(argValue("--min-train-signals", "30"));
 const minValSignals = Number(argValue("--min-val-signals", "15"));
+
+// The rebuilt V3 engine as one more ranked row — the composed read of the kept
+// indicator votes at the leaderboard weights (direction thresholds ±20, matching
+// directionRead). This is how Phase C is judged: does the rebuilt engine's
+// hit-rate edge beat the old chassis votes and the individual pool members?
+function engineIndicator(tf: string): Indicator {
+  const table = WEIGHTS_BY_TF[tf];
+  const members = table.map(([name, w]) => ({ w, votes: INDICATORS.find((i) => i.name === name)!.votes }));
+  return {
+    name: `v3_engine_${tf}`,
+    family: "engine",
+    votes: (cs) => {
+      const series = members.map((m) => m.votes(cs));
+      const out = new Int8Array(cs.length);
+      for (let i = 0; i < cs.length; i++) {
+        let s = 0;
+        for (let k = 0; k < members.length; k++) s += members[k].w * series[k][i];
+        out[i] = s >= 20 ? 1 : s <= -20 ? -1 : 0;
+      }
+      return out;
+    },
+  };
+}
+for (const tf of timeframes) {
+  if (WEIGHTS_BY_TF[tf]) INDICATORS.push(engineIndicator(tf));
+}
 
 interface Candle { t: number; o: number; h: number; l: number; c: number; v: number; }
 
