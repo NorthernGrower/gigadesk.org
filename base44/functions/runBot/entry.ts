@@ -10,6 +10,7 @@ import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntryS
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
+import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan } from "../../shared/v3algo.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -46,6 +47,7 @@ const DEFAULT_CONFIG = {
   confluence_v2: true,
   champion_engine: true,
   active_desk: "paper",
+  v3_algo: false,
 };
 
 
@@ -85,6 +87,11 @@ export default async function (req) {
       desk === "live" ? liveRulesView(config) : config;
     const liveView = deskView("live");
     const paperView = deskView("paper");
+    // the V3 algorithm is a different strategy, not a filter on the scored
+    // engines: a desk that runs it takes both its entries and its exits from
+    // the daily gates — 2xATR stop, no target, a 30-bar horizon. Each desk
+    // switches it on for itself (paper: v3_algo, live: live_rules.v3_algo).
+    const v3On = (view) => view.v3_algo === true;
     // per-desk engine stack: engine flags and the target placement each desk
     // trades by (3R margin, 6R combo, 2.5R old engine)
     const deskEngine = (v) => {
@@ -459,6 +466,60 @@ export default async function (req) {
       const isRealPos = (t.mode || "paper") === "real";
       const deskCfg = isRealPos ? liveView : paperView;
       const deskEng = isRealPos ? liveEngine : paperEngine;
+
+      // ---- V3 positions exit on the algorithm's own rules, which are the ones
+      // that were measured: a 2xATR daily stop and a 30-bar horizon, with no
+      // target. The scored exits — target, break-even, trailing, scale-out,
+      // pyramid and the sentiment pass — all change the tested rule, so they
+      // are skipped here rather than layered on top of it.
+      if (t.v3_algo === true) {
+        const v3Stop = Number(t.v3_stop) || Number(t.stop_price) || 0;
+        const due = v3ExitDue({
+          trade: { v3_stop: v3Stop, v3_horizon_bars: t.v3_horizon_bars, opened_at: t.opened_at },
+          price,
+          nowMs: Date.now(),
+        });
+        if (due.exit) {
+          const reason = due.reason;
+          const ok = await closeOut(t, side, due.price, reason, {}, (pnl) => ({
+            kind: reason === "stop" ? "stop_hit" : "bot_close",
+            message:
+              reason === "stop"
+                ? `V3 stop hit at ${round(due.price, 8)} (2xATR below entry). P&L ${round(pnl)} USD.`
+                : `V3 horizon reached: held ${due.days_held} daily bars, closed at ${round(due.price, 8)}. P&L ${round(pnl)} USD.`,
+          }));
+          if (!ok) continue;
+          continue;
+        }
+        // still running: mark to market, and nothing else touches it
+        const v3Qty = Number(t.quantity) || 0;
+        const v3Size = Number(t.size_usd) || 0;
+        const v3Unreal = side === "long" ? (price - entry) * v3Qty : (entry - price) * v3Qty;
+        const v3Travelled = side === "long" ? price - entry : entry - price;
+        const v3Unit = Math.abs(entry - v3Stop);
+        positions.push({
+          id: t.id,
+          symbol: t.symbol,
+          name: t.name,
+          image: t.image,
+          side,
+          mode: t.mode || "paper",
+          entry_price: entry,
+          current_price: round(price, 8),
+          stop_price: v3Stop ? round(v3Stop, 8) : null,
+          target_price: null,
+          size_usd: v3Size,
+          pnl_usd: round(v3Unreal),
+          pnl_pct: v3Size ? round((v3Unreal / v3Size) * 100) : 0,
+          progress_pct: v3Unit
+            ? round(Math.max(0, Math.min(100, (v3Travelled / v3Unit) * 100)))
+            : 0,
+          v3: true,
+          v3_days_held: due.days_held,
+          v3_horizon_bars: Number(t.v3_horizon_bars) || 30,
+        });
+        continue;
+      }
 
       const gainPct =
         side === "long" ? ((price - entry) / entry) * 100 : ((entry - price) / entry) * 100;
@@ -936,9 +997,60 @@ export default async function (req) {
       const liveEngineTarget = engineTargetFor(liveEngine);
       const paperUseEngine = useEngineTargetFor(paperEngine);
       const liveUseEngine = useEngineTargetFor(liveEngine);
+      // ---- V3 algorithm: one board, a third rule set. The daily gates are
+      // read once per long candidate per cycle (capped, in batches) and answer
+      // both desks, because none of them depends on the desk. When BTC's daily
+      // trend cannot be read, the regime gate fails closed: no V3 entries.
+      const v3DeskOn = { live: v3On(liveView), paper: v3On(paperView) };
+      const v3Evals = new Map();
+      if (v3DeskOn.live || v3DeskOn.paper) {
+        const longs = new Set();
+        for (const r of [...tradable, ...tradableLive]) {
+          if (r.side === "long") longs.add(r.symbol);
+        }
+        const wanted = [...longs].slice(0, 40);
+        const btcDaily = await fetchCandles("BTC", "1d", 260, scanVenue).catch(() => null);
+        const btcAbove = btcTrendUp(btcDaily);
+        for (const group of chunk(wanted, 6)) {
+          const settled = await Promise.allSettled(
+            group.map((s) => fetchCandles(s, "1d", 260, scanVenue)),
+          );
+          settled.forEach((res, i) => {
+            if (res.status !== "fulfilled" || !res.value) return;
+            v3Evals.set(group[i], evaluateV3({ candles: res.value, btcAboveSma200: btcAbove }));
+          });
+        }
+      }
+      // a V3 row trades the algorithm's own plan: its stop, and no target
+      const withV3 = (row) => {
+        const ev = v3Evals.get(row.symbol);
+        if (!ev || ev.state !== "entry") return row;
+        const plan = v3Plan({ entryPx: row.entry, atr: ev.atr });
+        if (!plan) return row;
+        const formation = ev.formations.length ? ` with ${ev.formations.join(", ")}` : "";
+        return {
+          ...row,
+          stop: round(plan.stop, 8),
+          target: null,
+          required_move_pct: null,
+          v3: ev,
+          reasons: [
+            ...(row.reasons || []),
+            `V3: ${ev.entry_signal.join(" + ")}${formation} on the daily close, stop 2xATR, no target, ${ev.horizon_bars}-bar horizon`,
+          ],
+        };
+      };
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
-        return !blocked.has(r.symbol) && entryGate(r, desk) === null;
+        if (blocked.has(r.symbol)) return false;
+        if (v3DeskOn[desk]) {
+          // the researched gates replace the score bar on this desk; the plan
+          // must also produce a usable stop, or the row falls back to nothing
+          const ev = v3Evals.get(r.symbol);
+          if (r.side !== "long" || !ev || ev.state !== "entry") return false;
+          return v3Plan({ entryPx: r.entry, atr: ev.atr }) != null;
+        }
+        return entryGate(r, desk) === null;
       };
       // a live short is a margin order: only a venue whose margin API the desk
       // can place through may take one, so a spot-only account is never handed
@@ -948,6 +1060,7 @@ export default async function (req) {
         ? tradableLive
             .filter((r) => qualifies(r, "live") && (r.side === "long" || liveShorts))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
+            .map(withV3)
         : [];
       // a desk with qualifying setups but nothing to pay with should say so
       // once (throttled), instead of firing order attempts into a wall of
@@ -1021,7 +1134,8 @@ export default async function (req) {
       const liveSymbols = new Set(livePlans.map((p) => p.r.symbol));
       const paperWanted = tradable
         .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
-        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
+        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount))
+        .map(withV3);
       if (dryRun) {
         const plans = [];
         for (const r of liveWanted) {
@@ -1131,8 +1245,16 @@ export default async function (req) {
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
             stop_price: r.stop,
-            target_price: liveUseEngine ? liveEngineTarget(rl) : r.target,
-            target_r: liveEngine.targetR,
+            target_price: r.v3 ? null : liveUseEngine ? liveEngineTarget(rl) : r.target,
+            target_r: r.v3 ? 0 : liveEngine.targetR,
+            ...(r.v3
+              ? {
+                  v3_algo: true,
+                  v3_stop: round(r.stop, 8),
+                  v3_horizon_bars: r.v3.horizon_bars,
+                  v3_atr: round(r.v3.atr, 8),
+                }
+              : {}),
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1153,7 +1275,9 @@ export default async function (req) {
             await base44.entities.Alert.create({
               symbol: r.symbol,
               title: `Bot opened a ${r.side} on ${r.symbol}`,
-              message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}. Real order placed on ${live.conn.label}.`,
+              message: r.v3
+                ? `Entry ${r.entry}, V3 stop ${r.stop} (2xATR daily). No target: held up to ${r.v3.horizon_bars} daily bars. Real order placed on ${live.conn.label}.`
+                : `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}. Real order placed on ${live.conn.label}.`,
               mode: "live",
               kind: "bot_open",
               severity: "info",
@@ -1187,8 +1311,16 @@ export default async function (req) {
           quantity: round(qty, 8),
           size_usd: round(sizeUsd),
           stop_price: r.stop,
-          target_price: paperUseEngine ? paperEngineTarget(r) : r.target,
-          target_r: paperEngine.targetR,
+          target_price: r.v3 ? null : paperUseEngine ? paperEngineTarget(r) : r.target,
+          target_r: r.v3 ? 0 : paperEngine.targetR,
+          ...(r.v3
+            ? {
+                v3_algo: true,
+                v3_stop: round(r.stop, 8),
+                v3_horizon_bars: r.v3.horizon_bars,
+                v3_atr: round(r.v3.atr, 8),
+              }
+            : {}),
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1208,7 +1340,9 @@ export default async function (req) {
           await base44.entities.Alert.create({
             symbol: r.symbol,
             title: `Bot opened a ${r.side} on ${r.symbol}`,
-            message: `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}.`,
+            message: r.v3
+              ? `Entry ${r.entry}, V3 stop ${r.stop} (2xATR daily). No target: held up to ${r.v3.horizon_bars} daily bars.`
+              : `Entry ${r.entry}, target ${r.target} (${r.required_move_pct}% move), stop ${r.stop}. Score ${r.score}.`,
             mode: "paper",
             kind: "bot_open",
             severity: "info",

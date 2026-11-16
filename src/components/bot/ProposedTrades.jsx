@@ -45,7 +45,8 @@ export default function ProposedTrades({ trades = [], onAction, busyId }) {
                       {trade.score ? <span className="num text-[11px] text-muted-foreground">score {trade.score}</span> : null}
                     </div>
                     <p className="num mt-0.5 text-[11px] text-muted-foreground">
-                      {fmtUsd(trade.size_usd)} @ {fmtPrice(trade.entry_price)} · target {fmtPrice(trade.target_price)} · stop{' '}
+                      {fmtUsd(trade.size_usd)} @ {fmtPrice(trade.entry_price)} ·{' '}
+                      {trade.v3_algo ? 'no target (V3)' : `target ${fmtPrice(trade.target_price)}`} · stop{' '}
                       {fmtPrice(trade.stop_price)}
                     </p>
                   </div>
