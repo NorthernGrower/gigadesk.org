@@ -73,6 +73,6 @@ assert(timedOut.exit && timedOut.reason === "time" && timedOut.price === 120, "h
 
 // 7. ATR sanity
 const atr = atrSeries(candles);
-assert(atr[atr.length - 1] > 0 && atr[10] === null, "ATR warms up then produces a value");
+assert(Number(atr[atr.length - 1]) > 0 && atr[10] === null, "ATR warms up then produces a value");
 
 console.log("all V3 self-tests passed");

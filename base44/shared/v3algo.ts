@@ -141,7 +141,7 @@ export function formationsAt(bars: any[], index: number, atr: (number | null)[])
 
 // Any survivor formation on one of the last `window` closed bars.
 export function confluenceAt(bars: any[], atr: (number | null)[], window: number = V3.confluence_window) {
-  const names = [];
+  const names: string[] = [];
   for (let back = 1; back <= window; back++) {
     const index = bars.length - back;
     if (index < 0) break;
