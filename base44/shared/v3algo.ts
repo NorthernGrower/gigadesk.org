@@ -33,7 +33,7 @@ export const V3 = {
 export const V3_LABEL = "V3 algorithm";
 
 // Wilder ATR, the same recursion the research engine uses.
-export function atrSeries(candles, period = V3.atr_period) {
+export function atrSeries(candles: any[], period: number = V3.atr_period): (number | null)[] {
   const n = candles.length;
   const out = new Array(n).fill(null);
   if (n < 2) return out;
@@ -56,14 +56,14 @@ export function atrSeries(candles, period = V3.atr_period) {
   return out;
 }
 
-export function smaLast(values, period) {
+export function smaLast(values: number[], period: number): number | null {
   if (values.length < period) return null;
   let total = 0;
   for (let i = values.length - period; i < values.length; i++) total += values[i];
   return total / period;
 }
 
-export function emaSeries(values, period) {
+export function emaSeries(values: number[], period: number): (number | null)[] {
   const n = values.length;
   const out = new Array(n).fill(null);
   if (n < period) return out;
@@ -81,7 +81,7 @@ export function emaSeries(values, period) {
 
 // Mean dollar volume over the last `bars` closed bars: volume is in base units
 // on every venue this bot trades, so volume x close is USD.
-export function avgDollarVolume(candles, bars = V3.adv_bars) {
+export function avgDollarVolume(candles: any[], bars: number = V3.adv_bars): number | null {
   if (candles.length < bars) return null;
   let total = 0;
   for (let i = candles.length - bars; i < candles.length; i++) {
@@ -92,7 +92,7 @@ export function avgDollarVolume(candles, bars = V3.adv_bars) {
 
 // BTC's daily trend: close above the 200-day average. The gate the selection
 // study found worth +0.48 points per trade on its own.
-export function btcTrendUp(btcDaily) {
+export function btcTrendUp(btcDaily: any[]): boolean {
   const bars = closedBars(btcDaily);
   if (bars.length < V3.sma_regime + 1) return false;
   const closes = bars.map((c) => c.c);
@@ -103,7 +103,7 @@ export function btcTrendUp(btcDaily) {
 // The feed may or may not include the in-progress candle as its last element.
 // Drop the last bar only when it is still forming, so a feed that already
 // returns closed bars does not silently cost us a day of history.
-export function closedBars(candles, intervalMs = 86400000) {
+export function closedBars(candles: any[], intervalMs: number = 86400000): any[] {
   if (!Array.isArray(candles) || candles.length < 2) return [];
   const last = candles[candles.length - 1];
   const t = Number(last && last.t);
@@ -111,7 +111,7 @@ export function closedBars(candles, intervalMs = 86400000) {
   return candles;
 }
 
-function shapeOf(bar) {
+function shapeOf(bar: any) {
   const range = bar.h - bar.l;
   const body = Math.abs(bar.c - bar.o);
   if (range <= 0) return { range: 0, body: 0, bodyFrac: 0, upperFrac: 1, lowerFrac: 1, bull: bar.c > bar.o };
@@ -127,7 +127,7 @@ function shapeOf(bar) {
 
 // The three daily bullish survivors from Gate 4, relaxed criteria: shape only,
 // no preceding-trend requirement.
-export function formationsAt(bars, index, atr) {
+export function formationsAt(bars: any[], index: number, atr: (number | null)[]): string[] {
   const bar = bars[index];
   const value = atr[index];
   if (!bar || !(value > 0)) return [];
@@ -140,7 +140,7 @@ export function formationsAt(bars, index, atr) {
 }
 
 // Any survivor formation on one of the last `window` closed bars.
-export function confluenceAt(bars, atr, window = V3.confluence_window) {
+export function confluenceAt(bars: any[], atr: (number | null)[], window: number = V3.confluence_window) {
   const names = [];
   for (let back = 1; back <= window; back++) {
     const index = bars.length - back;
@@ -152,7 +152,11 @@ export function confluenceAt(bars, atr, window = V3.confluence_window) {
   return { hit: names.length > 0, names };
 }
 
-export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min_adv_usd }) {
+export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min_adv_usd }: {
+  candles: any[];
+  btcAboveSma200?: boolean;
+  minAdvUsd?: number;
+}) {
   const bars = closedBars(candles);
   const empty = {
     state: "none",
@@ -231,7 +235,7 @@ export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min
 }
 
 // The measured plan: a 2xATR stop and a 30-bar horizon, with no target.
-export function v3Plan({ entryPx, atr }) {
+export function v3Plan({ entryPx, atr }: { entryPx: number; atr: number }) {
   const px = Number(entryPx) || 0;
   const risk = V3.stop_atr * (Number(atr) || 0);
   if (!(px > 0) || !(risk > 0) || risk >= px) return null;
@@ -246,7 +250,11 @@ export function v3Plan({ entryPx, atr }) {
 // The exit check, run every cycle against the live price. A breached stop fills
 // at its level — the same conservative fill the backtest assumes — and the
 // horizon is counted in calendar days, which is what a 30-daily-bar hold means.
-export function v3ExitDue({ trade, price, nowMs = Date.now() }) {
+export function v3ExitDue({ trade, price, nowMs = Date.now() }: {
+  trade: any;
+  price: number;
+  nowMs?: number;
+}) {
   const stop = Number(trade.v3_stop ?? trade.stop_price) || 0;
   const horizon = Number(trade.v3_horizon_bars) || V3.horizon_bars;
   const openedMs = trade.opened_at ? Date.parse(trade.opened_at) : 0;
