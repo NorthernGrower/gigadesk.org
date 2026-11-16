@@ -66,6 +66,11 @@ export default function PositionsPanel({
                           <Icon className="h-3 w-3" />
                           {p.side}
                         </span>
+                        {p.v3 ? (
+                          <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] uppercase text-amber-400" title="V3 algorithm: 2×ATR stop, no target, 30 daily bars">
+                            V3
+                          </span>
+                        ) : null}
                       </div>
                       <p className="num mt-0.5 text-[11px] text-muted-foreground">
                         {fmtPrice(p.entry_price)} → {fmtPrice(p.current_price)} · {fmtUsd(p.size_usd)}

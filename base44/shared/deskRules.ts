@@ -29,6 +29,7 @@ export const LIVE_DEFAULTS = {
   combo_engine: true,
   margin_engine: false,
   margin_leverage: 2,
+  v3_algo: false,
   max_trade_loss_pct: 20,
   pyramid: false,
   pyramid_trigger_pct: 1.5,

@@ -93,6 +93,23 @@
       "default": false,
       "description": "A buy the user placed by hand from the scanner, outside the bot's scan and entry gates; manual buys trade the sell logic only"
     },
+    "v3_algo": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opened by the V3 algorithm. V3 positions follow their own measured exit \u2014 a 2xATR stop and a 30-bar horizon \u2014 and are never closed by the target, break-even, trailing, scale-out, pyramid or sentiment rules"
+    },
+    "v3_stop": {
+      "type": "number",
+      "description": "The V3 stop: 2xATR(14) below the entry on the daily bars, fixed at open"
+    },
+    "v3_horizon_bars": {
+      "type": "number",
+      "description": "How many daily bars the V3 position may be held before it is closed on time"
+    },
+    "v3_atr": {
+      "type": "number",
+      "description": "The daily ATR(14) at the signal bar, kept so the plan can be audited later"
+    },
     "bot_handling": {
       "type": "boolean",
       "default": true,

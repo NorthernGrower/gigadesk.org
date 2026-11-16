@@ -284,3 +284,32 @@ export function marginFields(form, setNum, setV) {
     </>
   );
 }
+
+// The V3 algorithm: the researched logic ported from the research workspace
+// (docs/UNIFIED_LOGIC.md in Gigadesk-). It is a different strategy, not a
+// stronger filter on the scored engines, so the toggle is per desk and off by
+// default — and it says on screen what it was measured on.
+export function v3Fields(form, setV) {
+  const on = form.v3_algo === true;
+  return (
+    <>
+      <Toggle
+        label="V3 algorithm"
+        hint="Trades the researched daily logic instead of the score bar: a 55-bar breakout or a Keltner thrust on a liquid pair, BTC above its 200-day average, and a survivor candle formation behind it."
+        checked={on}
+        onChange={setV('v3_algo')}
+      />
+      {on ? (
+        <div className="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">V3 algorithm is on</p>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            This desk's entries now come from the V3 gates. Its positions exit on their own rules — a 2×ATR daily stop and a 30-bar horizon — so the score bar, short trades, targets, break-even, trailing, scale-out, pyramiding and the market tone watch do not apply to them.
+          </p>
+          <p className="text-[11px] leading-snug text-amber-400">
+            Measured on 63 out-of-sample trades across 37 pairs at +8.42% per trade after modelled costs. That is a promising edge, not a proven one — run it on paper first.
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}

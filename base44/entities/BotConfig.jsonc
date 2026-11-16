@@ -80,6 +80,11 @@
       "default": false,
       "description": "The optimizer's Kraken-margin stack: 3R targets, 50% conviction candles, majors + AVAX only. Leverage moves losses as fast as gains \u2014 off by default"
     },
+    "v3_algo": {
+      "type": "boolean",
+      "default": false,
+      "description": "The paper desk's V3 algorithm: the researched daily breakout logic (docs/UNIFIED_LOGIC.md in the research repo) replaces the score bar for this desk's entries. Daily bars, long only, $5m liquidity floor, BTC above its 200-day average, a survivor candle formation behind it. Exit is a 2xATR stop with no target, held up to 30 daily bars. Off by default; the live desk keeps its own switch in live_rules.v3_algo"
+    },
     "margin_leverage": {
       "type": "number",
       "default": 2,
