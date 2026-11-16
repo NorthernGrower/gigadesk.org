@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
-import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields, v3Fields } from '@/components/bot/ruleFields';
+import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields } from '@/components/bot/ruleFields';
 // The margin engine is live-desk only — the paper panel never shows or saves it.
 
 // The paper desk's own rules — nothing here touches the live desk.
@@ -155,8 +155,6 @@ export default function PaperRules({ config, onSaved }) {
         checked={paper.allow_shorts}
         onChange={setPaperV('allow_shorts')}
       />
-
-      {v3Fields(paper, setPaperV)}
 
       {scanEngineFields(paper, setPaperNum, setPaperV)}
 

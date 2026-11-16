@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
-import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, marginFields, pyramidFields, v3Fields } from '@/components/bot/ruleFields';
+import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, marginFields, pyramidFields } from '@/components/bot/ruleFields';
 
 const EXCHANGE_LABELS = {
   binance_us: 'Binance US',
@@ -167,8 +167,6 @@ export default function LiveRules({ config, onSaved }) {
       {riskFields(live, setLiveNum, setLiveV)}
 
       {pyramidFields(live, setLiveNum, setLiveV)}
-
-      {v3Fields(live, setLiveV)}
 
       {scanEngineFields(live, setLiveNum, setLiveV)}
 
