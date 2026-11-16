@@ -164,6 +164,9 @@ export default function BotControls({ config, stats, desk = 'live', onModeChange
 
       <p className="text-[11px] text-muted-foreground">
         {stats?.openCount || 0} {paper ? 'paper' : 'live'} positions open · {stats?.scanned || 0} coins scanned on the last cycle
+        {stats?.v3?.evaluated
+          ? ` · V3 ${stats.v3.entries || 0} setups from ${stats.v3.evaluated} daily checks${stats.v3.btc_above === false ? ' (BTC below its 200-day average)' : ''}`
+          : ''}
       </p>
 
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-secondary/20 px-3 py-2.5">

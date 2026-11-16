@@ -191,6 +191,7 @@ export default function Bot() {
                 dailyGoal: bot?.daily_goal,
                 openCount: bot?.open_count,
                 scanned: bot?.scanned,
+                v3: bot?.v3,
               }
             : {
                 balance: savedBalance?.usd != null ? savedBalance.usd : bot?.live?.balance_usd,
@@ -204,6 +205,7 @@ export default function Bot() {
                 openCount: bot?.live?.open_count,
                 scanned: bot?.scanned,
                 enabled: bot?.live?.enabled,
+                v3: bot?.v3,
               }
         }
       />

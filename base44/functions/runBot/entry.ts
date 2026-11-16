@@ -834,6 +834,7 @@ export default async function (req) {
     const deskDiag = {};
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
+    let v3Summary = null;
 
     const scanGateOpen =
       paperOpenCount < paperMaxOpen ||
@@ -998,17 +999,19 @@ export default async function (req) {
       const paperUseEngine = useEngineTargetFor(paperEngine);
       const liveUseEngine = useEngineTargetFor(liveEngine);
       // ---- V3 algorithm: one board, a third rule set. The daily gates are
-      // read once per long candidate per cycle (capped, in batches) and answer
-      // both desks, because none of them depends on the desk. When BTC's daily
-      // trend cannot be read, the regime gate fails closed: no V3 entries.
+      // read once per candidate per cycle (capped, in batches) and answer both
+      // desks, because none of them depends on the desk. The candidate list is
+      // every scanned symbol, not just the ones the intraday scan calls long:
+      // V3 is a daily strategy and must not inherit the 1h side. When BTC's
+      // daily trend cannot be read, the regime gate fails closed: no entries.
       const v3DeskOn = { live: v3On(liveView), paper: v3On(paperView) };
       const v3Evals = new Map();
       if (v3DeskOn.live || v3DeskOn.paper) {
-        const longs = new Set();
+        const candidates = new Set();
         for (const r of [...tradable, ...tradableLive]) {
-          if (r.side === "long") longs.add(r.symbol);
+          if (r.symbol) candidates.add(r.symbol);
         }
-        const wanted = [...longs].slice(0, 40);
+        const wanted = [...candidates].slice(0, 40);
         const btcDaily = await fetchCandles("BTC", "1d", 260, scanVenue).catch(() => null);
         const btcAbove = btcTrendUp(btcDaily);
         for (const group of chunk(wanted, 6)) {
@@ -1020,8 +1023,31 @@ export default async function (req) {
             v3Evals.set(group[i], evaluateV3({ candles: res.value, btcAboveSma200: btcAbove }));
           });
         }
+        const gates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
+        let entries = 0;
+        for (const ev of v3Evals.values()) {
+          if (ev.state === "entry") {
+            entries += 1;
+            continue;
+          }
+          const g = ev.gates || {};
+          if (!g.history) gates.history += 1;
+          else if (!g.entry_signal) gates.entry_signal += 1;
+          else if (!g.liquidity) gates.liquidity += 1;
+          else if (!g.regime) gates.regime += 1;
+          else gates.confluence += 1;
+        }
+        v3Summary = {
+          desks: v3DeskOn,
+          candidates: wanted.length,
+          evaluated: v3Evals.size,
+          entries,
+          btc_above: btcAbove,
+          gates,
+        };
       }
-      // a V3 row trades the algorithm's own plan: its stop, and no target
+      // a V3 row trades the algorithm's own plan: its stop, no target, and it
+      // is a long whatever the intraday scan said
       const withV3 = (row) => {
         const ev = v3Evals.get(row.symbol);
         if (!ev || ev.state !== "entry") return row;
@@ -1030,6 +1056,7 @@ export default async function (req) {
         const formation = ev.formations.length ? ` with ${ev.formations.join(", ")}` : "";
         return {
           ...row,
+          side: "long",
           stop: round(plan.stop, 8),
           target: null,
           required_move_pct: null,
@@ -1044,10 +1071,10 @@ export default async function (req) {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         if (blocked.has(r.symbol)) return false;
         if (v3DeskOn[desk]) {
-          // the researched gates replace the score bar on this desk; the plan
-          // must also produce a usable stop, or the row falls back to nothing
+          // the researched gates replace the score bar and the intraday side on
+          // this desk; the plan must also produce a usable stop
           const ev = v3Evals.get(r.symbol);
-          if (r.side !== "long" || !ev || ev.state !== "entry") return false;
+          if (!ev || ev.state !== "entry") return false;
           return v3Plan({ entryPx: r.entry, atr: ev.atr }) != null;
         }
         return entryGate(r, desk) === null;
@@ -1058,7 +1085,7 @@ export default async function (req) {
       const liveShorts = live.conn ? SHORT_VENUES.has(live.conn.exchange) : false;
       const liveWanted = live.conn && liveVerified && !isBackedOff(connRow)
         ? tradableLive
-            .filter((r) => qualifies(r, "live") && (r.side === "long" || liveShorts))
+            .filter((r) => qualifies(r, "live") && (v3DeskOn.live || r.side === "long" || liveShorts))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
             .map(withV3)
         : [];
@@ -1156,7 +1183,8 @@ export default async function (req) {
           rule_lock: collectGateLocks(tradable, gateReason, { desks: ["live", "paper"],
             slots: { live: liveMaxOpen - liveOpenCount, paper: paperMaxOpen - paperOpenCount },
             blocked: { live: blockedLive, paper: blockedPaper },
-            taken: { live: plans.length, paper: paperWanted.length } }) });
+            taken: { live: plans.length, paper: paperWanted.length } }),
+          v3: v3Summary });
       }
       const takenSymbols = new Set([...liveWanted, ...paperWanted].map((r) => r.symbol));
       scanLog = {
@@ -1704,6 +1732,7 @@ export default async function (req) {
       }),
       scanned: board.scannedCount,
       scan_log: scanLog,
+      v3: v3Summary,
       rule_lock: deskDiag,
       universe: board.universeCount,
       summary: board.summary,
