@@ -35,6 +35,7 @@ assert(ev.gates.entry_signal && ev.gates.liquidity && ev.gates.regime && ev.gate
   "all four V3 gates pass");
 assert(ev.formations.length > 0, "a survivor formation is named");
 assert(ev.atr > 0, "ATR is positive");
+const atrNow = Number(ev.atr);
 
 // 3. regime gate fails closed
 const off = evaluateV3({ candles, btcAboveSma200: false });
@@ -45,9 +46,9 @@ const thin = evaluateV3({ candles, btcAboveSma200: true, minAdvUsd: 1e12 });
 assert(thin.state === "none" && thin.gates.liquidity === false, "liquidity floor rejects thin pairs");
 
 // 5. the plan: a 2xATR stop below entry, no target
-const plan = v3Plan({ entryPx: 104, atr: ev.atr });
+const plan = v3Plan({ entryPx: 104, atr: atrNow });
 assert(plan != null && plan.stop < 104, "v3Plan puts the stop below the entry");
-assert(Math.abs((104 - plan!.stop) - 2 * ev.atr) < 1e-9, "the stop is exactly 2xATR");
+assert(Math.abs((104 - plan!.stop) - 2 * atrNow) < 1e-9, "the stop is exactly 2xATR");
 assert(!("target" in plan!), "the plan carries no target");
 assert(v3Plan({ entryPx: 1, atr: 5 }) === null, "a stop wider than price is refused");
 

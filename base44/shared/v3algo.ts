@@ -129,10 +129,10 @@ function shapeOf(bar: any) {
 // no preceding-trend requirement.
 export function formationsAt(bars: any[], index: number, atr: (number | null)[]): string[] {
   const bar = bars[index];
-  const value = atr[index];
+  const value = Number(atr[index]);
   if (!bar || !(value > 0)) return [];
   const s = shapeOf(bar);
-  const names = [];
+  const names: string[] = [];
   if (s.bull && s.body >= 1.0 * value) names.push("long_line_bull");
   if (s.bull && s.bodyFrac >= 0.9 && s.body >= 0.7 * value) names.push("marubozu_bull");
   if (s.bull && s.upperFrac <= 0.05 && s.body >= 0.5 * value) names.push("shaven_head_bull");
@@ -180,7 +180,7 @@ export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min
   const closes = bars.map((c) => c.c);
   const atr = atrSeries(bars);
   const last = bars.length - 1;
-  const atrNow = atr[last];
+  const atrNow = Number(atr[last]);
   if (!(atrNow > 0)) return { ...empty, reason: "ATR unavailable" };
 
   // 55-bar breakout: the close clears every high of the previous 55 bars
