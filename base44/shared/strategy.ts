@@ -556,7 +556,21 @@ export function analyzeCoin(coin, candles, ctx = {}) {
   // shoulders, diamonds, triangles, wedges, cups, flags) — gate-level input
   const chart = chartPattern(pivotList, candles, price);
 
-  const change24h = Number(coin.change24h) || 0;
+  // 24h change from the same candles the setup is scored on, so the row's
+  // percent always matches its chart. Venue ticker fields disagree in units
+  // (fraction vs percent) and go absurd on a relisting, so they are only the
+  // fallback, and a fallback outside ±500% is treated as bad data.
+  const dayBars = Math.max(1, Math.round(Number(barsPerDay) || 24));
+  const dayIndex = n - 1 - dayBars;
+  const dayAgo = dayIndex >= 0 ? closes[dayIndex] : closes[0];
+  const candleChange24h = dayAgo > 0 ? (price / dayAgo - 1) * 100 : null;
+  const tickerChange24h = Number(coin.change24h) || 0;
+  const change24h =
+    candleChange24h != null
+      ? candleChange24h
+      : Math.abs(tickerChange24h) > 500
+        ? 0
+        : tickerChange24h;
   const barsAgo = Math.min(n - 2, Math.max(1, Math.round(barsPerDay * 7)));
   const weekAgo = closes[n - 1 - barsAgo];
   const change7d = weekAgo ? (price / weekAgo - 1) * 100 : Number(coin.change7d) || 0;
