@@ -323,7 +323,7 @@ export default function Dashboard() {
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-4">
               <TopPicks
-                rows={bot.top}
+                rows={bot?.top || []}
                 positions={bot?.positions || []}
                 targetPct={Number(config?.daily_target_pct) || 2}
                 onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
