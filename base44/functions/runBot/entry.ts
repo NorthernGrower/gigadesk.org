@@ -11,6 +11,7 @@ import { loadSmartBias } from "../../shared/smartmoney.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan } from "../../shared/v3algo.ts";
+import { capPositionSize, losingStreak, riskState } from "../../shared/risk.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -835,6 +836,9 @@ export default async function (req) {
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
     let v3Summary = null;
+    // portfolio risk state for the paper desk: filled in when this cycle
+    // actually looks for entries, surfaced in the response for the bot page
+    let paperRisk = null;
 
     const scanGateOpen =
       paperOpenCount < paperMaxOpen ||
@@ -947,10 +951,36 @@ export default async function (req) {
       };
       const entryGate = (r, desk) => gateReasonShared(r, desk, rulesByDesk[desk]);
       const liveSlots = Math.max(1, liveMaxOpen - liveOpenCount);
+      // ---- portfolio risk controls (shared/risk.ts). Everything here is a
+      // restriction: a drawdown brake, a daily loss halt, a losing-streak
+      // reduction and a concentration cap, computed from the paper desk's own
+      // closed trades. The live desk keeps its existing caps (live_cap_usd and
+      // the per-trade loss guard): it has no stored equity baseline, so a
+      // drawdown measured there would be measuring nothing. Wiring it needs
+      // one, and that is a separate change.
+      const riskWindow = await readAll({
+        status: "closed",
+        closed_at: { $gte: new Date(Date.now() - 180 * 86400000).toISOString() },
+      });
+      const paperClosed = riskWindow
+        .filter((t) => (t.mode || "paper") === "paper")
+        .sort((a, b) => String(b.closed_at || "").localeCompare(String(a.closed_at || "")));
+      const riskDayStart = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+      paperRisk = riskState({
+        starting_balance: Number(config.starting_balance) || 10000,
+        realized_pnl_total: paperClosed.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
+        realized_pnl_today: paperClosed
+          .filter((t) => t.closed_at && Date.parse(t.closed_at) >= riskDayStart)
+          .reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
+        open_size_usd: stillOpen
+          .filter((t) => (t.mode || "paper") === "paper")
+          .reduce((a, t) => a + (Number(t.size_usd) || 0), 0),
+        losing_streak: losingStreak(paperClosed),
+      });
       const riskPct = Math.min(
         25,
         (Number(paperView.risk_per_trade_pct) || 4) * styleRiskFor(paperView.trading_style || "mild"),
-      );
+      ) * (paperRisk.block_entries ? 0 : paperRisk.size_multiplier);
 
       // self-teaching: past results per pattern (side x cap tier) nudge scores
       const lessons = await loadLessons(base44);
@@ -1070,6 +1100,8 @@ export default async function (req) {
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
         if (blocked.has(r.symbol)) return false;
+        // the paper desk's risk brakes come before any setup is considered
+        if (desk === "paper" && paperRisk && paperRisk.block_entries) return false;
         if (v3DeskOn[desk]) {
           // the researched gates replace the score bar and the intraday side on
           // this desk; the plan must also produce a usable stop
@@ -1220,6 +1252,13 @@ export default async function (req) {
         let sizeUsd = qty * r.entry;
         if (sizeUsd > cap) {
           sizeUsd = cap;
+          qty = sizeUsd / r.entry;
+        }
+        // concentration cap: no single position may exceed the desk's share of
+        // equity, whatever the risk maths asked for
+        const riskCapped = capPositionSize(sizeUsd, Number(config.starting_balance) || 10000);
+        if (riskCapped < sizeUsd && riskCapped >= 10) {
+          sizeUsd = riskCapped;
           qty = sizeUsd / r.entry;
         }
 
@@ -1733,6 +1772,7 @@ export default async function (req) {
       scanned: board.scannedCount,
       scan_log: scanLog,
       v3: v3Summary,
+      risk: paperRisk,
       rule_lock: deskDiag,
       universe: board.universeCount,
       summary: board.summary,
