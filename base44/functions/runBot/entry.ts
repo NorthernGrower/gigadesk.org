@@ -851,6 +851,13 @@ export default async function (req) {
     // portfolio risk state for the paper desk: filled in when this cycle
     // actually looks for entries, surfaced in the response for the bot page
     let paperRisk = null;
+    // the guarded stages' failure reasons, reported for the page. They are
+    // declared here, not inside the scan block below, because the cycle's
+    // response reads them whether or not that block ran: a light cycle — the
+    // desk's cheap refresh — skips the block, so the read threw
+    // "riskError is not defined" and took the whole call down with a 500.
+    let riskError = null;
+    let v3Error = null;
 
     const scanGateOpen =
       paperOpenCount < paperMaxOpen ||
@@ -982,7 +989,7 @@ export default async function (req) {
       //
       // A failure here must not kill the cycle: it fails closed instead —
       // no new paper entries — and the reason is returned for the page.
-      let riskError = null;
+      riskError = null;
       try {
         const riskWindow = await readAll({
           status: "closed",
@@ -1075,7 +1082,7 @@ export default async function (req) {
       // daily trend cannot be read, the regime gate fails closed: no entries.
       const v3DeskOn = { live: v3On(liveView), paper: v3On(paperView) };
       const v3Evals = new Map();
-      let v3Error = null;
+      v3Error = null;
       if (v3DeskOn.live || v3DeskOn.paper) {
         try {
           const candidates = new Set();
