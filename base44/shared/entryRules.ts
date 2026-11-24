@@ -46,6 +46,9 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
     engine_v2: engineV2,
     champion,
     btc_gate: config.btc_gate !== false && champion,
+    // carried through, otherwise the saved setting never reaches gateReason and
+    // the desk silently falls back to this default
+    btc_gate_mode: config.btc_gate_mode || "any",
     target_r: margin ? 3 : combo ? 6 : engineV2 && champion ? 2.5 : null,
     btc_change24h: btcChange24h,
   };

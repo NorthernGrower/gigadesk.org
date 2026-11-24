@@ -911,6 +911,14 @@ export default async function (req) {
       const pending = (await readAll({ status: "proposed" })).filter(
         (t) => (t.created_date || "") >= new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
       );
+      // proposals block their own desk only: a live proposal must not freeze the
+      // paper desk's symbol, and the other way around
+      const pendingLive = pending
+        .filter((t) => (t.mode || "paper") === "real")
+        .map((t) => t.symbol);
+      const pendingPaper = pending
+        .filter((t) => (t.mode || "paper") !== "real")
+        .map((t) => t.symbol);
       const blockedLive = new Set([
         ...stillOpen.filter((t) => (t.mode || "paper") === "real").map((t) => t.symbol),
         ...recent
@@ -921,7 +929,7 @@ export default async function (req) {
             return Date.now() - closedMs < window;
           })
           .map((t) => t.symbol),
-        ...pending.map((t) => t.symbol),
+        ...pendingLive,
         ...failedRecently,
       ]);
       const blockedPaper = new Set([
@@ -934,7 +942,7 @@ export default async function (req) {
             return Date.now() - closedMs < window;
           })
           .map((t) => t.symbol),
-        ...pending.map((t) => t.symbol),
+        ...pendingPaper,
       ]);
 
       // trading style bends the rules without touching what the user saved:
@@ -1083,7 +1091,12 @@ export default async function (req) {
       }
       // a V3 row trades the algorithm's own plan: its stop, no target, and it
       // is a long whatever the intraday scan said
-      const withV3 = (row) => {
+      // V3 only rewrites a row on a desk that runs V3. The evaluations are
+      // shared (they are daily reads that ignore the desk), but the plan is not:
+      // without this guard a paper-only V3 switch would rewrite the live desk's
+      // entries as V3 longs.
+      const withV3 = (row, desk) => {
+        if (!v3DeskOn[desk]) return row;
         const ev = v3Evals.get(row.symbol);
         if (!ev || ev.state !== "entry") return row;
         const plan = v3Plan({ entryPx: row.entry, atr: ev.atr });
@@ -1124,7 +1137,7 @@ export default async function (req) {
         ? tradableLive
             .filter((r) => qualifies(r, "live") && (v3DeskOn.live || r.side === "long" || liveShorts))
             .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
-            .map(withV3)
+            .map((r) => withV3(r, "live"))
         : [];
       // a desk with qualifying setups but nothing to pay with should say so
       // once (throttled), instead of firing order attempts into a wall of
@@ -1199,7 +1212,7 @@ export default async function (req) {
       const paperWanted = tradable
         .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
         .slice(0, Math.max(0, paperMaxOpen - paperOpenCount))
-        .map(withV3);
+        .map((r) => withV3(r, "paper"));
       if (dryRun) {
         const plans = [];
         for (const r of liveWanted) {
