@@ -248,8 +248,17 @@ export function runBot(light = false) {
       return data;
     } catch (err) {
       const body = (err && err.response && (err.response.data || err.response.body)) || null;
+      // a body that is not JSON — a platform timeout page, a gateway error —
+      // has no `error` field, and the SDK's bare "status code 500" names
+      // nothing. Its text still says what happened, so it is shown instead,
+      // with the markup and the line breaks flattened and the length capped.
+      const plain =
+        typeof body === 'string'
+          ? body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+          : '';
       const detail =
-        (body && (body.error || body.detail || body.message)) ||
+        (body && typeof body === 'object' && (body.error || body.detail || body.message)) ||
+        (plain ? plain.slice(0, 300) : null) ||
         (err && err.data && err.data.error) ||
         null;
       if (detail) throw new Error(String(detail));

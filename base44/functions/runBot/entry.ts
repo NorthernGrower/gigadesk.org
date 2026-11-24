@@ -56,7 +56,12 @@ const DEFAULT_CONFIG = {
 };
 
 
+// Where the cycle was when it threw. The outer catch sees only the error, so a
+// failed cycle answered with a bare "status code 500" that named nothing and
+// could not be acted on. Every stage below sets this label before its awaits,
+// so the error the desk shows says which part of the cycle stopped it.
 export default async function (req) {
+  let stage = "setup";
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
@@ -150,6 +155,7 @@ export default async function (req) {
     // the venue this desk trades on: its own market snapshot, candles and
     // listings drive the scan, so every exchange the user connected is scanned
     // on the coins it actually lists
+    stage = "markets";
     const scanVenue = light ? null : await resolveDeskVenue(base44, config);
     const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole, scanVenue);
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
@@ -454,6 +460,7 @@ export default async function (req) {
     }
 
     // ---- manage the positions already open
+    stage = "positions";
     for (const t of dryRun ? [] : openTrades) {
       // a real fill the user logged by hand is theirs to manage — the bot only
       // touches its own real positions (those carry an exchange order id)
@@ -779,6 +786,7 @@ export default async function (req) {
         });
       }
     };
+    stage = "sentiment";
     if (!light) {
       await sentimentPass("paper", paperView, sentinel.filter((t) => (t.mode || "paper") !== "real"));
       await sentimentPass("live", liveView, sentinel.filter((t) => (t.mode || "paper") === "real"));
@@ -848,6 +856,7 @@ export default async function (req) {
       paperOpenCount < paperMaxOpen ||
       (live.conn != null && liveVerified && liveOpenCount < liveMaxOpen);
 
+    stage = "scan";
     if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight && (dryRun || claimConfirmed)) {
       const watch = asArray(await base44.entities.Watchlist.list({ limit: 60 }));
       // when real orders are on, only scan coins the connected exchange
@@ -1306,6 +1315,7 @@ export default async function (req) {
         taken: takenSymbols.size,
       };
 
+      stage = "entries";
       for (const { r, desk } of [
         ...liveWanted.map((row) => ({ r: row, desk: "live" })),
         ...paperWanted.map((row) => ({ r: row, desk: "paper" })),
@@ -1543,6 +1553,7 @@ export default async function (req) {
     // everything the desk stats need — the day's closes, the running totals,
     // and the four equity-candle reads — in one parallel round instead of
     // eight serial waits; this chain was seconds of every cycle
+    stage = "stats";
     const [todays, realizedAgg, deployedAgg, prevCandlesPage, existingCandlePage, prevLivePage, existingLivePage] =
       await Promise.all([
         readAll({ status: "closed", closed_at: { $gte: dayStart.toISOString() }, created_by_id: user.id }),
@@ -1628,6 +1639,7 @@ export default async function (req) {
     let balanceAsOf = null;
     let balanceStale = false;
     let balanceError = null;
+    stage = "exchange balance";
     if (managed.conn && !light && isBackedOff(managed.conn)) {
       // the key failed a signed read recently — do not touch it: every failed
       // attempt keeps the exchange-side lockout alive. The saved balance and
@@ -1683,6 +1695,7 @@ export default async function (req) {
     // every full cycle (throttled to one sync per 10 minutes) so the desk and
     // the wallet stay reconciled permanently.
     let walletSync = null;
+    stage = "wallet sync";
     if (
       managed.conn &&
       !light &&
@@ -1773,6 +1786,7 @@ export default async function (req) {
     // candles are per-user: one app user's equity chart must not overwrite
     // another's, so every write carries the owner and keys on owner + day
     const prevClose = prevCandles.length ? Number(prevCandles[0].close) : null;
+    stage = "equity";
     const candleOpen = existingCandle
       ? Number(existingCandle.open)
       : prevClose != null
@@ -1916,6 +1930,7 @@ export default async function (req) {
       updated_at: new Date().toISOString(),
     });
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    const message = String((error && error.message) || error);
+    return Response.json({ error: `${stage}: ${message}` }, { status: 500 });
   }
 }
