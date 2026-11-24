@@ -38,6 +38,8 @@ export default function PaperRules({ config, onSaved }) {
     pyramid: c?.pyramid === true,
     pyramid_trigger_pct: c?.pyramid_trigger_pct ?? 1.5,
     v3_algo: c?.v3_algo === true,
+    always_take_top: c?.always_take_top === true,
+    always_take_count: c?.always_take_count ?? 5,
   });
   const [paper, setPaper] = useState(() => fromConfig(config));
 
@@ -77,6 +79,8 @@ export default function PaperRules({ config, onSaved }) {
         pyramid: paper.pyramid === true,
         pyramid_trigger_pct: roundTo(Number(paper.pyramid_trigger_pct) || 1.5, 2),
         v3_algo: paper.v3_algo === true,
+        always_take_top: paper.always_take_top === true,
+        always_take_count: Math.max(1, Math.min(10, Math.round(Number(paper.always_take_count) || 5))),
       });
       toast({ title: 'Paper rules saved', description: 'The paper desk picks them up on its next cycle. Live rules are untouched.' });
       if (onSaved) onSaved();

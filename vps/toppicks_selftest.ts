@@ -2,7 +2,7 @@
 //   deno run vps/toppicks_selftest.ts
 // Pure function, synthetic rows, non-zero exit on the first failed assertion.
 
-import { pickTopPicks } from "../base44/shared/topPicks.ts";
+import { entryReady, pickTopPicks } from "../base44/shared/topPicks.ts";
 
 function assert(ok: boolean, label: string) {
   if (!ok) throw new Error(`FAILED: ${label}`);
@@ -68,5 +68,24 @@ assert(pickTopPicks(rows, { blocked: new Set(), openSymbols: new Set(), count: 9
   "the count is capped at ten, and never exceeds the rows available");
 assert(pickTopPicks([], { blocked: new Set(), openSymbols: new Set(), count: 5 }).length === 0,
   "no rows is no picks");
+
+// entry timing: near the mean is ready, extended is not
+const at = (price: number, ema20: number, atr: number, rsi: number, side = "long") =>
+  row("T", 80, { side, price, entry: price, indicators: { ema20, atr, rsi } });
+
+assert(entryReady(at(100, 99.6, 1, 55)), "a long near its 20 EMA is ready");
+assert(!entryReady(at(104, 100, 2, 60)), "a long two ATR above its 20 EMA waits");
+assert(entryReady(at(100, 99.6, 1, 74)), "RSI below 75 does not block a long");
+assert(!entryReady(at(100, 100, 1, 78)), "RSI at 78 waits for a long");
+assert(entryReady(at(96, 100, 2, 45, "short")), "a short near its 20 EMA is ready");
+assert(!entryReady(at(92, 100, 2, 45, "short")), "a short four ATR below its 20 EMA waits");
+assert(!entryReady(at(100, 100, 1, 22, "short")), "RSI at 22 waits for a short");
+assert(entryReady(row("N", 70)), "a row without indicators is not blocked");
+
+const extended = [row("H", 99, { price: 110, entry: 110, indicators: { ema20: 100, atr: 2, rsi: 60 } }), row("K", 70)];
+const timed = pickTopPicks(extended, { blocked: new Set(), openSymbols: new Set(), count: 2, requireEntry: true });
+assert(timed.length === 1 && timed[0].symbol === "K", "requireEntry skips the extended pick");
+assert(pickTopPicks(extended, { blocked: new Set(), openSymbols: new Set(), count: 2 }).length === 2,
+  "without requireEntry both rows are taken");
 
 console.log("top-picks selftest passed");

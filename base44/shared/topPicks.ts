@@ -8,15 +8,46 @@ export type TopPickOptions = {
   openSymbols: Set<string>;
   allowShorts?: boolean;
   count?: number;
+  requireEntry?: boolean;
 };
+
+/**
+ * Is this the moment to enter the pick, rather than chasing it?
+ *
+ * The scan gives us the coin's side and its indicators at the last close. A
+ * good entry is near the mean, not extended from it: a long wants price within
+ * 0.75 ATR of the 20 EMA, a short wants the mirror. An extreme RSI against the
+ * side also means wait. Rows without indicator data are let through — missing
+ * data must not silently disable the option.
+ */
+export function entryReady(row: any): boolean {
+  if (!row) return false;
+  const ind = row.indicators || {};
+  const price = Number(row.price ?? row.entry);
+  const ema20 = Number(ind.ema20);
+  const atr = Number(ind.atr);
+  const rsi = Number(ind.rsi);
+  const long = row.side !== "short";
+  if (!(price > 0)) return false;
+  if (ema20 > 0 && atr > 0) {
+    const stretch = long ? (price - ema20) / atr : (ema20 - price) / atr;
+    if (stretch > 0.75) return false;
+  }
+  if (Number.isFinite(rsi)) {
+    if (long && rsi >= 75) return false;
+    if (!long && rsi <= 25) return false;
+  }
+  return true;
+}
 
 /**
  * The highest scoring rows that are safe to buy right now.
  *
  * A row is skipped when its symbol is blocked (cooldown, open position,
- * proposal), already held, missing a usable entry/stop pair, or a short on a
- * venue that cannot short. The result is deduplicated by symbol and never
- * longer than `count`.
+ * proposal), already held, missing a usable entry/stop pair, a short on a venue
+ * that cannot short, or — when `requireEntry` is set — too extended from its
+ * 20 EMA to be a good entry today. The result is deduplicated by symbol and
+ * never longer than `count`.
  */
 export function pickTopPicks(rows: any[], options: TopPickOptions): any[] {
   const blocked = options.blocked || new Set();
@@ -31,6 +62,7 @@ export function pickTopPicks(rows: any[], options: TopPickOptions): any[] {
     .filter((row) => !blocked.has(row.symbol) && !open.has(row.symbol))
     .filter((row) => Number(row.entry) > 0 && Number(row.stop) > 0 && row.entry !== row.stop)
     .filter((row) => allowShorts || row.side !== "short")
+    .filter((row) => options.requireEntry !== true || entryReady(row))
     .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
     .filter((row) => {
       // dedupe after the sort, so the first (highest scoring) wins

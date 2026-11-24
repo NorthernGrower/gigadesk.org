@@ -1150,8 +1150,12 @@ export default async function (req) {
         return pickTopPicks(rows, {
           blocked,
           openSymbols,
-          allowShorts: desk === "live" ? liveShorts : true,
+          allowShorts: desk === "live"
+            ? liveShorts && liveView.allow_shorts !== false
+            : paperView.allow_shorts !== false,
           count,
+          // wait for a good entry into the pick rather than chasing it
+          requireEntry: true,
         });
       };
       const liveReady = live.conn && liveVerified && !isBackedOff(connRow);
