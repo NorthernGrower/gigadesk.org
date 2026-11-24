@@ -12,6 +12,7 @@ import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan } from "../../shared/v3algo.ts";
 import { capPositionSize, losingStreak, riskState } from "../../shared/risk.ts";
+import { pickTopPicks } from "../../shared/topPicks.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -50,6 +51,8 @@ const DEFAULT_CONFIG = {
   active_desk: "paper",
   v3_algo: false,
   v3_profile: "loose",
+  always_take_top: false,
+  always_take_count: 5,
 };
 
 
@@ -1133,12 +1136,36 @@ export default async function (req) {
       // can place through may take one, so a spot-only account is never handed
       // a setup it would fill as a plain sell
       const liveShorts = live.conn ? SHORT_VENUES.has(live.conn.exchange) : false;
-      const liveWanted = live.conn && liveVerified && !isBackedOff(connRow)
+      // ---- always-take top picks: a desk can opt into buying its highest
+      // scoring coins whether or not they clear the entry gates. Only entry
+      // quality is bypassed: the row keeps its own stop, target and trailing,
+      // and the desk's risk sizing, cooldowns, open-position guard, slot limit,
+      // exchange listing filter, approve mode and paper risk brakes all still
+      // apply. A desk running V3 does not mix in top picks.
+      const topCount = (view) => Math.max(1, Math.min(10, Number(view.always_take_count) || 5));
+      const topPicksFor = (rows, desk, count, exclude) => {
+        const blocked = desk === "live" ? blockedLive : blockedPaper;
+        const openSymbols = new Set(stillOpen.map((t) => t.symbol));
+        if (exclude) for (const symbol of exclude) openSymbols.add(symbol);
+        return pickTopPicks(rows, {
+          blocked,
+          openSymbols,
+          allowShorts: desk === "live" ? liveShorts : true,
+          count,
+        });
+      };
+      const liveReady = live.conn && liveVerified && !isBackedOff(connRow);
+      const liveGated = liveReady
         ? tradableLive
             .filter((r) => qualifies(r, "live") && (v3DeskOn.live || r.side === "long" || liveShorts))
-            .slice(0, Math.max(0, liveMaxOpen - liveOpenCount))
             .map((r) => withV3(r, "live"))
         : [];
+      const liveTop = liveReady && liveView.always_take_top === true && !v3DeskOn.live
+        ? topPicksFor(tradableLive, "live", topCount(liveView))
+        : [];
+      const liveWanted = [...liveGated, ...liveTop]
+        .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+        .slice(0, Math.max(0, liveMaxOpen - liveOpenCount));
       // a desk with qualifying setups but nothing to pay with should say so
       // once (throttled), instead of firing order attempts into a wall of
       // exchange-side insufficient-funds failures every cycle
@@ -1209,10 +1236,15 @@ export default async function (req) {
       // the live desk claims only setups it has an affordable plan for;
       // everything else stays in the paper pool
       const liveSymbols = new Set(livePlans.map((p) => p.r.symbol));
-      const paperWanted = tradable
+      const paperGated = tradable
         .filter((r) => !liveSymbols.has(r.symbol) && qualifies(r, "paper"))
-        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount))
         .map((r) => withV3(r, "paper"));
+      const paperTop = paperView.always_take_top === true && !v3DeskOn.paper
+        ? topPicksFor(tradable, "paper", topCount(paperView), liveSymbols)
+        : [];
+      const paperWanted = [...paperGated, ...paperTop]
+        .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+        .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
       if (dryRun) {
         const plans = [];
         for (const r of liveWanted) {
@@ -1343,6 +1375,7 @@ export default async function (req) {
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
+            entry_source: r.v3 ? "v3" : r.top_pick ? "top_pick" : "gated",
             exchange: live.conn.exchange,
             exchange_order_id: real.order_id,
             rationale: (r.reasons || []).join(" • "),
@@ -1409,6 +1442,7 @@ export default async function (req) {
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
+          entry_source: r.v3 ? "v3" : r.top_pick ? "top_pick" : "gated",
           rationale: (r.reasons || []).join(" • "),
           opened_at: new Date().toISOString(),
         });

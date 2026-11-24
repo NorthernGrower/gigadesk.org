@@ -32,6 +32,8 @@ export const LIVE_DEFAULTS = {
   v3_algo: false,
   v3_profile: "loose",
   btc_gate_mode: "any",
+  always_take_top: false,
+  always_take_count: 5,
   max_trade_loss_pct: 20,
   pyramid: false,
   pyramid_trigger_pct: 1.5,

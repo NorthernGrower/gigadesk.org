@@ -168,6 +168,16 @@
       "default": "loose",
       "description": "Which V3 rule set runs: strict is the original composition (about 23 trades a year), loose adds the 20-bar breakout and a $1m floor, aggressive also drops the BTC trend gate"
     },
+    "always_take_top": {
+      "type": "boolean",
+      "default": false,
+      "description": "When on, the desk buys its highest scoring coins each cycle even if they miss the entry gates. Exits, stops, sizing and every other bot rule still apply"
+    },
+    "always_take_count": {
+      "type": "number",
+      "default": 5,
+      "description": "How many top picks the always-take option buys per cycle, 1 to 10, still limited by free slots and risk brakes"
+    },
     "timeframe": {
       "type": "string",      "enum": [
         "15m",

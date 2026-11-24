@@ -107,6 +107,17 @@ export function riskFields(form, setNum, set) {
         <Input className="num" inputMode="numeric" value={form.cooldown_minutes} onChange={setNum('cooldown_minutes')} />
       </Field>
       <Toggle
+        label="Always take the top picks"
+        hint={`Buys the ${Number(form.always_take_count) || 5} highest scoring coins each cycle even when they miss the entry gates. Stops, targets, trailing and risk sizing are unchanged — it changes what is bought, not how it is managed.`}
+        checked={form.always_take_top === true}
+        onChange={set('always_take_top')}
+      />
+      {form.always_take_top === true ? (
+        <Field label="How many top picks" hint="1 to 10. Still limited by free slots and the desk's risk brakes.">
+          <Input className="num" inputMode="numeric" value={form.always_take_count} onChange={setNum('always_take_count')} />
+        </Field>
+      ) : null}
+      <Toggle
         label="Trailing stop"
         hint={`Locks in profit once a trade is up ${form.trailing_trigger_pct}%.`}
         checked={form.trailing_stop}

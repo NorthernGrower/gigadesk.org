@@ -88,6 +88,16 @@
       "type": "string",
       "description": "The side and cap tier the bot traded, e.g. long/small; drives its self-learning"
     },
+    "entry_source": {
+      "type": "string",
+      "enum": [
+        "gated",
+        "v3",
+        "top_pick"
+      ],
+      "default": "gated",
+      "description": "Which rule opened the trade: the scored entry gates, the V3 algorithm, or the always-take top-picks option. Kept so the journal can measure each source separately"
+    },
     "manual": {
       "type": "boolean",
       "default": false,
