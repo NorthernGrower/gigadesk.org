@@ -970,25 +970,43 @@ export default async function (req) {
       // the per-trade loss guard): it has no stored equity baseline, so a
       // drawdown measured there would be measuring nothing. Wiring it needs
       // one, and that is a separate change.
-      const riskWindow = await readAll({
-        status: "closed",
-        closed_at: { $gte: new Date(Date.now() - 180 * 86400000).toISOString() },
-      });
-      const paperClosed = riskWindow
-        .filter((t) => (t.mode || "paper") === "paper")
-        .sort((a, b) => String(b.closed_at || "").localeCompare(String(a.closed_at || "")));
-      const riskDayStart = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
-      paperRisk = riskState({
-        starting_balance: Number(config.starting_balance) || 10000,
-        realized_pnl_total: paperClosed.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
-        realized_pnl_today: paperClosed
-          .filter((t) => t.closed_at && Date.parse(t.closed_at) >= riskDayStart)
-          .reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
-        open_size_usd: stillOpen
+      //
+      // A failure here must not kill the cycle: it fails closed instead —
+      // no new paper entries — and the reason is returned for the page.
+      let riskError = null;
+      try {
+        const riskWindow = await readAll({
+          status: "closed",
+          closed_at: { $gte: new Date(Date.now() - 180 * 86400000).toISOString() },
+        });
+        const paperClosed = riskWindow
           .filter((t) => (t.mode || "paper") === "paper")
-          .reduce((a, t) => a + (Number(t.size_usd) || 0), 0),
-        losing_streak: losingStreak(paperClosed),
-      });
+          .sort((a, b) => String(b.closed_at || "").localeCompare(String(a.closed_at || "")));
+        const riskDayStart = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+        paperRisk = riskState({
+          starting_balance: Number(config.starting_balance) || 10000,
+          realized_pnl_total: paperClosed.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
+          realized_pnl_today: paperClosed
+            .filter((t) => t.closed_at && Date.parse(t.closed_at) >= riskDayStart)
+            .reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
+          open_size_usd: stillOpen
+            .filter((t) => (t.mode || "paper") === "paper")
+            .reduce((a, t) => a + (Number(t.size_usd) || 0), 0),
+          losing_streak: losingStreak(paperClosed),
+        });
+      } catch (err) {
+        riskError = String((err && err.message) || err);
+        console.log(`risk check failed: ${riskError}`);
+        paperRisk = {
+          size_multiplier: 0,
+          block_entries: true,
+          reason: `risk check failed (${riskError})`,
+          drawdown_pct: 0,
+          realized_pnl_today: 0,
+          losing_streak: 0,
+          deployed_usd: 0,
+        };
+      }
       const riskPct = Math.min(
         25,
         (Number(paperView.risk_per_trade_pct) || 4) * styleRiskFor(paperView.trading_style || "mild"),
@@ -1829,6 +1847,7 @@ export default async function (req) {
       scan_log: scanLog,
       v3: v3Summary,
       risk: paperRisk,
+      diagnostics: { risk_error: riskError },
       rule_lock: deskDiag,
       universe: board.universeCount,
       summary: board.summary,

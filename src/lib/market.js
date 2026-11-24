@@ -234,10 +234,27 @@ let lastFullRun = null;
 
 export function runBot(light = false) {
   // the desk's timezone keeps "today" counters on the user's own calendar day
+  // the SDK throws a bare "status code 500" when the function fails, so the
+  // server's own message is lifted out of the response body for the page
   const invoke = async () => {
-    const data = unwrap(await base44.functions.invoke('runBot', { light, tz_offset: new Date().getTimezoneOffset() }));
-    rememberBot(data);
-    return data;
+    try {
+      const data = unwrap(
+        await base44.functions.invoke('runBot', {
+          light,
+          tz_offset: new Date().getTimezoneOffset(),
+        }),
+      );
+      rememberBot(data);
+      return data;
+    } catch (err) {
+      const body = (err && err.response && (err.response.data || err.response.body)) || null;
+      const detail =
+        (body && (body.error || body.detail || body.message)) ||
+        (err && err.data && err.data.error) ||
+        null;
+      if (detail) throw new Error(String(detail));
+      throw err;
+    }
   };
   if (!light) {
     if (lastFullRun && Date.now() - lastFullRun.at < 5000) return lastFullRun.promise;
