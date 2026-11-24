@@ -77,7 +77,7 @@ assert(entryReady(at(100, 99.6, 1, 55)), "a long near its 20 EMA is ready");
 assert(!entryReady(at(104, 100, 2, 60)), "a long two ATR above its 20 EMA waits");
 assert(entryReady(at(100, 99.6, 1, 74)), "RSI below 75 does not block a long");
 assert(!entryReady(at(100, 100, 1, 78)), "RSI at 78 waits for a long");
-assert(entryReady(at(96, 100, 2, 45, "short")), "a short near its 20 EMA is ready");
+assert(entryReady(at(99, 100, 2, 45, "short")), "a short near its 20 EMA is ready");
 assert(!entryReady(at(92, 100, 2, 45, "short")), "a short four ATR below its 20 EMA waits");
 assert(!entryReady(at(100, 100, 1, 22, "short")), "RSI at 22 waits for a short");
 assert(entryReady(row("N", 70)), "a row without indicators is not blocked");
