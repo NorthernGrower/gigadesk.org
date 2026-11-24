@@ -32,6 +32,25 @@ export const V3 = {
 
 export const V3_LABEL = "V3 algorithm";
 
+// Measured relaxation ladder (research/candlestick/docs/RELAXATION_LADDER.md):
+//   strict      the original composition: 23 trades a year, +4.87% each, 6/6 folds
+//   loose       confluence dropped, both breakout lengths, $1m floor,
+//               BTC regime kept: more trades at a similar edge
+//   aggressive  the same with the BTC regime gate off — the measured best on
+//               trades per year, and the one with fewer positive folds
+export const V3_PROFILES = {
+  strict: { breakout_bars: [55], confluence_required: true, regime_required: true, min_adv_usd: 5_000_000 },
+  loose: { breakout_bars: [55, 20], confluence_required: false, regime_required: true, min_adv_usd: 1_000_000 },
+  aggressive: { breakout_bars: [55, 20], confluence_required: false, regime_required: false, min_adv_usd: 1_000_000 },
+};
+
+export type V3ProfileName = keyof typeof V3_PROFILES;
+
+export function v3Profile(name?: string) {
+  const key = (name || "loose") as V3ProfileName;
+  return V3_PROFILES[key] || V3_PROFILES.loose;
+}
+
 // Wilder ATR, the same recursion the research engine uses.
 export function atrSeries(candles: any[], period: number = V3.atr_period): (number | null)[] {
   const n = candles.length;
@@ -152,11 +171,14 @@ export function confluenceAt(bars: any[], atr: (number | null)[], window: number
   return { hit: names.length > 0, names };
 }
 
-export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min_adv_usd }: {
+export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd, profile }: {
   candles: any[];
   btcAboveSma200?: boolean;
   minAdvUsd?: number;
+  profile?: string;
 }) {
+  const prof = v3Profile(profile);
+  const advFloor = minAdvUsd != null ? minAdvUsd : prof.min_adv_usd;
   const bars = closedBars(candles);
   const empty = {
     state: "none",
@@ -183,10 +205,12 @@ export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min
   const atrNow = Number(atr[last]);
   if (!(atrNow > 0)) return { ...empty, reason: "ATR unavailable" };
 
-  // 55-bar breakout: the close clears every high of the previous 55 bars
-  const lookback = bars.slice(last - V3.breakout_bars, last);
-  const priorHigh = lookback.length ? Math.max(...lookback.map((c) => c.h)) : null;
-  const breakout = priorHigh != null && closes[last] > priorHigh;
+  // breakout, for every lookback the profile trades
+  const breakouts = prof.breakout_bars.map((bars) => {
+    const lookback = bars.slice(last - bars, last);
+    const priorHigh = lookback.length ? Math.max(...lookback.map((c) => c.h)) : null;
+    return priorHigh != null && closes[last] > priorHigh ? `breakout_${bars}` : null;
+  }).filter(Boolean) as string[];
 
   // Keltner thrust: close above EMA20 + 2xATR, volume above its 20-bar average
   const ema = emaSeries(closes, V3.keltner_ema);
@@ -198,16 +222,18 @@ export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd = V3.min
     volAvg != null &&
     (bars[last].v || 0) > volAvg;
 
-  const entrySignal = [breakout ? "breakout_55" : null, keltner ? "keltner_volume" : null].filter(Boolean);
+  const entrySignal = [...breakouts, keltner ? "keltner_volume" : null].filter(Boolean) as string[];
   const adv = avgDollarVolume(bars, V3.adv_bars);
   const confluence = confluenceAt(bars, atr, V3.confluence_window);
 
   const gates = {
     history: true,
     entry_signal: entrySignal.length > 0,
-    liquidity: adv != null && adv >= minAdvUsd,
-    regime: btcAboveSma200 === true,
-    confluence: confluence.hit,
+    liquidity: adv != null && adv >= advFloor,
+    // a gate the profile does not require reports true, so the reason chain
+    // never blames a rule this profile switched off
+    regime: prof.regime_required ? btcAboveSma200 === true : true,
+    confluence: prof.confluence_required ? confluence.hit : true,
   };
   const passed = gates.entry_signal && gates.liquidity && gates.regime && gates.confluence;
 

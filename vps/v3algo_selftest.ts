@@ -71,7 +71,16 @@ const timedOut = v3ExitDue({
 });
 assert(timedOut.exit && timedOut.reason === "time" && timedOut.price === 120, "horizon exits at the live price");
 
-// 7. ATR sanity
+// 7. profiles: the loose default trades with the regime gate, the aggressive
+// profile ignores it, and strict still demands a survivor formation
+const aggressive = evaluateV3({ candles, btcAboveSma200: false, profile: "aggressive" });
+assert(aggressive.state === "entry", "aggressive profile trades without the BTC trend gate");
+assert(aggressive.gates.regime === true, "a gate the profile does not require reports true");
+const strict = evaluateV3({ candles, btcAboveSma200: true, profile: "strict" });
+assert(strict.state === "entry" && strict.gates.confluence === true,
+  "strict profile still requires a survivor formation");
+
+// 8. ATR sanity
 const atr = atrSeries(candles);
 assert(Number(atr[atr.length - 1]) > 0 && atr[10] === null, "ATR warms up then produces a value");
 

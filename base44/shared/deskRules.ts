@@ -30,6 +30,8 @@ export const LIVE_DEFAULTS = {
   margin_engine: false,
   margin_leverage: 2,
   v3_algo: false,
+  v3_profile: "loose",
+  btc_gate_mode: "any",
   max_trade_loss_pct: 20,
   pyramid: false,
   pyramid_trigger_pct: 1.5,

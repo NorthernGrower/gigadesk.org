@@ -134,7 +134,12 @@ export function gateReason(row, desk, rules) {
   // the tape it was tuned on rather than the champion's.
   if (rules.champion !== false && rules.btc_gate !== false) {
     const btcRaw = rules.btc_change24h;
-    if (long && btcRaw != null && Number.isFinite(Number(btcRaw)) && Number(btcRaw) > -1)
+    // btc_gate_mode decides which tape longs may trade into. "risk_off_only"
+    // is the champion's original measured rule and blocks every long while BTC
+    // is above -1% on the day, which is precisely when bounces happen.
+    // "any" keeps the tape reading for alerts but stops vetoing longs.
+    const mode = rules.btc_gate_mode || "any";
+    if (mode !== "any" && long && btcRaw != null && Number.isFinite(Number(btcRaw)) && Number(btcRaw) > -1)
       return "longs wait for a risk-off BTC tape";
   }
   return null;

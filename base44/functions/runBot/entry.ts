@@ -49,6 +49,7 @@ const DEFAULT_CONFIG = {
   champion_engine: true,
   active_desk: "paper",
   v3_algo: false,
+  v3_profile: "loose",
 };
 
 
@@ -1050,7 +1051,11 @@ export default async function (req) {
           );
           settled.forEach((res, i) => {
             if (res.status !== "fulfilled" || !res.value) return;
-            v3Evals.set(group[i], evaluateV3({ candles: res.value, btcAboveSma200: btcAbove }));
+            v3Evals.set(group[i], evaluateV3({
+              candles: res.value,
+              btcAboveSma200: btcAbove,
+              profile: config.v3_profile || "loose",
+            }));
           });
         }
         const gates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
