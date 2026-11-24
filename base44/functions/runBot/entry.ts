@@ -1066,49 +1066,57 @@ export default async function (req) {
       // daily trend cannot be read, the regime gate fails closed: no entries.
       const v3DeskOn = { live: v3On(liveView), paper: v3On(paperView) };
       const v3Evals = new Map();
+      let v3Error = null;
       if (v3DeskOn.live || v3DeskOn.paper) {
-        const candidates = new Set();
-        for (const r of [...tradable, ...tradableLive]) {
-          if (r.symbol) candidates.add(r.symbol);
-        }
-        const wanted = [...candidates].slice(0, 40);
-        const btcDaily = await fetchCandles("BTC", "1d", 260, scanVenue).catch(() => null);
-        const btcAbove = btcTrendUp(btcDaily);
-        for (const group of chunk(wanted, 6)) {
-          const settled = await Promise.allSettled(
-            group.map((s) => fetchCandles(s, "1d", 260, scanVenue)),
-          );
-          settled.forEach((res, i) => {
-            if (res.status !== "fulfilled" || !res.value) return;
-            v3Evals.set(group[i], evaluateV3({
-              candles: res.value,
-              btcAboveSma200: btcAbove,
-              profile: config.v3_profile || "loose",
-            }));
-          });
-        }
-        const gates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
-        let entries = 0;
-        for (const ev of v3Evals.values()) {
-          if (ev.state === "entry") {
-            entries += 1;
-            continue;
+        try {
+          const candidates = new Set();
+          for (const r of [...tradable, ...tradableLive]) {
+            if (r.symbol) candidates.add(r.symbol);
           }
-          const g = ev.gates || {};
-          if (!g.history) gates.history += 1;
-          else if (!g.entry_signal) gates.entry_signal += 1;
-          else if (!g.liquidity) gates.liquidity += 1;
-          else if (!g.regime) gates.regime += 1;
-          else gates.confluence += 1;
+          const wanted = [...candidates].slice(0, 40);
+          const btcDaily = await fetchCandles("BTC", "1d", 260, scanVenue).catch(() => null);
+          const btcAbove = btcTrendUp(btcDaily);
+          for (const group of chunk(wanted, 6)) {
+            const settled = await Promise.allSettled(
+              group.map((s) => fetchCandles(s, "1d", 260, scanVenue)),
+            );
+            settled.forEach((res, i) => {
+              if (res.status !== "fulfilled" || !res.value) return;
+              v3Evals.set(group[i], evaluateV3({
+                candles: res.value,
+                btcAboveSma200: btcAbove,
+                profile: config.v3_profile || "loose",
+              }));
+            });
+          }
+          const gates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
+          let entries = 0;
+          for (const ev of v3Evals.values()) {
+            if (ev.state === "entry") {
+              entries += 1;
+              continue;
+            }
+            const g = ev.gates || {};
+            if (!g.history) gates.history += 1;
+            else if (!g.entry_signal) gates.entry_signal += 1;
+            else if (!g.liquidity) gates.liquidity += 1;
+            else if (!g.regime) gates.regime += 1;
+            else gates.confluence += 1;
+          }
+          v3Summary = {
+            desks: v3DeskOn,
+            candidates: wanted.length,
+            evaluated: v3Evals.size,
+            entries,
+            btc_above: btcAbove,
+            gates,
+          };
+        } catch (err) {
+          // a V3 failure costs V3 entries, never the whole cycle
+          v3Error = String((err && err.message) || err);
+          console.log(`v3 evaluation failed: ${v3Error}`);
+          v3Summary = { desks: v3DeskOn, evaluated: 0, entries: 0, error: v3Error };
         }
-        v3Summary = {
-          desks: v3DeskOn,
-          candidates: wanted.length,
-          evaluated: v3Evals.size,
-          entries,
-          btc_above: btcAbove,
-          gates,
-        };
       }
       // a V3 row trades the algorithm's own plan: its stop, no target, and it
       // is a long whatever the intraday scan said
@@ -1847,7 +1855,7 @@ export default async function (req) {
       scan_log: scanLog,
       v3: v3Summary,
       risk: paperRisk,
-      diagnostics: { risk_error: riskError },
+      diagnostics: { risk_error: riskError, v3_error: v3Error },
       rule_lock: deskDiag,
       universe: board.universeCount,
       summary: board.summary,
