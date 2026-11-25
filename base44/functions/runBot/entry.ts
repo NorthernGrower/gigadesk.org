@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } fr
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard, resolveDeskVenue } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
@@ -338,6 +338,9 @@ export default async function (req) {
           symbol: t.symbol,
           side: side === "short" ? "buy" : "sell",
           quantity: Number(t.quantity) || 0,
+          // a BTC-quoted position lives on its own market: the close must sell
+          // the pair it was bought on, never the dollar one of the same coin
+          ...(t.quote_asset === "BTC" ? { quote: "BTC" } : {}),
           ...(side === "short" ? { margin: true, leverage: liveEngine.leverage } : {}),
         });
         // dust: the exchange can never sell this little — book the close on
@@ -424,11 +427,14 @@ export default async function (req) {
         if (!managed.conn || isBackedOff(connRow)) return false;
         // half the order under the exchange minimum: stay whole and let the
         // full position close at its target instead of spamming refused orders
+        // (the floor is the dollar minimum this position's size is in)
         if (!(size / 2 >= 10)) return false;
         const sell = await placeMarketOrder(managed.conn, {
           symbol: t.symbol,
           side: side === "short" ? "buy" : "sell",
           quantity: halfQty,
+          // a BTC-quoted position books out on its own market
+          ...(t.quote_asset === "BTC" ? { quote: "BTC" } : {}),
           ...(side === "short" ? { margin: true, leverage: liveEngine.leverage } : {}),
         });
         if (!sell.ok) return false;
@@ -681,7 +687,10 @@ export default async function (req) {
         // manages exactly like the opening leg.
         const addsSoFar = Number(t.adds) || 0;
         const pyramidOn = isRealPos ? lrVal("pyramid", false) === true : config.pyramid === true;
-        if (pyramidOn && t.manual !== true && !t.scaled && addsSoFar < 2) {
+        // a BTC-quoted position is never added to: the leg is sized and paid
+        // from the desk's dollar quote, which this position never spends, so
+        // an add would size against money it cannot use
+        if (pyramidOn && t.quote_asset !== "BTC" && t.manual !== true && !t.scaled && addsSoFar < 2) {
           const trigger =
             Number(isRealPos ? lrVal("pyramid_trigger_pct", 1.5) : (config.pyramid_trigger_pct ?? 1.5)) || 1.5;
           const origSize = (Number(t.size_usd) || 0) / (1 + 0.5 * addsSoFar);
@@ -1689,6 +1698,176 @@ export default async function (req) {
         console.log(`BTC-quoted leg failed: ${String((err && err.message) || err)}`);
       }
 
+      // ---- BTC-quoted leg (live). The same switch on the live desk, and this
+      // one places a real order on Kraken's Bitcoin market: sized from the
+      // account's own Bitcoin balance, risked between the pair's entry and
+      // stop exactly as a dollar order is, and recorded in BTC with the rate
+      // it opened at, so its dollar figures still read. It never spends the
+      // dollar quote's cash, and it takes only symbols the desk did not take
+      // this cycle, so one coin is never bought twice in two currencies.
+      // Longs only: a Bitcoin short is a margin position on a market this
+      // book has not been measured on. A failure here costs BTC entries,
+      // never the cycle.
+      try {
+        const btcSpendableNow = connRow ? pickBtcBalance(connRow.balances) : 0;
+        if (
+          btcMarketsOn(liveView) && liveReady && btcUsdNow > 0 &&
+          !v3DeskOn.live && btcSpendableNow > 0 && liveBudget >= 10 && !dryRun
+        ) {
+          const takenBtc = new Set([
+            ...liveSymbols,
+            ...paperWanted.map((r) => r.symbol),
+            ...stillOpen.map((t) => t.symbol),
+          ]);
+          const liveRows = liveBoard === board ? tradable : tradableLive;
+          const btcSeeds = liveRows.filter((r) => !takenBtc.has(r.symbol)).slice(0, 5);
+          const btcTfLive = liveView.timeframe || "1h";
+          // the desk's free slots stay one number: the dollar plans were
+          // sized against them first, and a BTC entry takes one of what is
+          // left rather than opening a position past the desk's limit
+          const btcSlots = liveMaxOpen - liveOpenCount - livePlans.length;
+          let btcLeft = btcSpendableNow;
+          let btcBudgetUsd = liveBudget;
+          for (const seed of btcSeeds) {
+            if (!(btcSlots > 0)) break;
+            if (opened.filter((o) => o.mode === "real").length >= btcSlots) break;
+            if (!(btcLeft > 0) || btcBudgetUsd < 10) break;
+            const bars = await fetchCandles(seed.symbol, btcTfLive, 300, btcFeed, "BTC").catch(() => null);
+            if (!Array.isArray(bars) || bars.length < 60) continue;
+            const lastBtcPx = Number(bars[bars.length - 1].c) || 0;
+            if (!(lastBtcPx > 0)) continue;
+            // the Bitcoin chart is the one that decides: entry, stop and
+            // target all land in BTC, which is what the position works in
+            const btcLiveRow = analyzeCoin({ ...seed, price: lastBtcPx }, bars, {
+              medianChange24h: (liveBoard || board).medianChange24h || 0,
+              dailyTargetPct: Number(lrVal("daily_target_pct", 2)) || 2,
+              barsPerDay:
+                { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[btcTfLive] || 24,
+              confluenceV2: liveView.confluence_v2 !== false,
+            });
+            if (!btcLiveRow || btcLiveRow.side !== "long") continue;
+            if (!qualifies(btcLiveRow, "live")) continue;
+            if (!(Number(btcLiveRow.entry) > 0)) continue;
+            // one position per coin: an open row in the same symbol means
+            // the seed filter above already skipped it, and this catches a
+            // row past the first page of that read
+            const btcOpen = await base44.entities.Trade.count({
+              status: "open",
+              symbol: btcLiveRow.symbol,
+              created_by_id: config.created_by_id || user.id,
+            });
+            if (btcOpen) continue;
+            // the dollar floor in bitcoin — $10 of this market — or the
+            // exchange's own minimum, whichever is larger
+            const floorBtc = round(10 / btcUsdNow, 8);
+            if (!(floorBtc > 0)) continue;
+            const minBtc = entryMinimum(constraints, btcLiveRow.symbol, "BTC", btcLiveRow.entry, floorBtc);
+            const sizeBtc = liveEntrySize({
+              row: btcLiveRow,
+              balance: btcLeft,
+              budget: round(btcBudgetUsd / btcUsdNow, 8),
+              slots: btcSlots,
+              riskPct: liveRiskPct,
+              minimum: minBtc,
+              floor: floorBtc,
+              decimals: 8,
+            });
+            if (!(sizeBtc > 0)) continue;
+            const sizeBtcUsd = round(sizeBtc * btcUsdNow, 2);
+            if (!(sizeBtcUsd >= 10)) continue;
+            const baseQty = round(sizeBtc / btcLiveRow.entry, 8);
+            if (!(baseQty > 0)) continue;
+            const btcTargetLive = liveUseEngine ? liveEngineTarget(btcLiveRow) : btcLiveRow.target;
+            // the price and the pair travel with the order: Kraken names a
+            // Bitcoin market SOLXBT, and sizing a buy needs the pair's price
+            const order = await placeMarketOrder(live.conn, {
+              symbol: btcLiveRow.symbol,
+              side: "buy",
+              usd: sizeBtcUsd,
+              quantity: baseQty,
+              price: btcLiveRow.entry,
+              quote: "BTC",
+            });
+            if (!order.ok) {
+              await base44.entities.Alert.create({
+                symbol: btcLiveRow.symbol,
+                title: `Real BTC-market order failed on ${btcLiveRow.symbol}`,
+                message: order.message,
+                mode: "live",
+                kind: "order_failed",
+                severity: "danger",
+              });
+              break;
+            }
+            // what it just spent is no longer free for the next coin
+            btcLeft -= sizeBtc * 1.005;
+            btcBudgetUsd -= sizeBtcUsd;
+            liveBudget -= sizeBtcUsd;
+            const filledQty = round(Number(order.filled_qty) || baseQty, 8);
+            const fillPx = round(Number(order.avg_price) || btcLiveRow.entry, 8);
+            const btcCreatedLive = await base44.entities.Trade.create({
+              symbol: btcLiveRow.symbol,
+              name: btcLiveRow.name,
+              image: btcLiveRow.image,
+              side: "long",
+              mode: "real",
+              status: config.mode === "auto" ? "open" : "proposed",
+              entry_price: fillPx,
+              quantity: filledQty,
+              size_usd: sizeBtcUsd,
+              stop_price: round(btcLiveRow.stop, 8),
+              target_price: round(btcTargetLive, 8),
+              target_r: liveEngine.targetR,
+              peak_price: fillPx,
+              score: btcLiveRow.score,
+              pattern: `${btcLiveRow.side}/${btcLiveRow.market_cap_bucket}`,
+              entry_source: "gated",
+              quote_asset: "BTC",
+              fx_usd: round(btcUsdNow, 2),
+              exchange: live.conn.exchange,
+              exchange_order_id: order.order_id,
+              rationale: [
+                ...(btcLiveRow.reasons || []),
+                `BTC-quoted market ${btcLiveRow.symbol}/XBT on ${live.conn.label} — ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}`,
+              ].join(" • "),
+              opened_at: new Date().toISOString(),
+            });
+            if (config.mode === "auto") {
+              opened.push({
+                id: btcCreatedLive.id,
+                symbol: btcLiveRow.symbol,
+                side: "long",
+                entry: btcLiveRow.entry,
+                size_usd: sizeBtcUsd,
+                mode: "real",
+              });
+              await base44.entities.Alert.create({
+                symbol: btcLiveRow.symbol,
+                title: `Bot opened a long on ${btcLiveRow.symbol}/XBT`,
+                message: `BTC-quoted market, real order on ${live.conn.label}: entry ${round(btcLiveRow.entry, 8)} BTC, stop ${round(btcLiveRow.stop, 8)} BTC, target ${round(btcTargetLive, 8)} BTC. ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}. Score ${btcLiveRow.score}.`,
+                mode: "live",
+                kind: "bot_open",
+                severity: "info",
+                trade_id: btcCreatedLive.id,
+              });
+            } else {
+              proposed.push({
+                id: btcCreatedLive.id,
+                symbol: btcLiveRow.symbol,
+                side: "long",
+                entry: btcLiveRow.entry,
+                target: btcTargetLive,
+                stop: btcLiveRow.stop,
+                score: btcLiveRow.score,
+                size_usd: sizeBtcUsd,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.log(`BTC-quoted live leg failed: ${String((err && err.message) || err)}`);
+      }
+
       Object.assign(
         deskDiag,
         collectGateLocks(tradable, gateReason, {
@@ -2036,7 +2215,11 @@ export default async function (req) {
       scanned: board.scannedCount,
       scan_log: scanLog,
       v3: v3Summary,
-      btc_markets: { on: btcMarketsOn(paperView), btc_usd: round(btcUsdNow, 2) },
+      btc_markets: {
+        on: btcMarketsOn(paperView),
+        live_on: btcMarketsOn(liveView),
+        btc_usd: round(btcUsdNow, 2),
+      },
       risk: paperRisk,
       diagnostics: { risk_error: riskError, v3_error: v3Error },
       rule_lock: deskDiag,

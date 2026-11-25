@@ -148,21 +148,30 @@ export function gateReason(row, desk, rules) {
   return null;
 }
 
-/** The smallest USD order a pair will accept on this exchange, or $10. */
-export function entryMinimum(constraints, symbol, quoteAsset, entry) {
+/** The smallest order a pair will accept, or the floor given — $10 by default.
+ *  `floor` is in the quote the pair is priced in: a BTC market's $10 is a
+ *  fraction of a bitcoin, so its caller passes the dollar floor in BTC. */
+export function entryMinimum(constraints, symbol, quoteAsset, entry, floor = 10) {
   const pair = `${String(symbol || "").toUpperCase()}${quoteAsset || "USDT"}`;
   const m = constraints ? constraints.get(pair) : null;
-  return Math.max(10, Number(m?.minNotional) || 0, (Number(m?.minQty) || 0) * entry * 1.01);
+  const min = Math.max(0, Number(floor) || 0);
+  return Math.max(min, Number(m?.minNotional) || 0, (Number(m?.minQty) || 0) * entry * 1.01);
 }
 
-export function liveEntrySize({ row, balance, budget, slots, riskPct, minimum = 10 }) {
+export function liveEntrySize({ row, balance, budget, slots, riskPct, minimum = 10, floor = 10, decimals = 2 }) {
+  // `floor` and `decimals` follow the quote the row is priced in: a $10 floor
+  // is ten quote units on a dollar market, and a fraction of a bitcoin on a
+  // BTC market, whose lot sizes are counted in satoshis rather than cents.
+  // Both default to the dollar behaviour, so a USD market sizes as it always did.
+  const step = 10 ** Math.max(0, Math.min(8, Math.round(Number(decimals) || 2)));
+  const minOrder = Math.max(Math.max(0, Number(floor) || 0), Number(minimum) || 0);
+  if (!(minOrder > 0)) return 0;
   const available = Math.min(Math.max(0, balance) * 0.995, Math.max(0, budget));
-  const minOrder = Math.max(10, Number(minimum) || 10);
   if (available < minOrder) return 0;
   const affordableSlots = Math.max(1, Math.min(slots, Math.floor(available / minOrder)));
   const stopDistance = Math.abs(Number(row.entry) - Number(row.stop));
   if (!(stopDistance > 0)) return 0;
   const riskCap = ((balance * riskPct / 100) / stopDistance) * Number(row.entry);
-  const size = Math.floor(Math.min(riskCap, available / affordableSlots) * 100) / 100;
+  const size = Math.floor(Math.min(riskCap, available / affordableSlots) * step) / step;
   return size >= minOrder ? size : 0;
 }

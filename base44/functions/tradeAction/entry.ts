@@ -1,17 +1,26 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, pickFundingQuote, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
+import { readAccount, pickFundingQuote, pickBtcBalance, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
 import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
 import { recordLesson } from "../../shared/learn.ts";
 import { liveRule } from "../../shared/deskRules.ts";
+import { toUsd } from "../../shared/quotes.ts";
 
-/** Exit maths shared by the single close and the close-everything action. */
-function closingValues(trade, price) {
+/**
+ * Exit maths shared by the single close and the close-everything action.
+ * `price` is in the trade's own quote and `fx` is the USD value of one unit
+ * of it: a BTC-quoted trade's entry and exit are both in bitcoin, so its P&L
+ * is the pair's own move, and the dollar figure is that move at the rate
+ * given. A USD trade takes the same path with a factor of one.
+ */
+function closingValues(trade, price, fx = 1) {
   const entry = Number(trade.entry_price) || 0;
   const qty = Number(trade.quantity) || 0;
   const size = Number(trade.size_usd) || 0;
-  const pnl = trade.side === "short" ? (entry - price) * qty : (price - entry) * qty;
+  const quote = trade.quote_asset === "BTC" ? "BTC" : "USD";
+  const pnlInQuote = trade.side === "short" ? (entry - price) * qty : (price - entry) * qty;
+  const pnl = toUsd(pnlInQuote, quote, fx);
   const pnlPct = size ? (pnl / size) * 100 : 0;
   return {
     update: {
@@ -28,7 +37,7 @@ function closingValues(trade, price) {
     alert: {
       symbol: trade.symbol,
       title: `${trade.symbol} closed manually`,
-      message: `Exit ${round(price, 6)} — P&L ${round(pnl)} USD (${round(pnlPct)}%).`,
+      message: `Exit ${round(price, 6)}${quote === "BTC" ? " BTC" : ""} — P&L ${round(pnl)} USD (${round(pnlPct)}%).`,
       kind: pnl >= 0 ? "target_hit" : "stop_hit",
       severity: pnl >= 0 ? "success" : "danger",
       trade_id: trade.id,
@@ -71,8 +80,18 @@ export default async function (req) {
       }
 
       const { coins } = await fetchMarkets(base44.asServiceRole);
+      const btcUsd = Number(coins.find((c) => c.symbol === "BTC")?.price) || 0;
       const priceOf = (symbol) => coins.find((c) => c.symbol === symbol)?.price;
-      const closeable = openTrades.filter((t) => Number(priceOf(t.symbol)) > 0);
+      // a BTC-quoted position's levels are in bitcoin: its exit is the pair's
+      // price at the rate, and its P&L is translated at that same rate
+      const fxOf = (t) => (t.quote_asset === "BTC" ? btcUsd : 1);
+      const inQuote = (t, priceUsd) => {
+        const fx = fxOf(t);
+        return fx > 0 ? (Number(priceUsd) || 0) / fx : 0;
+      };
+      const closeable = openTrades.filter(
+        (t) => Number(priceOf(t.symbol)) > 0 && inQuote(t, priceOf(t.symbol)) > 0,
+      );
       if (!closeable.length) {
         return Response.json({ error: "No live prices for your open positions right now" }, { status: 502 });
       }
@@ -82,7 +101,7 @@ export default async function (req) {
       let cashDelta = 0;
       let pnlTotal = 0;
       for (const openTrade of closeable) {
-        let closePrice = priceOf(openTrade.symbol);
+        let closePrice = inQuote(openTrade, priceOf(openTrade.symbol));
         let dustNote = "";
         // a bot-placed real position is closed with a real sell order; a
         // refused order leaves it open and raises an alert
@@ -106,6 +125,9 @@ export default async function (req) {
             symbol: openTrade.symbol,
             side: shortClose ? "buy" : "sell",
             quantity: Number(openTrade.quantity) || 0,
+            // a BTC-quoted position lives on its own market: the close must
+            // sell the pair it was bought on, never the dollar one
+            ...(openTrade.quote_asset === "BTC" ? { quote: "BTC" } : {}),
             ...(shortClose
               ? { margin: true, leverage: Number(liveRule(config.live_rules, "margin_leverage", 2)) || 2 }
               : {}),
@@ -128,7 +150,7 @@ export default async function (req) {
             dustNote = `The exchange holds ${sell.held_qty} ${openTrade.symbol}, below its minimum sellable amount — closed here without an order.`;
           } else if (sell.avg_price) closePrice = sell.avg_price;
         }
-        const closed = closingValues(openTrade, closePrice);
+        const closed = closingValues(openTrade, closePrice, fxOf(openTrade));
         if (dustNote) {
           closed.alert.message = `${closed.alert.message} ${dustNote}`;
           closed.alert.severity = "warning";
@@ -178,28 +200,38 @@ export default async function (req) {
       // on the chosen exchange, sized by the live risk rules — risk per trade
       // % of the account's spendable quote balance, risked between entry and
       // stop (the same maths as the paper desk). A refused order keeps the
-      // proposal standing.
+      // proposal standing. A BTC-quoted proposal spends the account's Bitcoin
+      // and orders on the pair, so its balance, its floor and its order size
+      // are all in BTC, and its dollar figures come from the rate it was
+      // proposed at.
       let real = null;
       let realSize = 0;
       const live = await resolveLiveConnection(base44, config);
       if (live.conn && trade.side === "long") {
         const acct = await readAccount({
           exchange: live.conn.exchange,
-          testnet: live.conn.testnet,
+          testnet: Boolean(live.conn.testnet),
           api_key: live.conn.api_key,
           api_secret: live.conn.api_secret,
           passphrase: live.conn.passphrase || "",
         });
+        const isBtcQuote = trade.quote_asset === "BTC";
+        const btcUsd = Number(trade.fx_usd) || 0;
+        if (isBtcQuote && !(btcUsd > 0)) {
+          return Response.json({ error: "This BTC-quoted proposal has no recorded Bitcoin rate" }, { status: 409 });
+        }
         const funding = acct.ok ? pickFundingQuote(acct.balances, live.conn.exchange) : null;
-        const balance = funding ? funding.amount : 0;
+        const btcBalance = acct.ok && isBtcQuote ? pickBtcBalance(acct.balances) : 0;
+        const balance = isBtcQuote ? btcBalance : funding ? funding.amount : 0;
+        const quoteAsset = isBtcQuote ? "BTC" : funding?.asset || "quote";
         const entry = Number(trade.entry_price) || 0;
         // only fire a buy in a market the account can actually settle —
         // ordering an unlisted symbol is a refused signed call and can lock
         // the key, so it is answered here without one
-        const listed = await fetchListedSymbols(live.conn, funding ? [funding.asset] : null);
+        const listed = await fetchListedSymbols(live.conn, [quoteAsset]);
         if (listed && !listed.has(trade.symbol)) {
           return Response.json(
-            { error: `${trade.symbol} is not listed on ${live.conn.label} in your funding currency (${funding?.asset || "quote"})` },
+            { error: `${trade.symbol} is not listed on ${live.conn.label} in your funding currency (${quoteAsset})` },
             { status: 409 },
           );
         }
@@ -216,27 +248,36 @@ export default async function (req) {
         )
           .filter((t) => t.created_by_id === trade.created_by_id)
           .reduce((a, t) => a + (Number(t.size_usd) || 0), 0);
-        realSize = liveEntrySize({
+        const budgetUsd = capUsd > 0 ? Math.max(0, capUsd - openReal) : balance * (isBtcQuote ? btcUsd : 1);
+        // the $10 floor in the quote this market settles in
+        const floorQuote = isBtcQuote ? round(10 / btcUsd, 8) : 10;
+        const sizeQuote = liveEntrySize({
           row: { entry, stop },
           balance,
-          budget: capUsd > 0 ? capUsd - openReal : balance,
+          budget: isBtcQuote ? budgetUsd / btcUsd : budgetUsd,
           slots: 1,
           riskPct: liveRiskPct,
-          minimum: entryMinimum(constraints, trade.symbol, funding?.asset, entry),
+          minimum: entryMinimum(constraints, trade.symbol, quoteAsset, entry, floorQuote),
+          floor: floorQuote,
+          decimals: isBtcQuote ? 8 : 2,
         });
+        const sizeUsd = isBtcQuote ? sizeQuote * btcUsd : sizeQuote;
+        realSize = sizeUsd;
         real =
-          realSize >= 10
+          sizeUsd >= 10
             ? await placeMarketOrder(live.conn, {
                 symbol: trade.symbol,
                 side: "buy",
-                usd: round(realSize, 2),
+                usd: round(sizeUsd, 2),
                 price: entry,
+                quantity: round(sizeQuote / entry, 8),
+                ...(isBtcQuote ? { quote: "BTC" } : {}),
               })
             : {
                 ok: false,
                 message:
-                  balance < 10
-                    ? `No spendable ${funding?.asset || "quote currency"} on ${live.conn.label} to fund the order`
+                  balance < floorQuote
+                    ? `No spendable ${quoteAsset} on ${live.conn.label} to fund the order`
                     : `After the risk rules the order sits below ${trade.symbol}'s exchange minimum — raise risk per trade or the budget cap`,
               };
         if (!real.ok) {
@@ -274,11 +315,20 @@ export default async function (req) {
         return Response.json({ error: "Only an open position can be closed" }, { status: 409 });
       }
       const { coins } = await fetchMarkets(base44.asServiceRole);
-      const price = coins.find((c) => c.symbol === trade.symbol)?.price;
-      if (!price) {
+      // a BTC-quoted position's own market is priced in bitcoin, so its exit
+      // and its P&L are translated at the rate — a dollar price compared
+      // with a BTC entry would book a nonsense result
+      const btcUsd = Number(coins.find((c) => c.symbol === "BTC")?.price) || 0;
+      const isBtcQuote = trade.quote_asset === "BTC";
+      const fx = isBtcQuote ? btcUsd : 1;
+      if (!(fx > 0)) {
+        return Response.json({ error: "No live Bitcoin price to close this position" }, { status: 502 });
+      }
+      const priceUsd = coins.find((c) => c.symbol === trade.symbol)?.price;
+      if (!(Number(priceUsd) > 0)) {
         return Response.json({ error: "No live price for this coin right now" }, { status: 502 });
       }
-      let closePrice = price;
+      let closePrice = Number(priceUsd) / fx;
       let dustNote = "";
       // closing a bot-placed real position sends a real sell order first
       if (trade.mode === "real" && trade.exchange_order_id) {
@@ -289,6 +339,9 @@ export default async function (req) {
           symbol: trade.symbol,
           side: shortClose ? "buy" : "sell",
           quantity: Number(trade.quantity) || 0,
+          // a BTC-quoted position lives on its own market: the close must
+          // sell the pair it was bought on, never the dollar one
+          ...(isBtcQuote ? { quote: "BTC" } : {}),
           ...(shortClose
             ? { margin: true, leverage: Number(liveRule(config.live_rules, "margin_leverage", 2)) || 2 }
             : {}),
@@ -304,7 +357,7 @@ export default async function (req) {
           closePrice = sell.avg_price;
         }
       }
-      const closed = closingValues(trade, closePrice);
+      const closed = closingValues(trade, closePrice, fx);
       if (dustNote) {
         closed.alert.message = `${closed.alert.message} ${dustNote}`;
         closed.alert.severity = "warning";

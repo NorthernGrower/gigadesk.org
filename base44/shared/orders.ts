@@ -31,7 +31,12 @@ function idemKey(symbol) {
  */
 async function guardConstraints(cfg, { usd, quantity, price, side, pair }) {
   const cons = await fetchMarketConstraints(cfg);
-  const m = cons ? cons.get(pair) : null;
+  // Kraken names a Bitcoin pair SOLXBT while the constraint map keys it
+  // SOLBTC, so a Bitcoin order would miss its own minimums and be sent
+  // unguarded. Look the market up under either spelling.
+  const m = cons
+    ? cons.get(pair) || cons.get(String(pair || "").replace(/XBT$/, "BTC"))
+    : null;
   if (!m) return { ok: true };
   if (side === "buy") {
     // a buy can be sized by quote amount or, when closing a margin short, by

@@ -355,7 +355,12 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
   );
   if (unheldRows.length) {
     const unheldSymbols = [...new Set(unheldRows.map((t) => String(t.symbol).toUpperCase()))];
-    const freshPrices = await fetchLivePrices(unheldSymbols);
+    // a BTC-quoted row's entry is in bitcoin, so its exit and its P&L are in
+    // bitcoin too: the dollar price has to be translated at the rate instead
+    // of being compared with a BTC entry as if it were a dollar one
+    const needsBtcRate = unheldRows.some((t) => t.quote_asset === "BTC");
+    const freshPrices = await fetchLivePrices(needsBtcRate ? [...unheldSymbols, "BTC"] : unheldSymbols);
+    const btcUsd = Number(freshPrices.get("BTC")) || 0;
     for (const sym of unheldSymbols) {
       const px = Number(freshPrices.get(sym)) || 0;
       if (!(px > 0)) continue; // cannot price it: leave the row for the next sync
@@ -363,10 +368,16 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
         const e = Number(t.entry_price) || 0;
         const q = Number(t.quantity) || 0;
         const size = Number(t.size_usd) || 0;
-        const pnl = (px - e) * q;
+        const isBtc = t.quote_asset === "BTC";
+        // no rate: the row waits for the next sync rather than booking a
+        // dollar exit against a price recorded in bitcoin
+        if (isBtc && !(btcUsd > 0)) continue;
+        const exitQuote = isBtc ? px / btcUsd : px;
+        const pnlQuote = (exitQuote - e) * q;
+        const pnl = isBtc ? pnlQuote * btcUsd : pnlQuote;
         await base44.entities.Trade.update(t.id, {
           status: "closed",
-          exit_price: round(px, 8),
+          exit_price: round(exitQuote, 8),
           pnl_usd: round(pnl),
           pnl_pct: size ? round((pnl / size) * 100) : 0,
           closed_at: new Date().toISOString(),
@@ -376,7 +387,7 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
         await base44.entities.Alert.create({
           symbol: sym,
           title: `${sym} closed (no longer held on ${conn.label})`,
-          message: `The wallet no longer holds ${sym}, so its desk position closed at ${round(px, 8)}. P&L ${round(pnl)} USD.`,
+          message: `The wallet no longer holds ${sym}, so its desk position closed at ${round(exitQuote, 8)}${isBtc ? " BTC" : ""}. P&L ${round(pnl)} USD.`,
           mode: "live",
           kind: "bot_close",
           severity: pnl >= 0 ? "success" : "danger",
@@ -402,6 +413,12 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
     if (diff > 0) {
       // untracked holding (or a hand-purchased top-up): import the difference
       if (proposedRows.length) continue; // a pending proposal will become the position
+      // bitcoin is the quote the desk's BTC markets settle in, so the account's
+      // Bitcoin is the money those orders spend — never a position to import
+      // (the sync would then manage, and close, the funding the desk trades
+      // with). A BTC/USD position is a tracked row, matched by quantity
+      // above, so this never touches one.
+      if (h.asset === "BTC") continue;
       const openedAt = aggRow && aggRow.first ? new Date(aggRow.first).toISOString() : new Date().toISOString();
       const stopPct = Number(opts.stopPct) > 0 ? Number(opts.stopPct) : 2.5;
       const targetR = Number(opts.targetR) > 0 ? Number(opts.targetR) : 2.5;

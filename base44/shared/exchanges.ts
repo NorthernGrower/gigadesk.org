@@ -676,6 +676,20 @@ export function pickFundingQuote(balances = [], exchange) {
 }
 
 /**
+ * The Bitcoin the account holds in its spot wallet — the currency a Kraken
+ * BTC-quoted order settles in. `spendable` is the spot wallet, so margin
+ * collateral never funds a spot buy. Bitcoin values are tiny, so the figure
+ * keeps satoshi precision instead of the two decimals a dollar balance uses.
+ * Returns 0 when the account holds none.
+ */
+export function pickBtcBalance(balances = []) {
+  const row = (balances || []).find(
+    (b) => String(b.asset || "").toUpperCase() === "BTC" && spendable(b) > 0,
+  );
+  return row ? Math.round(spendable(row) * 100000000) / 100000000 : 0;
+}
+
+/**
  * The account's TOTAL value in USD: every holding priced, not just the quote
  * cash — so the desk's balance matches what the exchange app shows. Kraken
  * prices the whole account itself on TradeBalance ("eb", combined balance of

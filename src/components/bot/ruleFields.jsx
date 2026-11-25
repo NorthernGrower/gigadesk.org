@@ -244,7 +244,7 @@ export function scanEngineFields(form, setNum, setV) {
         />
         <Toggle
           label="BTC markets"
-          hint="Also trades Kraken's Bitcoin markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC, with the dollar rate kept on the trade so its P&L still reads in USD. Paper only for now."
+          hint="Also trades Kraken's Bitcoin markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC, with the dollar rate kept on the trade so its P&L still reads in USD. The paper desk sizes them from its cash. The live desk needs Bitcoin in the account's spot wallet to size them and takes longs only — again never spending dollar cash."
           checked={form.btc_markets === true}
           onChange={setV('btc_markets')}
         />

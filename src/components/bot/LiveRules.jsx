@@ -161,6 +161,9 @@ export default function LiveRules({ config, onSaved }) {
           <p className="text-[11px] leading-snug text-muted-foreground">
             Each real order is sized by Risk per trade % of the account's spendable balance, risked between entry and stop. Market orders only; real fills are tracked separately from the paper balance.
           </p>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            BTC markets are sized from the account's own Bitcoin spot balance instead, and take longs only. The dollar quote's cash is never spent on one, so turning BTC markets on cannot starve the dollar desk.
+          </p>
           <Field
             label="Live budget cap ($)"
             hint="The most exchange money real orders may put to work in total across all open positions. 0 means no limit."

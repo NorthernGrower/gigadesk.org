@@ -186,7 +186,7 @@
     "btc_markets": {
       "type": "boolean",
       "default": false,
-      "description": "Also trade Kraken's BTC-quoted markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC with the dollar rate recorded on the trade, so its P&L still reads in USD. Paper only for now — the order path for a second quote has not been exercised. Off by default; the live desk keeps its own switch in live_rules.btc_markets"
+      "description": "Also trade Kraken's BTC-quoted markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC with the dollar rate recorded on the trade, so its P&L still reads in USD. Off by default; the live desk keeps its own switch in live_rules.btc_markets. The paper desk sizes them from its own cash. The live desk sizes them from the account's Bitcoin spot balance and takes longs only — a Bitcoin short would need margin on a market the book has not been measured on, and the dollar quote's cash is never spent on one"
     },
     "timeframe": {
       "type": "string",      "enum": [
