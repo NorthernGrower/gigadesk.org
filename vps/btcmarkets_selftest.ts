@@ -68,7 +68,16 @@ assert(
 );
 // the smallest real Bitcoin order is far below a cent: at two decimals the
 // same sizing floors to zero and nothing would ever trade
-const smallBtc = { row: btcRow, balance: 0.01, budget: 0.01, slots: 1, riskPct: 4, floor: 0.00001, decimals: 8 };
+const smallBtc = {
+  row: btcRow,
+  balance: 0.01,
+  budget: 0.01,
+  slots: 1,
+  riskPct: 4,
+  minimum: floorBtc,
+  floor: floorBtc,
+  decimals: 8,
+};
 assert(liveEntrySize(smallBtc) > 0, "a small BTC order survives at satoshi precision");
 assert(
   liveEntrySize({ ...smallBtc, decimals: 2 }) === 0,
