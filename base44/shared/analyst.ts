@@ -1,17 +1,27 @@
-// The desk analyst's arithmetic. Pure and dependency-free on purpose: it runs
-// under Deno without a network, a model or a database, so it can be unit-tested
-// in vps/analyst_selftest.ts like the other pure modules.
+// The desk analyst's arithmetic. Pure on purpose: nothing here reads the
+// network, a model or a database, so every figure can be unit-tested under Deno
+// in vps/analyst_selftest.ts. The callers do the reads and pass the rows in.
 //
 // The division of labour is the whole point. This file computes every number.
 // The model reads them back and writes prose. Nothing the model writes is
 // executed, and the response schema it answers to carries no numeric field, so
 // an invented figure can never arrive on screen dressed up as a measurement.
+//
+// The analyst is a helper. Its setups, alerts and BTC read are shown beside the
+// desk; nothing here is fed into what the desk buys, sells, sizes or skips.
+
+import { entryReady } from "./topPicks.ts";
+import { btcTrendUp, closedBars } from "./v3algo.ts";
+
+const round = (n: any, d = 2) => Math.round((Number(n) || 0) * 10 ** d) / 10 ** d;
+const text = (value: any, max: number) => (typeof value === "string" ? value.trim().slice(0, max) : "");
+const DAY_MS = 86400000;
 
 /**
  * What each entry source was measured to do, and where the number came from.
- * Only a source listed here gets a verdict. The rest report their own results
- * and say plainly that there is nothing to compare them against — inventing an
- * expectation for them would be the one thing this module exists to avoid.
+ * Only a source listed here gets a verdict. Top picks never do: they are judged
+ * by their trade card and the exit rules, not against a backtest. Gated entries
+ * have no measured figure yet, so they report their numbers with no verdict.
  */
 export const EXPECTATIONS: Record<string, { label: string; per_trade_pct: number; trades_per_year: number; source: string }> = {
   v3: {
@@ -28,8 +38,6 @@ export const MIN_TRADES_FOR_VERDICT = 20;
 
 /** The entry sources a desk can produce, in the order the report lists them. */
 export const SOURCES = ["v3", "gated", "top_pick"];
-
-const round = (n: any, d = 2) => Math.round((Number(n) || 0) * 10 ** d) / 10 ** d;
 
 /** Which entry source a closed trade came from, defaulting to the scored gates. */
 export function sourceOf(trade: any): string {
@@ -75,7 +83,10 @@ export function decayReport(trades: any[], options: any = {}) {
     const stats = groupStats(own);
     const expectation = EXPECTATIONS[source] || null;
     let verdict = "unmeasured";
-    if (expectation) {
+    // top picks are never judged against a backtest, so they get no verdict
+    // at all rather than a "no expectation" line
+    if (source === "top_pick") verdict = "none";
+    else if (expectation) {
       if (stats.trades < minTrades) verdict = "too_few";
       else if (stats.mean_pct <= 0) verdict = "losing";
       else if (stats.mean_pct < expectation.per_trade_pct * 0.5) verdict = "below_backtest";
@@ -115,7 +126,7 @@ export function deskDigest(input: any) {
     String((b && b.closed_at) || "").localeCompare(String((a && a.closed_at) || "")),
   );
   const lastDay = recent.filter(
-    (t) => t && t.closed_at && nowMs - Date.parse(t.closed_at) < 86400000,
+    (t) => t && t.closed_at && nowMs - Date.parse(t.closed_at) < DAY_MS,
   );
 
   const fact = (t: any) => ({
@@ -133,7 +144,7 @@ export function deskDigest(input: any) {
     side: t && t.side === "short" ? "short" : "long",
     source: sourceOf(t),
     size_usd: round(Number(t && t.size_usd) || 0),
-    days_open: t && t.opened_at ? Math.max(0, Math.floor((nowMs - Date.parse(t.opened_at)) / 86400000)) : 0,
+    days_open: t && t.opened_at ? Math.max(0, Math.floor((nowMs - Date.parse(t.opened_at)) / DAY_MS)) : 0,
     stop_price: Number(t && t.stop_price) || 0,
     v3: !!(t && t.v3_algo === true),
     horizon_bars: Number(t && t.v3_horizon_bars) || null,
@@ -167,6 +178,102 @@ export function deskDigest(input: any) {
 }
 
 /**
+ * BTC's tape from its daily candles: above its 200-day average, and its last
+ * daily move. Null when the candles are missing or too short to read.
+ */
+export function btcRegime(daily: any): { above_200d: boolean | null; change_24h_pct: number | null; last_close: number } | null {
+  if (!Array.isArray(daily)) return null;
+  const bars = closedBars(daily);
+  if (bars.length < 2) return null;
+  const closes = bars.map((c: any) => Number(c.c));
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 2];
+  return {
+    above_200d: bars.length > 200 ? btcTrendUp(daily) : null,
+    change_24h_pct: prev > 0 ? round((last / prev - 1) * 100) : null,
+    last_close: round(last),
+  };
+}
+
+/**
+ * The scanner's setups from the last day, best score per coin, with the two
+ * facts a person looks at first: does it clear the desk's score bar, and is the
+ * price near its mean rather than stretched. Nothing here is a call to trade.
+ */
+export function liveSetups(rows: any[], scoreBar: number, nowMs: number) {
+  const cutoff = nowMs - DAY_MS;
+  const best = new Map<string, any>();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r || !r.symbol) continue;
+    if (r.detected_at && Date.parse(r.detected_at) < cutoff) continue;
+    const prior = best.get(r.symbol);
+    if (!prior || (Number(r.score) || 0) > (Number(prior.score) || 0)) best.set(r.symbol, r);
+  }
+  return [...best.values()]
+    .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+    .map((r) => {
+      const score = Number(r.score) || 0;
+      return {
+        symbol: String(r.symbol).toUpperCase(),
+        side: r.side === "short" ? "short" : "long",
+        score,
+        grade: String(r.grade || ""),
+        clears_bar: score >= scoreBar,
+        entry_ready: entryReady(r),
+      };
+    });
+}
+
+/** This desk's own alerts from the last day. Paper and live never mix. */
+export function recentAlerts(rows: any[], desk: string, nowMs: number, limit = 4) {
+  const mode = desk === "live" ? "live" : "paper";
+  const cutoff = nowMs - DAY_MS;
+  return (Array.isArray(rows) ? rows : [])
+    .filter((a) => a && (a.mode || "paper") === mode && a.created_date && Date.parse(a.created_date) >= cutoff)
+    .slice(0, limit)
+    .map((a) => ({
+      kind: String(a.kind || ""),
+      symbol: String(a.symbol || "").toUpperCase(),
+      title: text(a.title, 120),
+      severity: String(a.severity || "info"),
+    }));
+}
+
+/** The user's watchlist, each coin with its score now when the scanner has one. */
+export function watchRows(rows: any[], setups: any[]) {
+  const score = new Map<string, number>(setups.map((s: any) => [s.symbol, s.score] as [string, number]));
+  return (Array.isArray(rows) ? rows : [])
+    .filter((w) => w && w.symbol)
+    .slice(0, 20)
+    .map((w) => {
+      const symbol = String(w.symbol).toUpperCase();
+      return { symbol, score_now: score.has(symbol) ? score.get(symbol) : null };
+    });
+}
+
+/**
+ * The read-only context the analyst sees beside the desk: BTC's tape, the
+ * scanner's setups, this desk's alerts and the watchlist. Every part is a
+ * fact from the app's own data.
+ */
+export function marketContext(input: any) {
+  const nowMs = Number.isFinite(Number(input && input.nowMs)) ? Number(input.nowMs) : Date.now();
+  const desk = input && input.desk === "live" ? "live" : "paper";
+  const scoreBar = Number(input && input.scoreBar) || 70;
+  const setups = liveSetups(input && input.signals, scoreBar, nowMs);
+  return {
+    // false on a desk that runs V3: it has no score bar, so its setups must
+    // not be labelled against one
+    scored: !(input && input.scored === false),
+    btc: btcRegime(input && input.btcDaily),
+    setups: setups.slice(0, 5),
+    setups_total: setups.length,
+    alerts: recentAlerts(input && input.alerts, desk, nowMs),
+    watchlist: watchRows(input && input.watchlist, setups),
+  };
+}
+
+/**
  * The answer shape. Prose only: no numbers, no levels, no sizes, nothing the
  * page would render as a measurement. If a figure is not in the digest above,
  * the note can not state it.
@@ -193,12 +300,13 @@ export const BRIEFING_SCHEMA = {
 
 /** The one prompt the analyst sends. Kept here so the rules travel with the
  *  schema and a change to either is visible in one place. */
-export function briefingPrompt(digest: any, decay: any) {
+export function briefingPrompt(digest: any, decay: any, context: any = null) {
   return [
     "You are the read-only analyst on one crypto trading desk. You are writing the note the owner reads when they open the desk page.",
     "",
     "Hard rules:",
     "- You cannot place, open, close, size, approve or change anything. Nothing you write is executed. Never imply otherwise.",
+    "- Scanner setups are a read of the market, not a call to trade. Never tell the owner to buy, sell or open anything.",
     "- Use only the numbers below. Do not calculate, annualise, extrapolate, estimate a price or invent a figure.",
     "- Where a source has no measured expectation, say it is unmeasured. Never imply an edge that was not measured.",
     "- Few trades are not evidence. If the desk's record rests on a handful, say that plainly in the note.",
@@ -208,7 +316,7 @@ export function briefingPrompt(digest: any, decay: any) {
     "- headline: under 12 words, on what this desk is actually doing.",
     "- summary: at most 90 words on what the desk did and what it means at its own settings.",
     "- closes: one note of at most 30 words for each recent close listed, saying why it worked or failed, in terms of the recorded exit, side and numbers.",
-    "- watch: up to 4 short things worth watching on this desk's own terms.",
+    "- watch: up to 4 short things worth watching on this desk's own terms. You may name scanner setups or the BTC tape from the context.",
     "- risks: the main risk to this desk over the next few days, at most 45 words.",
     "- stance: stand_aside, selective, normal or caution.",
     "",
@@ -217,10 +325,11 @@ export function briefingPrompt(digest: any, decay: any) {
     "",
     "Results against the backtest that set the expectation:",
     JSON.stringify(decay, null, 2),
+    "",
+    "Context beside the desk (scanner setups, BTC tape, alerts, watchlist):",
+    JSON.stringify(context || {}, null, 2),
   ].join("\n");
 }
-
-const text = (value: any, max: number) => (typeof value === "string" ? value.trim().slice(0, max) : "");
 
 /**
  * Validate and clamp whatever came back. A model answer that is missing its

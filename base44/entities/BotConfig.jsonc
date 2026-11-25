@@ -88,7 +88,7 @@
     "analyst_on": {
       "type": "boolean",
       "default": false,
-      "description": "The paper desk's read-only analyst: once a day it reads this desk's own closed trades, open positions and rules and writes a note under the desk panels, plus what each entry source is doing against the backtest that set its expectation. Read-only by construction — it has no order path and cannot open, close, size or approve a trade. Off by default, and off means no call at all; the live desk keeps its own switch in live_rules.analyst_on"
+      "description": "The paper desk's read-only analyst: once a day it writes a short note under the desk panels, from this desk's own closed trades, open positions, rules, recent alerts, the scanner's setups, BTC's tape and the watchlist, plus what each entry source is doing against the backtest that set its expectation. Top picks are never held to a backtest. Read-only by construction — no order path, it cannot open, close, size or approve a trade. Off by default, and off means no read and no call at all; the live desk keeps its own switch in live_rules.analyst_on"
     },
     "margin_leverage": {
       "type": "number",

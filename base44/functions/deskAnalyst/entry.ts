@@ -1,15 +1,18 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { liveRulesView } from "../../shared/deskRules.ts";
-import { briefingPrompt, cleanBriefing, decayReport, deskDigest, BRIEFING_SCHEMA } from "../../shared/analyst.ts";
+import { entryRulesFor } from "../../shared/entryRules.ts";
+import { fetchCandles } from "../../shared/market.ts";
+import { briefingPrompt, cleanBriefing, decayReport, deskDigest, marketContext, BRIEFING_SCHEMA } from "../../shared/analyst.ts";
 
 // The desk analyst: read-only commentary on one desk.
 //
 // There is deliberately no order path in this file — no exchange client, no
-// trade write, no config write, no sizing. It reads the desk's own records,
-// computes the numbers in shared/analyst.ts, and has a model put them into
-// words. A model failure returns the numbers without the prose rather than
-// failing the page, and a desk with the switch off is answered without a model
-// call at all.
+// trade write, no config write, no sizing. It reads the desk's own records and
+// the market context, computes the numbers in shared/analyst.ts, and has a model
+// put them into words. The note is written once a day and kept; the numbers and
+// the context are read fresh on every call. A model failure returns the numbers
+// without the prose rather than failing the page, and a desk with the switch off
+// is answered without any read or model call at all.
 const list = (page) => (Array.isArray(page) ? page : (page && page.items) || []);
 
 export default async function (req) {
@@ -71,13 +74,40 @@ export default async function (req) {
     const digest = deskDigest({ desk, closed, open, config: view });
     const decay = decayReport(closed);
 
-    // one note per desk per day, refreshed on demand: the panel may ask on
-    // every visit without paying for a model read each time
+    // what the desk can see beside its own trades: the scanner's setups, the BTC
+    // tape, this desk's recent alerts and the watchlist. Read fresh on every
+    // call — they are cheap. Each read fails soft, so a missing read leaves its
+    // part empty instead of failing the page.
+    stage = "context";
+    const nowMs = Date.now();
+    const [signalPage, alertPage, watchPage, btcDaily] = await Promise.all([
+      base44.asServiceRole.entities.Signal.filter({ status: "new" }, { sort: "-score", limit: 100 }).catch(() => []),
+      base44.entities.Alert.filter({ created_by_id: user.id }, { sort: "-created_date", limit: 40 }).catch(() => []),
+      base44.entities.Watchlist.list({ limit: 60 }).catch(() => []),
+      fetchCandles("BTC", "1d", 260).catch(() => null),
+    ]);
+    const context = marketContext({
+      desk,
+      // a desk running V3 never reads the score bar, so its setups are not
+      // labelled against a bar it does not use
+      scored: view.v3_algo !== true,
+      scoreBar: view.v3_algo === true ? 0 : entryRulesFor(view, desk).min_score,
+      nowMs,
+      signals: list(signalPage),
+      alerts: list(alertPage),
+      watchlist: list(watchPage),
+      btcDaily,
+    });
+
+    // one note per desk per day. A stored note holds for the day, and asking
+    // again is the only thing that writes a fresh one. A failed model call is
+    // retried on the next visit, but only after 15 minutes, so a model that
+    // keeps failing is not called on every visit.
     stage = "cache";
     const day = new Date().toISOString().slice(0, 10);
     // a stored note is a convenience, never a requirement: on the first
     // publish of this function the collection may not exist yet, and that
-    // must cost a cache hit, not the whole read
+    // must cost a cache miss, not the whole read
     let existing = null;
     try {
       existing =
@@ -88,8 +118,9 @@ export default async function (req) {
       console.log(`desk analyst cache read skipped: ${String((err && err.message) || err)}`);
     }
     const ageMs = existing && existing.generated_at ? Date.now() - Date.parse(existing.generated_at) : Infinity;
-    if (existing && !force && ageMs < 20 * 60000) {
-      return Response.json({ enabled: true, cached: true, note: existing, digest, decay });
+    const holds = !!existing && (!existing.model_error || ageMs < 15 * 60000);
+    if (holds && !force) {
+      return Response.json({ enabled: true, cached: true, note: existing, digest, decay, context });
     }
 
     stage = "model";
@@ -97,7 +128,7 @@ export default async function (req) {
     let modelError = null;
     try {
       const raw = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: briefingPrompt(digest, decay),
+        prompt: briefingPrompt(digest, decay, context),
         response_json_schema: BRIEFING_SCHEMA,
       });
       brief = cleanBriefing(raw);
@@ -127,7 +158,7 @@ export default async function (req) {
       console.log(`desk analyst note not saved: ${String((err && err.message) || err)}`);
     }
 
-    return Response.json({ enabled: true, cached: false, note, digest, decay, error: modelError });
+    return Response.json({ enabled: true, cached: false, note, digest, decay, context, error: modelError });
   } catch (error) {
     return Response.json(
       { error: `${stage}: ${String((error && error.message) || error)}` },

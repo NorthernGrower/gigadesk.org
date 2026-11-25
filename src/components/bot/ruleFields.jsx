@@ -238,7 +238,7 @@ export function scanEngineFields(form, setNum, setV) {
         />
         <Toggle
           label="Desk analyst"
-          hint="A read-only analyst on this desk: it reads the desk's own closed trades, open positions and rules and writes a short note on what it did, why the last closes went as they did, and how its results compare with the backtest. It cannot place, close, size or approve anything."
+          hint="A read-only analyst on this desk: once a day it writes a short note from the desk's own trades and rules, plus the scanner's setups, BTC's tape, recent alerts and your watchlist. It cannot place, close, size or approve anything — it only tells you what it sees."
           checked={form.analyst_on === true}
           onChange={setV('analyst_on')}
         />
