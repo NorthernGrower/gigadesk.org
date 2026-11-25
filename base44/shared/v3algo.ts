@@ -205,11 +205,13 @@ export function evaluateV3({ candles, btcAboveSma200 = false, minAdvUsd, profile
   const atrNow = Number(atr[last]);
   if (!(atrNow > 0)) return { ...empty, reason: "ATR unavailable" };
 
-  // breakout, for every lookback the profile trades
-  const breakouts = prof.breakout_bars.map((bars) => {
-    const lookback = bars.slice(last - bars, last);
+  // breakout, for every lookback the profile trades. The lookback is counted in
+  // bars, so it must not be named after the bar array: shadowing it made
+  // `slice` run on a number and threw on every symbol the gate reached.
+  const breakouts = prof.breakout_bars.map((lookbackBars: number) => {
+    const lookback = bars.slice(last - lookbackBars, last);
     const priorHigh = lookback.length ? Math.max(...lookback.map((c) => c.h)) : null;
-    return priorHigh != null && closes[last] > priorHigh ? `breakout_${bars}` : null;
+    return priorHigh != null && closes[last] > priorHigh ? `breakout_${lookbackBars}` : null;
   }).filter(Boolean) as string[];
 
   // Keltner thrust: close above EMA20 + 2xATR, volume above its 20-bar average
