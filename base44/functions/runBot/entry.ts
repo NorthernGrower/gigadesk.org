@@ -1719,6 +1719,9 @@ export default async function (req) {
             ...liveSymbols,
             ...paperWanted.map((r) => r.symbol),
             ...stillOpen.map((t) => t.symbol),
+            // and everything opened this cycle, whichever desk and quote: one
+            // coin is never entered twice by one cycle
+            ...opened.map((o) => o.symbol),
           ]);
           const liveRows = liveBoard === board ? tradable : tradableLive;
           const btcSeeds = liveRows.filter((r) => !takenBtc.has(r.symbol)).slice(0, 5);
@@ -1779,6 +1782,48 @@ export default async function (req) {
             const baseQty = round(sizeBtc / btcLiveRow.entry, 8);
             if (!(baseQty > 0)) continue;
             const btcTargetLive = liveUseEngine ? liveEngineTarget(btcLiveRow) : btcLiveRow.target;
+            const btcRationale = [
+              ...(btcLiveRow.reasons || []),
+              `BTC-quoted market ${btcLiveRow.symbol}/XBT on ${live.conn.label} — ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}`,
+            ].join(" • ");
+            // approve mode: the setup waits as a proposal and no order goes
+            // out. Taking it places the real buy — that path knows the pair —
+            // so nothing is bought twice by confirming what was already filled.
+            if (config.mode !== "auto") {
+              const btcProposal = await base44.entities.Trade.create({
+                symbol: btcLiveRow.symbol,
+                name: btcLiveRow.name,
+                image: btcLiveRow.image,
+                side: "long",
+                mode: "real",
+                status: "proposed",
+                entry_price: round(btcLiveRow.entry, 8),
+                quantity: baseQty,
+                size_usd: sizeBtcUsd,
+                stop_price: round(btcLiveRow.stop, 8),
+                target_price: round(btcTargetLive, 8),
+                target_r: liveEngine.targetR,
+                peak_price: round(btcLiveRow.entry, 8),
+                score: btcLiveRow.score,
+                pattern: `${btcLiveRow.side}/${btcLiveRow.market_cap_bucket}`,
+                entry_source: "gated",
+                quote_asset: "BTC",
+                fx_usd: round(btcUsdNow, 2),
+                rationale: btcRationale,
+                opened_at: new Date().toISOString(),
+              });
+              proposed.push({
+                id: btcProposal.id,
+                symbol: btcLiveRow.symbol,
+                side: "long",
+                entry: btcLiveRow.entry,
+                target: btcTargetLive,
+                stop: btcLiveRow.stop,
+                score: btcLiveRow.score,
+                size_usd: sizeBtcUsd,
+              });
+              continue;
+            }
             // the price and the pair travel with the order: Kraken names a
             // Bitcoin market SOLXBT, and sizing a buy needs the pair's price
             const order = await placeMarketOrder(live.conn, {
@@ -1812,7 +1857,7 @@ export default async function (req) {
               image: btcLiveRow.image,
               side: "long",
               mode: "real",
-              status: config.mode === "auto" ? "open" : "proposed",
+              status: "open",
               entry_price: fillPx,
               quantity: filledQty,
               size_usd: sizeBtcUsd,
@@ -1827,42 +1872,26 @@ export default async function (req) {
               fx_usd: round(btcUsdNow, 2),
               exchange: live.conn.exchange,
               exchange_order_id: order.order_id,
-              rationale: [
-                ...(btcLiveRow.reasons || []),
-                `BTC-quoted market ${btcLiveRow.symbol}/XBT on ${live.conn.label} — ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}`,
-              ].join(" • "),
+              rationale: btcRationale,
               opened_at: new Date().toISOString(),
             });
-            if (config.mode === "auto") {
-              opened.push({
-                id: btcCreatedLive.id,
-                symbol: btcLiveRow.symbol,
-                side: "long",
-                entry: btcLiveRow.entry,
-                size_usd: sizeBtcUsd,
-                mode: "real",
-              });
-              await base44.entities.Alert.create({
-                symbol: btcLiveRow.symbol,
-                title: `Bot opened a long on ${btcLiveRow.symbol}/XBT`,
-                message: `BTC-quoted market, real order on ${live.conn.label}: entry ${round(btcLiveRow.entry, 8)} BTC, stop ${round(btcLiveRow.stop, 8)} BTC, target ${round(btcTargetLive, 8)} BTC. ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}. Score ${btcLiveRow.score}.`,
-                mode: "live",
-                kind: "bot_open",
-                severity: "info",
-                trade_id: btcCreatedLive.id,
-              });
-            } else {
-              proposed.push({
-                id: btcCreatedLive.id,
-                symbol: btcLiveRow.symbol,
-                side: "long",
-                entry: btcLiveRow.entry,
-                target: btcTargetLive,
-                stop: btcLiveRow.stop,
-                score: btcLiveRow.score,
-                size_usd: sizeBtcUsd,
-              });
-            }
+            opened.push({
+              id: btcCreatedLive.id,
+              symbol: btcLiveRow.symbol,
+              side: "long",
+              entry: btcLiveRow.entry,
+              size_usd: sizeBtcUsd,
+              mode: "real",
+            });
+            await base44.entities.Alert.create({
+              symbol: btcLiveRow.symbol,
+              title: `Bot opened a long on ${btcLiveRow.symbol}/XBT`,
+              message: `BTC-quoted market, real order on ${live.conn.label}: entry ${round(btcLiveRow.entry, 8)} BTC, stop ${round(btcLiveRow.stop, 8)} BTC, target ${round(btcTargetLive, 8)} BTC. ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}. Score ${btcLiveRow.score}.`,
+              mode: "live",
+              kind: "bot_open",
+              severity: "info",
+              trade_id: btcCreatedLive.id,
+            });
           }
         }
       } catch (err) {
