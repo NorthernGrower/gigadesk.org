@@ -256,6 +256,10 @@ export default async function (req) {
      * and remembers the lesson. Returns false when the exchange refused.
      */
     async function closeOut(t, side, exitPrice, reason, extraUpdates = {}, alertFor) {
+      // only a real position places a sell order, but the dust note below is
+      // built for every close — paper ones included. Declared out here so a
+      // paper close reads null instead of throwing "sell is not defined".
+      let sell = null;
       if (t.mode === "real" && t.exchange_order_id) {
         if (!managed.conn) {
           // never book a close the exchange has not confirmed: with live
@@ -315,7 +319,7 @@ export default async function (req) {
         }
         // a margin short closes by buying the base quantity back, not selling —
         // through the venue's margin route so the debt is repaid with it
-        const sell = await placeMarketOrder(managed.conn, {
+        sell = await placeMarketOrder(managed.conn, {
           symbol: t.symbol,
           side: side === "short" ? "buy" : "sell",
           quantity: Number(t.quantity) || 0,
