@@ -49,6 +49,14 @@ assert(gatedRow.trades === 40 && gatedRow.verdict === "unmeasured", "gated trade
 assert(gatedRow.expectation === null, "gated carries no expectation");
 assert(gated.state === "unmeasured", "a desk with nothing measured says so");
 
+// 3b. a measured source with no results does not describe the desk either
+const v3Idle = decayReport(Array.from({ length: 40 }, () => trade({ entry_source: "" })));
+assert(
+  v3Idle.groups.find((g) => g.source === "v3")!.verdict === "too_few",
+  "a measured source with no trades reports too few",
+);
+assert(v3Idle.state === "unmeasured", "the desk does not borrow a verdict from an idle source");
+
 // 4. decay: at the measured expectation the desk is in line; at half it is not
 const atExpectation = decayReport(
   Array.from({ length: 24 }, () => trade({ pnl_pct: EXPECTATIONS.v3.per_trade_pct })),

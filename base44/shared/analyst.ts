@@ -83,12 +83,18 @@ export function decayReport(trades: any[], options: any = {}) {
     }
     return { source, label: (expectation && expectation.label) || source, ...stats, expectation, verdict };
   });
-  const measured = groups.filter((g) => g.expectation);
+  // the desk's headline state comes from a measured source that actually has
+  // results behind it. A measured source with no trades yet can not describe
+  // the desk — it would read as "too few trades" for a desk that never ran
+  // that engine at all — so the desk says it is unmeasured instead
+  const measured = groups.filter((g) => g.expectation && g.trades > 0);
+  const rank: Record<string, number> = { losing: 0, below_backtest: 1, too_few: 2, in_line: 3 };
+  const worst = measured
+    .slice()
+    .sort((a, b) => (rank[a.verdict] ?? 4) - (rank[b.verdict] ?? 4))[0];
   return {
     groups,
-    // the desk's headline state is its measured source's state; a desk with
-    // nothing measured says so instead of borrowing a verdict
-    state: measured.length ? measured[0].verdict : "unmeasured",
+    state: worst ? worst.verdict : "unmeasured",
     min_trades: minTrades,
     as_of: new Date().toISOString(),
   };
