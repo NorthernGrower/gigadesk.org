@@ -236,6 +236,12 @@ export function scanEngineFields(form, setNum, setV) {
           checked={form.v3_algo === true}
           onChange={setV('v3_algo')}
         />
+        <Toggle
+          label="Desk analyst"
+          hint="A read-only analyst on this desk: it reads the desk's own closed trades, open positions and rules and writes a short note on what it did, why the last closes went as they did, and how its results compare with the backtest. It cannot place, close, size or approve anything."
+          checked={form.analyst_on === true}
+          onChange={setV('analyst_on')}
+        />
       </div>
       {form.v3_algo === true ? (
         <p className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-300">
@@ -243,6 +249,12 @@ export function scanEngineFields(form, setNum, setV) {
           rules — target, break-even, trailing, scale-out, pyramiding and the market tone watch do not
           apply to them. Measured on 63 out-of-sample trades at +8.42% per trade after modelled costs:
           promising, not proven. Run it on paper first.
+        </p>
+      ) : null}
+      {form.analyst_on === true ? (
+        <p className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+          The analyst writes a note under this desk's panels, once a day. It has no order path — it cannot open, close,
+          size or approve a trade — and with the switch off nothing of it runs.
         </p>
       ) : null}
     </>

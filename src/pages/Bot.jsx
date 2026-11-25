@@ -5,6 +5,7 @@ import BotControls from '@/components/bot/BotControls';
 import ProposedTrades from '@/components/bot/ProposedTrades';
 import RiskSettings from '@/components/bot/RiskSettings';
 import LearnedPanel from '@/components/bot/LearnedPanel';
+import AnalystPanel from '@/components/bot/AnalystPanel';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
@@ -229,6 +230,7 @@ export default function Bot() {
         </div>
         <div className="space-y-4">
           <LearnedPanel />
+          <AnalystPanel desk={desk} config={config} />
           <div id="risk-rules">
             <RiskSettings config={config} onSaved={() => cycle(true)} desk={desk} />
           </div>

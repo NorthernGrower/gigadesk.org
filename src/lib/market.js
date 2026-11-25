@@ -283,6 +283,18 @@ export async function tradeAction(action, tradeId = '') {
   return unwrap(await base44.functions.invoke('tradeAction', { action, trade_id: tradeId }));
 }
 
+/** The desk analyst's read on one desk. Read-only commentary: it returns a note
+ *  and the numbers behind it, and it never places, sizes or changes a trade.
+ *  One note is stored per desk per day, so asking on every visit is cheap. */
+export async function deskAnalyst(desk = 'paper', force = false) {
+  try {
+    return unwrap(await base44.functions.invoke('deskAnalyst', { desk, force }));
+  } catch (err) {
+    const reason = err?.response?.data?.error || err?.data?.error;
+    throw new Error(reason || err.message || 'Could not load the desk analyst.');
+  }
+}
+
 /** A manual buy from the scanner: a real market order, opened in manual mode. */
 export async function manualBuy({ symbol, usd }) {
   return unwrap(await base44.functions.invoke('manualBuy', { symbol, usd }));

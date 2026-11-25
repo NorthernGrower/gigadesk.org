@@ -1,0 +1,91 @@
+{
+  "name": "DeskBriefing",
+  "type": "object",
+  "properties": {
+    "owner": {
+      "type": "string",
+      "description": "The user whose desk this note describes"
+    },
+    "desk": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "live"
+      ],
+      "description": "Which desk the note is about"
+    },
+    "day": {
+      "type": "string",
+      "description": "UTC day the note covers, YYYY-MM-DD; one row per desk per day"
+    },
+    "headline": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "stance": {
+      "type": "string",
+      "enum": [
+        "stand_aside",
+        "selective",
+        "normal",
+        "caution"
+      ]
+    },
+    "closes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "description": "One short read on each recent close, by symbol"
+    },
+    "watch": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risks": {
+      "type": "string"
+    },
+    "digest": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The desk's own numbers the note was written from, kept so the panel can show them without a model"
+    },
+    "decay": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Live results per entry source against the measured backtest, and the verdict on each"
+    },
+    "model_error": {
+      "type": "string",
+      "description": "Why the prose is missing, when it is: the numbers still render"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "owner",
+    "desk",
+    "day"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

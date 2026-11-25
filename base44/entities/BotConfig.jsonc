@@ -85,6 +85,11 @@
       "default": false,
       "description": "The paper desk's V3 algorithm: the researched daily breakout logic (docs/UNIFIED_LOGIC.md in the research repo) replaces the score bar for this desk's entries. Daily bars, long only, $5m liquidity floor, BTC above its 200-day average, a survivor candle formation behind it. Exit is a 2xATR stop with no target, held up to 30 daily bars. Off by default; the live desk keeps its own switch in live_rules.v3_algo"
     },
+    "analyst_on": {
+      "type": "boolean",
+      "default": false,
+      "description": "The paper desk's read-only analyst: once a day it reads this desk's own closed trades, open positions and rules and writes a note under the desk panels, plus what each entry source is doing against the backtest that set its expectation. Read-only by construction — it has no order path and cannot open, close, size or approve a trade. Off by default, and off means no call at all; the live desk keeps its own switch in live_rules.analyst_on"
+    },
     "margin_leverage": {
       "type": "number",
       "default": 2,

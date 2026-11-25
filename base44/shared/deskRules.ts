@@ -34,6 +34,9 @@ export const LIVE_DEFAULTS = {
   btc_gate_mode: "any",
   always_take_top: false,
   always_take_count: 5,
+  // read-only commentary. It reaches no order path, and a desk with it off
+  // makes no analyst call at all rather than calling and discarding the answer
+  analyst_on: false,
   max_trade_loss_pct: 20,
   pyramid: false,
   pyramid_trigger_pct: 1.5,
