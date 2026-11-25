@@ -1590,7 +1590,8 @@ export default async function (req) {
       // exchange path for a second quote is the one part not exercised yet.
       // a BTC leg failure costs BTC entries, never the cycle
       try {
-        if (btcMarketsOn(paperView) && btcUsdNow > 0 && paperOpenCount < paperMaxOpen && !dryRun) {
+        const paperBtcOn =
+          btcMarketsOn(paperView) && btcUsdNow > 0 && paperOpenCount < paperMaxOpen && !dryRun;
         const already = new Set([
           ...liveSymbols,
           ...paperWanted.map((r) => r.symbol),
@@ -1598,7 +1599,7 @@ export default async function (req) {
         ]);
         const btcCandidates = tradable.filter((r) => !already.has(r.symbol)).slice(0, 5);
         const btcTf = config.timeframe || "1h";
-        for (const base of btcCandidates) {
+        for (const base of paperBtcOn ? btcCandidates : []) {
           const btcTaken = opened.filter((o) => o.mode === "paper").length;
           if (btcTaken >= Math.max(0, paperMaxOpen - paperOpenCount)) break;
           const bars = await fetchCandles(base.symbol, btcTf, 300, btcFeed, "BTC").catch(() => null);
