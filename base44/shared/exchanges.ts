@@ -152,7 +152,7 @@ export async function fetchListedSymbols(cfg, quotes = null) {
     } else if (cfg.exchange === "kraken") {
       const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
       const pairs = Object.values(((res.data || {}).result) || {});
-      const rawQuotes = new Set((wanted || ["USDT"]).map((q) => ({ USD: "ZUSD", EUR: "ZEUR", GBP: "ZGBP" }[q] || q)));
+      const rawQuotes = new Set((wanted || ["USDT"]).map((q) => ({ USD: "ZUSD", EUR: "ZEUR", GBP: "ZGBP", BTC: "XXBT" }[q] || q)));
       set = new Set(
         pairs
           .filter((p) => p && rawQuotes.has(p.quote))
@@ -234,7 +234,7 @@ export async function fetchMarketConstraints(cfg) {
       const pairs = Object.values(((res.data || {}).result) || {});
       for (const p of pairs) {
         if (!p) continue;
-        const quote = { ZUSD: "USD", USDT: "USDT", USDC: "USDC" }[p.quote];
+        const quote = { ZUSD: "USD", USDT: "USDT", USDC: "USDC", XXBT: "BTC", XBT: "BTC" }[p.quote];
         if (!quote) continue;
         map.set(`${krakenAsset(p.base).toUpperCase()}${quote}`, {
           minQty: Number(p.ordermin) || null,

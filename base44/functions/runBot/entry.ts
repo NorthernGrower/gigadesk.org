@@ -13,6 +13,7 @@ import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan } from "../../shared/v3algo.ts";
 import { capPositionSize, losingStreak, riskState } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
+import { toUsd } from "../../shared/quotes.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -234,6 +235,20 @@ export default async function (req) {
     const spendableQuote = funding ? funding.amount : 0;
     let quoteLeft = spendableQuote;
     if (managed.conn && funding) managed.conn.quoteAsset = funding.asset;
+
+    // ---- BTC-quoted markets, opt-in per desk. The desk keeps its USD book
+    // exactly as it is; a desk with this on may also take a symbol on Kraken's
+    // Bitcoin market, which is a different chart in a different currency. Those
+    // trades store their prices in BTC and carry the BTC rate recorded when they
+    // opened, so every dollar figure is the pair's own move translated once.
+    const btcMarketsOn = (view) => view.btc_markets === true;
+    const btcUsdNow =
+      Number((priceMap.get("BTC") || {}).price) ||
+      Number((coins.find((c) => c.symbol === "BTC") || {}).price) ||
+      0;
+    // the venue the BTC leg reads its charts from: Kraken's own market, which
+    // is public, so a paper desk with no exchange attached can still read it
+    const btcFeed = { exchange: "kraken" };
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
     // gone, qualifying setups stay paper instead of breaching the cap
@@ -346,7 +361,13 @@ export default async function (req) {
       const entry = Number(t.entry_price) || 0;
       const qty = Number(t.quantity) || 0;
       const size = Number(t.size_usd) || 0;
-      const pnl = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
+      // a BTC-quoted position's entry and exit are both in BTC, so its P&L is
+      // the pair's own move; the dollar figure is that move at the rate when it
+      // closes. A USD position takes the same path with a factor of one.
+      const closedQuote = t.quote_asset === "BTC" ? "BTC" : "USD";
+      const closedFx = closedQuote === "BTC" ? btcUsdNow : 1;
+      const pnlInQuote = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
+      const pnl = toUsd(pnlInQuote, closedQuote, closedFx);
       const pnlPct = size ? (pnl / size) * 100 : 0;
       await base44.entities.Trade.update(t.id, {
         ...extraUpdates,
@@ -415,7 +436,10 @@ export default async function (req) {
       }
       const legQty = round(halfQty, 8);
       const legSize = round(size / 2);
-      const pnl = side === "long" ? (scalePrice - entry) * legQty : (entry - scalePrice) * legQty;
+      const legQuote = t.quote_asset === "BTC" ? "BTC" : "USD";
+      const legFx = legQuote === "BTC" ? btcUsdNow : 1;
+      const legInQuote = side === "long" ? (scalePrice - entry) * legQty : (entry - scalePrice) * legQty;
+      const pnl = toUsd(legInQuote, legQuote, legFx);
       const pnlPct = legSize ? (pnl / legSize) * 100 : 0;
       await base44.entities.Trade.create({
         symbol: t.symbol,
@@ -472,8 +496,16 @@ export default async function (req) {
       // manual mode: a buy the user placed by hand with bot handling off is
       // theirs alone — no stops, exits or sentiment until handling is turned on
       if (t.bot_handling === false) continue;
-      const price = priceMap.get(t.symbol)?.price ?? null;
-      if (!price) continue;
+      const priceUsd = priceMap.get(t.symbol)?.price ?? null;
+      if (!priceUsd) continue;
+      // a BTC-quoted position is marked, stopped and exited on its own market:
+      // its recorded levels are in BTC, so the tape is read in BTC too. A USD
+      // position reads the tape as it always did.
+      const posQuote = t.quote_asset === "BTC" ? "BTC" : "USD";
+      const posFx = posQuote === "BTC" ? btcUsdNow : 1;
+      if (!(posFx > 0)) continue;
+      const price = posQuote === "BTC" ? priceUsd / posFx : priceUsd;
+      if (!(price > 0)) continue;
       const side = t.side === "short" ? "short" : "long";
       let entry = Number(t.entry_price) || 0;
       if (!entry) continue;
@@ -510,7 +542,8 @@ export default async function (req) {
         // still running: mark to market, and nothing else touches it
         const v3Qty = Number(t.quantity) || 0;
         const v3Size = Number(t.size_usd) || 0;
-        const v3Unreal = side === "long" ? (price - entry) * v3Qty : (entry - price) * v3Qty;
+        const v3InQuote = side === "long" ? (price - entry) * v3Qty : (entry - price) * v3Qty;
+        const v3Unreal = toUsd(v3InQuote, posQuote, posFx);
         const v3Travelled = side === "long" ? price - entry : entry - price;
         const v3Unit = Math.abs(entry - v3Stop);
         positions.push({
@@ -521,7 +554,7 @@ export default async function (req) {
           side,
           mode: t.mode || "paper",
           entry_price: entry,
-          current_price: round(price, 8),
+          current_price: round(priceUsd, 8),
           stop_price: v3Stop ? round(v3Stop, 8) : null,
           target_price: null,
           size_usd: v3Size,
@@ -533,6 +566,7 @@ export default async function (req) {
           v3: true,
           v3_days_held: due.days_held,
           v3_horizon_bars: Number(t.v3_horizon_bars) || 30,
+          quote_asset: posQuote,
         });
         continue;
       }
@@ -718,7 +752,8 @@ export default async function (req) {
         if (Object.keys(updates).length) pendingMarks.push({ id: t.id, ...updates });
         const qty = Number(t.quantity) || 0;
         const size = Number(t.size_usd) || 0;
-        const unreal = side === "long" ? (price - entry) * qty : (entry - price) * qty;
+        const unrealInQuote = side === "long" ? (price - entry) * qty : (entry - price) * qty;
+        const unreal = toUsd(unrealInQuote, posQuote, posFx);
         const travelled = side === "long" ? price - entry : entry - price;
         const goal = target ? Math.abs(target - entry) : 0;
         positions.push({
@@ -729,13 +764,14 @@ export default async function (req) {
           side,
           mode: t.mode || "paper",
           entry_price: entry,
-          current_price: round(price, 8),
+          current_price: round(priceUsd, 8),
           stop_price: round(stop, 8),
           target_price: target,
           size_usd: size,
           pnl_usd: round(unreal),
           pnl_pct: size ? round((unreal / size) * 100) : 0,
           progress_pct: goal ? round(Math.max(0, Math.min(100, (travelled / goal) * 100))) : 0,
+          quote_asset: posQuote,
         });
       }
     }
@@ -818,8 +854,14 @@ export default async function (req) {
             ownScore < 45
           : false;
       if (!flipped && !weakened) continue;
-      const flipPrice = Number(row.price) || livePrice || 0;
-      if (!flipPrice) continue;
+      const flipUsd = Number(row.price) || livePrice || 0;
+      if (!flipUsd) continue;
+      // the fresh read is priced in USD; a BTC-quoted position closes on its own
+      // market, so the price it closes at is the pair's
+      const flipQuote = t.quote_asset === "BTC" ? "BTC" : "USD";
+      const flipFx = flipQuote === "BTC" ? btcUsdNow : 1;
+      const flipPrice = flipQuote === "BTC" ? (flipFx > 0 ? flipUsd / flipFx : 0) : flipUsd;
+      if (!(flipPrice > 0)) continue;
       const reason = flipped ? "flipped" : "weakened";
       const trailing = pendingMarks.find((m) => m.id === t.id);
       const ok = await closeOut(t, side, flipPrice, reason, trailing || {}, (pnl, pnlPct) => ({
@@ -1532,6 +1574,121 @@ export default async function (req) {
         }
       }
 
+      // ---- BTC-quoted leg (paper). The same desk rules read on Kraken's
+      // Bitcoin market: its own chart, its own currency, its own records. It
+      // takes only symbols the desk did not take this cycle, so a coin is never
+      // bought twice. It stays on paper until this book has been measured: the
+      // exchange path for a second quote is the one part not exercised yet.
+      // a BTC leg failure costs BTC entries, never the cycle
+      try {
+        if (btcMarketsOn(paperView) && btcUsdNow > 0 && paperOpenCount < paperMaxOpen && !dryRun) {
+        const already = new Set([
+          ...liveSymbols,
+          ...paperWanted.map((r) => r.symbol),
+          ...stillOpen.map((t) => t.symbol),
+        ]);
+        const btcCandidates = tradable.filter((r) => !already.has(r.symbol)).slice(0, 5);
+        const btcTf = config.timeframe || "1h";
+        for (const base of btcCandidates) {
+          const btcTaken = opened.filter((o) => o.mode === "paper").length;
+          if (btcTaken >= Math.max(0, paperMaxOpen - paperOpenCount)) break;
+          const bars = await fetchCandles(base.symbol, btcTf, 300, btcFeed, "BTC").catch(() => null);
+          if (!Array.isArray(bars) || bars.length < 60) continue;
+          const lastBtc = Number(bars[bars.length - 1].c) || 0;
+          if (!(lastBtc > 0)) continue;
+          // the BTC chart is the one that decides: entry, stop and target all
+          // land in BTC, which is what the position and its exits work in
+          const btcRow = analyzeCoin({ ...base, price: lastBtc }, bars, {
+            medianChange24h: board.medianChange24h || 0,
+            dailyTargetPct: Number(config.daily_target_pct) || 2,
+            barsPerDay:
+              { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[btcTf] || 24,
+            confluenceV2: config.confluence_v2 !== false,
+          });
+          if (!btcRow || !qualifies(btcRow, "paper")) continue;
+          if (!(Number(btcRow.entry) > 0)) continue;
+          const stopUsd = Math.abs(btcRow.entry - btcRow.stop) * btcUsdNow;
+          if (!(stopUsd > 0)) continue;
+          const freeBtcSlots = Math.max(
+            1,
+            paperMaxOpen - paperOpenCount - opened.filter((o) => o.mode === "paper").length - proposed.length,
+          );
+          const btcRiskUsd = (cash * riskPct) / 100;
+          let btcQty = btcRiskUsd / stopUsd;
+          let btcSizeUsd = btcQty * btcRow.entry * btcUsdNow;
+          const btcCap = cash / freeBtcSlots;
+          if (btcSizeUsd > btcCap) {
+            btcSizeUsd = btcCap;
+            btcQty = btcSizeUsd / (btcRow.entry * btcUsdNow);
+          }
+          const btcCapped = capPositionSize(btcSizeUsd, Number(config.starting_balance) || 10000);
+          if (btcCapped < btcSizeUsd && btcCapped >= 10) {
+            btcSizeUsd = btcCapped;
+            btcQty = btcSizeUsd / (btcRow.entry * btcUsdNow);
+          }
+          if (!(btcSizeUsd >= 10) || !(btcQty > 0)) continue;
+          const btcTarget = paperUseEngine ? paperEngineTarget(btcRow) : btcRow.target;
+          const btcCreated = await base44.entities.Trade.create({
+            symbol: btcRow.symbol,
+            name: btcRow.name,
+            image: btcRow.image,
+            side: btcRow.side,
+            mode: "paper",
+            status: config.mode === "auto" ? "open" : "proposed",
+            entry_price: round(btcRow.entry, 8),
+            quantity: round(btcQty, 8),
+            size_usd: round(btcSizeUsd),
+            stop_price: round(btcRow.stop, 8),
+            target_price: round(btcTarget, 8),
+            target_r: paperEngine.targetR,
+            peak_price: round(btcRow.entry, 8),
+            score: btcRow.score,
+            pattern: `${btcRow.side}/${btcRow.market_cap_bucket}`,
+            entry_source: "gated",
+            quote_asset: "BTC",
+            fx_usd: round(btcUsdNow, 2),
+            rationale: [
+              ...(btcRow.reasons || []),
+              `BTC-quoted market ${btcRow.symbol}/XBT on Kraken — ${round(btcSizeUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}`,
+            ].join(" • "),
+            opened_at: new Date().toISOString(),
+          });
+          if (config.mode === "auto") {
+            cash -= btcSizeUsd;
+            opened.push({
+              id: btcCreated.id,
+              symbol: btcRow.symbol,
+              side: btcRow.side,
+              entry: btcRow.entry,
+              size_usd: round(btcSizeUsd),
+              mode: "paper",
+            });
+            await base44.entities.Alert.create({
+              symbol: btcRow.symbol,
+              title: `Bot opened a ${btcRow.side} on ${btcRow.symbol}/XBT`,
+              message: `BTC-quoted market: entry ${round(btcRow.entry, 8)} BTC, stop ${round(btcRow.stop, 8)} BTC, target ${round(btcTarget, 8)} BTC. ${round(btcSizeUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}. Score ${btcRow.score}.`,
+              mode: "paper",
+              kind: "bot_open",
+              severity: "info",
+              trade_id: btcCreated.id,
+            });
+          } else {
+            proposed.push({
+              id: btcCreated.id,
+              symbol: btcRow.symbol,
+              side: btcRow.side,
+              entry: btcRow.entry,
+              target: btcTarget,
+              stop: btcRow.stop,
+              score: btcRow.score,
+              size_usd: round(btcSizeUsd),
+            });
+          }
+        }
+      } catch (err) {
+        console.log(`BTC-quoted leg failed: ${String((err && err.message) || err)}`);
+      }
+
       Object.assign(
         deskDiag,
         collectGateLocks(tradable, gateReason, {
@@ -1879,6 +2036,7 @@ export default async function (req) {
       scanned: board.scannedCount,
       scan_log: scanLog,
       v3: v3Summary,
+      btc_markets: { on: btcMarketsOn(paperView), btc_usd: round(btcUsdNow, 2) },
       risk: paperRisk,
       diagnostics: { risk_error: riskError, v3_error: v3Error },
       rule_lock: deskDiag,

@@ -372,12 +372,15 @@ export async function fetchVenueMarkets(feed) {
   return out;
 }
 
-/** The venue's OHLCV for one coin, oldest bar first. Null when it has no pair. */
-export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 300) {
+/** The venue's OHLCV for one coin, oldest bar first. Null when it has no pair.
+ *  `quote` asks for a specific market: a BTC-quoted read must never be answered
+ *  with a USD chart, so it returns null rather than falling back across quotes. */
+export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 300, quote = "USD") {
   const ex = String((feed && feed.exchange) || "");
   const base = VENUE_BASE[ex];
   const iv = VENUE_INTERVAL[ex] && VENUE_INTERVAL[ex][interval];
   const sym = String(symbol || "").toUpperCase();
+  const wantBtc = String(quote || "USD").toUpperCase() === "BTC";
   if (!base || !iv || !sym) return null;
   try {
     if (ex === "kucoin") {
@@ -411,9 +414,10 @@ export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 3
     }
     if (ex === "kraken") {
       const idx = await krakenPairIndex();
-      const pair =
-        [...idx.byCanonical.values()].find((p) => p.base === sym && p.quote === "USD") ||
-        [...idx.byCanonical.values()].find((p) => p.base === sym && VENUE_QUOTES.includes(p.quote));
+      const pair = wantBtc
+        ? [...idx.byCanonical.values()].find((p) => p.base === sym && p.quote === "BTC")
+        : [...idx.byCanonical.values()].find((p) => p.base === sym && p.quote === "USD") ||
+          [...idx.byCanonical.values()].find((p) => p.base === sym && VENUE_QUOTES.includes(p.quote));
       if (!pair) return null;
       const res = await fetchJson(
         `${base}/0/public/OHLC?pair=${pair.altname}&interval=${iv}`,
@@ -614,17 +618,22 @@ export async function fetchMarkets(db = null, feed = null) {
 
 /** OHLCV candles for one coin: from the desk's own venue when a `feed` is
  * given, else Binance US. Returns null when no pair has data. */
-export async function fetchCandles(symbol, interval = "1h", limit = 300, feed = null) {
+export async function fetchCandles(symbol, interval = "1h", limit = 300, feed = null, quote = "USD") {
   const venue = String((feed && feed.exchange) || "");
   const tag = venue && venue !== "binance_us" && venue !== "binance" ? venue : "us";
-  const key = `k:${tag}:${symbol}:${interval}:${limit}`;
+  // a quote-specific read keeps its own slot: a BTC chart and a USD chart of the
+  // same coin are different series and must never share a cache entry
+  const quoteTag = String(quote || "USD").toUpperCase() === "BTC" ? ":btc" : "";
+  const key = `k:${tag}:${symbol}:${interval}:${limit}${quoteTag}`;
   const cached = cacheGet(key);
   if (cached) return cached;
 
   if (tag !== "us") {
-    const venueCandles = await fetchVenueCandles(feed, symbol, interval, limit);
+    const venueCandles = await fetchVenueCandles(feed, symbol, interval, limit, quote);
     if (venueCandles && venueCandles.length) return cacheSet(key, venueCandles, 45000);
   }
+  // the US feed only quotes in USD: a BTC read never falls back to it
+  if (quoteTag) return null;
 
   let rows = null;
   try {

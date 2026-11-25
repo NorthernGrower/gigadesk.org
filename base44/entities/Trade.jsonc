@@ -88,8 +88,7 @@
       "type": "string",
       "description": "The side and cap tier the bot traded, e.g. long/small; drives its self-learning"
     },
-    "entry_source": {
-      "type": "string",
+    "entry_source": {      "type": "string",
       "enum": [
         "gated",
         "v3",
@@ -153,6 +152,19 @@
         "max_loss",
         "scale"
       ]
+    },
+    "quote_asset": {
+      "type": "string",
+      "enum": [
+        "USD",
+        "BTC"
+      ],
+      "default": "USD",
+      "description": "The currency this trade's prices are recorded in. USD trades price in dollars; a BTC-quoted trade prices on its Bitcoin market, e.g. SOL/XBT, and carries the rate that was used so its dollar figures can be read back"
+    },
+    "fx_usd": {
+      "type": "number",
+      "description": "The USD value of one unit of quote_asset when the trade opened — 1 for USD trades, BTC's dollar price for BTC-quoted ones"
     },
     "opened_at": {
       "type": "string",

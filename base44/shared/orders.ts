@@ -90,7 +90,11 @@ export async function placeMarketOrder(cfg, paramsIn) {
     // the leftover is worth under a dollar — no exchange order can ever close
     // this position, so the caller books the close on the desk instead of
     // stranding it open behind an order the exchange always refuses
-    const pair0 = `${asset}${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
+    const pair0 = `${asset}${
+      String(params.quote || "").toUpperCase() === "BTC"
+        ? (cfg.exchange === "kraken" ? "XBT" : "BTC")
+        : (cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT")
+    }`;
     const cons = total > 0 ? await fetchMarketConstraints(cfg) : null;
     const minQty = cons && cons.get(pair0) ? Number(cons.get(pair0).minQty) || 0 : 0;
     const px =
@@ -107,8 +111,13 @@ export async function placeMarketOrder(cfg, paramsIn) {
     params = { ...params, quantity: capped };
   }
   // quoteAsset is the funding asset resolved from the account's balances
-  // (USD or USDT on Kraken) — orders settle in the pair's quote currency
-  const pair = `${String(params.symbol || "").toUpperCase()}${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
+  // (USD or USDT on Kraken) — orders settle in the pair's quote currency. A
+  // caller may name the quote its own order settles in instead: a Bitcoin
+  // market, which Kraken spells XBT.
+  const namedQuote = String(params.quote || "").toUpperCase() === "BTC"
+    ? (cfg.exchange === "kraken" ? "XBT" : "BTC")
+    : "";
+  const pair = `${String(params.symbol || "").toUpperCase()}${namedQuote || cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
   const idem = idemKey(params.symbol);
   if (cfg.exchange === "bybit") return bybitOrder(cfg, params, side, pair, idem);
   // a KuCoin short is a margin order: it sells an asset the account does not

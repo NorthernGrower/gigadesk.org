@@ -71,6 +71,11 @@ export default function PositionsPanel({
                             V3
                           </span>
                         ) : null}
+                        {p.quote_asset === 'BTC' ? (
+                          <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground" title="Priced on its Bitcoin market; entry, stop and target are in BTC">
+                            BTC pair
+                          </span>
+                        ) : null}
                       </div>
                       <p className="num mt-0.5 text-[11px] text-muted-foreground">
                         {fmtPrice(p.entry_price)} → {fmtPrice(p.current_price)} · {fmtUsd(p.size_usd)}
@@ -111,6 +116,7 @@ export default function PositionsPanel({
                   </div>
                   <span className="num text-[10px] text-muted-foreground">
                     stop {fmtPrice(p.stop_price)} · target {fmtPrice(p.target_price)}
+                    {p.quote_asset === 'BTC' ? ' (BTC)' : ''}
                   </span>
                 </div>
               </div>

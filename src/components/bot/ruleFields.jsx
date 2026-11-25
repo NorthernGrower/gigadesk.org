@@ -242,6 +242,12 @@ export function scanEngineFields(form, setNum, setV) {
           checked={form.analyst_on === true}
           onChange={setV('analyst_on')}
         />
+        <Toggle
+          label="BTC markets"
+          hint="Also trades Kraken's Bitcoin markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC, with the dollar rate kept on the trade so its P&L still reads in USD. Paper only for now."
+          checked={form.btc_markets === true}
+          onChange={setV('btc_markets')}
+        />
       </div>
       {form.v3_algo === true ? (
         <p className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-300">

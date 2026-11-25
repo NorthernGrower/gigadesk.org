@@ -56,6 +56,7 @@ export default function LiveRules({ config, onSaved }) {
       always_take_top: lr.always_take_top === true,
       always_take_count: lr.always_take_count ?? 5,
       analyst_on: lr.analyst_on === true,
+      btc_markets: lr.btc_markets === true,
     };
   };
   const [live, setLive] = useState(() => fromConfig(config));
@@ -113,6 +114,7 @@ export default function LiveRules({ config, onSaved }) {
           always_take_top: live.always_take_top === true,
           always_take_count: Math.max(1, Math.min(10, Math.round(Number(live.always_take_count) || 5))),
           analyst_on: live.analyst_on === true,
+          btc_markets: live.btc_markets === true,
         },
       });
       toast({ title: 'Live rules saved', description: 'Real orders pick them up on the next cycle. Paper rules are untouched.' });

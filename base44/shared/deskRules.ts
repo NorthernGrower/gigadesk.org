@@ -34,6 +34,9 @@ export const LIVE_DEFAULTS = {
   btc_gate_mode: "any",
   always_take_top: false,
   always_take_count: 5,
+  // BTC-quoted markets: off, and the live desk does not trade them yet — the
+  // paper book measures the pairs before any real order goes near a second quote
+  btc_markets: false,
   // read-only commentary. It reaches no order path, and a desk with it off
   // makes no analyst call at all rather than calling and discarding the answer
   analyst_on: false,
