@@ -236,14 +236,14 @@ export function cleanBriefing(raw: any) {
   const closes = Array.isArray(raw.closes)
     ? raw.closes
         .slice(0, 6)
-        .map((c) => ({
+        .map((c: any) => ({
           symbol: text(c && c.symbol, 12).toUpperCase(),
           note: text(c && c.note, 220),
         }))
-        .filter((c) => c.symbol && c.note)
+        .filter((c: any) => c.symbol && c.note)
     : [];
   const watch = Array.isArray(raw.watch)
-    ? raw.watch.map((w) => text(w, 140)).filter(Boolean).slice(0, 4)
+    ? raw.watch.map((w: any) => text(w, 140)).filter(Boolean).slice(0, 4)
     : [];
   return { headline, summary, stance, closes, watch, risks: text(raw.risks, 500) };
 }
