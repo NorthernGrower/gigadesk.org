@@ -266,6 +266,10 @@ export default async function (req) {
       // a row the V3 entry gate already planned carries V3's own exit: it
       // must never be booked twice with a different stop
       if ((row || {}).v3) return null;
+      // the exit study measured long entries only, and its plan puts the stop
+      // below the entry: a short booked that way would be stopped out the
+      // moment it opened, so a short keeps the desk's own exit
+      if (String((row || {}).side) === "short") return null;
       const atr = Number(((row || {}).indicators || {}).atr) || 0;
       if (!(atr > 0) || !(Number(entryPx) > 0)) return null;
       const plan = v3Plan({ entryPx: Number(entryPx), atr });
