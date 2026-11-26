@@ -921,7 +921,7 @@ export default async function (req) {
     // actually looks for entries, surfaced in the response for the bot page
     let paperRisk = null;
     // the paper Bitcoin book's own brakes, computed from its own trades
-    let btcRisk = null;
+    let btcRisk: any = null;
     // the guarded stages' failure reasons, reported for the page. They are
     // declared here, not inside the scan block below, because the cycle's
     // response reads them whether or not that block ran: a light cycle — the
@@ -1958,7 +1958,9 @@ export default async function (req) {
           let btcBudgetUsd = btcSpendableNow * btcUsdNow;
           for (const seed of btcSeeds) {
             if (!(btcSlots > 0)) break;
-            if (opened.filter((o) => o.mode === "real").length >= btcSlots) break;
+            // only this book's own openings count against its slots: a dollar
+            // entry made earlier this cycle never blocks a Bitcoin one
+            if (opened.filter((o) => o.mode === "real" && o.quote === "BTC").length >= btcSlots) break;
             if (!(btcLeft > 0) || btcBudgetUsd < 10) break;
             const btcLiveRow = seed;
             if (!(Number(btcLiveRow.entry) > 0)) continue;
