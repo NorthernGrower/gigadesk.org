@@ -250,6 +250,33 @@ export default async function (req) {
     // the venue the BTC leg reads its charts from: Kraken's own market, which
     // is public, so a paper desk with no exchange attached can still read it
     const btcFeed = { exchange: "kraken" };
+
+    // ---- the measured exit, opt-in per desk. The exit study replayed V3's own
+    // entries under 21 exit rules: the fixed target was the single largest drag
+    // on profit, and holding to the horizon with the 2xATR stop earned +7.18%,
+    // +7.76% and +1.62% per trade out of sample (net of the per-pair cost
+    // model) against the current bracket's +1.35%, +2.40% and -0.48%. A trade
+    // opened with this on is booked with that exit's own fields and no target,
+    // so the positions loop manages it exactly as it manages a V3 position —
+    // the same 2xATR stop and horizon that were measured, nothing layered on.
+    // Without an ATR at the entry bar it keeps the desk's own exit rather than
+    // guessing a stop.
+    const measuredExitFields = (row, view, entryPx) => {
+      if ((view || {}).v3_exit !== true) return null;
+      // a row the V3 entry gate already planned carries V3's own exit: it
+      // must never be booked twice with a different stop
+      if ((row || {}).v3) return null;
+      const atr = Number(((row || {}).indicators || {}).atr) || 0;
+      if (!(atr > 0) || !(Number(entryPx) > 0)) return null;
+      const plan = v3Plan({ entryPx: Number(entryPx), atr });
+      if (!plan) return null;
+      return {
+        v3_algo: true,
+        v3_stop: round(plan.stop, 8),
+        v3_horizon_bars: plan.horizon_bars,
+        v3_atr: round(atr, 8),
+      };
+    };
     // live budget: how much exchange money the bot may put to work in total,
     // minus what its open real positions already hold — once the budget is
     // gone, qualifying setups stay paper instead of breaching the cap
@@ -1525,8 +1552,11 @@ export default async function (req) {
         let simQuote = quoteLeft;
         for (const r of liveWanted) {
           if (stillOpen.some((t) => t.symbol === r.symbol)) continue;
+          // sized on the stop the trade will actually carry, so the measured
+          // exit's wider stop is priced into the plan (see the entry loop)
+          const planned = measuredExitFields(r, liveView, r.entry);
           const size = liveEntrySize({
-            row: r,
+            row: planned ? { ...r, stop: planned.v3_stop } : r,
             balance: simQuote,
             budget: simBudget,
             slots: Math.max(1, liveSlots - livePlans.length),
@@ -1595,7 +1625,14 @@ export default async function (req) {
           created_by_id: config.created_by_id || user.id,
         });
         if (alreadyOpen) continue;
-        const stopDist = Math.abs(r.entry - r.stop);
+        // the measured exit, if this desk runs it: its 2xATR stop replaces the
+        // scan's, and the trade is risked between entry and that stop — so the
+        // size has to follow the wider stop, or a doubled stop would quietly
+        // double the risk the desk was told to take (see measuredExitFields)
+        const view = desk === "live" ? liveView : paperView;
+        const measured = measuredExitFields(r, view, r.entry);
+        const tradeStop = measured ? measured.v3_stop : r.stop;
+        const stopDist = Math.abs(r.entry - tradeStop);
         if (!(stopDist > 0)) continue;
 
         // paper sizing — also what "match paper" live sizing spends
@@ -1668,9 +1705,9 @@ export default async function (req) {
             entry_price: round(real.avg_price || rl.entry, 8),
             quantity: round(real.filled_qty || realSizeUsd / r.entry, 8),
             size_usd: round(realSizeUsd),
-            stop_price: r.stop,
-            target_price: r.v3 ? null : liveUseEngine ? liveEngineTarget(rl) : r.target,
-            target_r: r.v3 ? 0 : liveEngine.targetR,
+            stop_price: measured ? measured.v3_stop : r.stop,
+            target_price: measured || r.v3 ? null : liveUseEngine ? liveEngineTarget(rl) : r.target,
+            target_r: measured || r.v3 ? 0 : liveEngine.targetR,
             ...(r.v3
               ? {
                   v3_algo: true,
@@ -1678,7 +1715,7 @@ export default async function (req) {
                   v3_horizon_bars: r.v3.horizon_bars,
                   v3_atr: round(r.v3.atr, 8),
                 }
-              : {}),
+              : measured || {}),
             peak_price: real.avg_price || rl.entry,
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1735,9 +1772,9 @@ export default async function (req) {
           entry_price: round(r.entry, 8),
           quantity: round(qty, 8),
           size_usd: round(sizeUsd),
-          stop_price: r.stop,
-          target_price: r.v3 ? null : paperUseEngine ? paperEngineTarget(r) : r.target,
-          target_r: r.v3 ? 0 : paperEngine.targetR,
+          stop_price: measured ? measured.v3_stop : r.stop,
+          target_price: measured || r.v3 ? null : paperUseEngine ? paperEngineTarget(r) : r.target,
+          target_r: measured || r.v3 ? 0 : paperEngine.targetR,
           ...(r.v3
             ? {
                 v3_algo: true,
@@ -1745,7 +1782,7 @@ export default async function (req) {
                 v3_horizon_bars: r.v3.horizon_bars,
                 v3_atr: round(r.v3.atr, 8),
               }
-            : {}),
+            : measured || {}),
           peak_price: r.entry,
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
@@ -1822,7 +1859,12 @@ export default async function (req) {
           const btcTaken = opened.filter((o) => o.mode === "paper" && o.quote === "BTC").length;
           if (btcTaken >= Math.max(0, paperMaxOpen - paperBtcOpen)) break;
           if (!(Number(btcRow.entry) > 0)) continue;
-          const stopUsd = Math.abs(btcRow.entry - btcRow.stop) * btcUsdNow;
+          // the measured exit, if this desk runs it (see measuredExitFields):
+          // its stop is in this market's own quote, which is bitcoin here, and
+          // the size must follow it exactly as the dollar book's does
+          const btcMeasured = measuredExitFields(btcRow, paperView, btcRow.entry);
+          const btcTradeStop = btcMeasured ? btcMeasured.v3_stop : btcRow.stop;
+          const stopUsd = Math.abs(btcRow.entry - btcTradeStop) * btcUsdNow;
           if (!(stopUsd > 0)) continue;
           const freeBtcSlots = Math.max(1, paperMaxOpen - paperBtcOpen - btcTaken);
           const btcRiskUsd = (btcCash * riskPct) / 100;
@@ -1850,9 +1892,9 @@ export default async function (req) {
             entry_price: round(btcRow.entry, 8),
             quantity: round(btcQty, 8),
             size_usd: round(btcSizeUsd),
-            stop_price: round(btcRow.stop, 8),
-            target_price: btcTarget == null ? null : round(btcTarget, 8),
-            target_r: btcRow.v3 ? 0 : paperEngine.targetR,
+            stop_price: btcMeasured ? btcMeasured.v3_stop : round(btcRow.stop, 8),
+            target_price: btcMeasured || btcTarget == null ? null : round(btcTarget, 8),
+            target_r: btcMeasured || btcRow.v3 ? 0 : paperEngine.targetR,
             ...(btcRow.v3
               ? {
                   v3_algo: true,
@@ -1860,7 +1902,7 @@ export default async function (req) {
                   v3_horizon_bars: btcRow.v3.horizon_bars,
                   v3_atr: round(btcRow.v3.atr, 8),
                 }
-              : {}),
+              : btcMeasured || {}),
             peak_price: round(btcRow.entry, 8),
             score: btcRow.score,
             pattern: patternFor(btcRow.side, btcRow.market_cap_bucket, "BTC"),
@@ -1978,9 +2020,12 @@ export default async function (req) {
             // exchange's own minimum, whichever is larger
             const floorBtc = round(10 / btcUsdNow, 8);
             if (!(floorBtc > 0)) continue;
+            // the measured exit, if this desk runs it (see measuredExitFields):
+            // its wider stop is what the order is risked against
+            const btcLiveMeasured = measuredExitFields(btcLiveRow, liveView, btcLiveRow.entry);
             const minBtc = entryMinimum(constraints, btcLiveRow.symbol, "BTC", btcLiveRow.entry, floorBtc);
             const sizeBtc = liveEntrySize({
-              row: btcLiveRow,
+              row: btcLiveMeasured ? { ...btcLiveRow, stop: btcLiveMeasured.v3_stop } : btcLiveRow,
               balance: btcLeft,
               budget: round(btcBudgetUsd / btcUsdNow, 8),
               slots: btcSlots,
@@ -2013,9 +2058,9 @@ export default async function (req) {
                 entry_price: round(btcLiveRow.entry, 8),
                 quantity: baseQty,
                 size_usd: sizeBtcUsd,
-                stop_price: round(btcLiveRow.stop, 8),
-                target_price: btcTargetLive == null ? null : round(btcTargetLive, 8),
-                target_r: btcLiveRow.v3 ? 0 : liveEngine.targetR,
+                stop_price: btcLiveMeasured ? btcLiveMeasured.v3_stop : round(btcLiveRow.stop, 8),
+                target_price: btcLiveMeasured || btcTargetLive == null ? null : round(btcTargetLive, 8),
+                target_r: btcLiveMeasured || btcLiveRow.v3 ? 0 : liveEngine.targetR,
                 ...(btcLiveRow.v3
                   ? {
                       v3_algo: true,
@@ -2023,7 +2068,7 @@ export default async function (req) {
                       v3_horizon_bars: btcLiveRow.v3.horizon_bars,
                       v3_atr: round(btcLiveRow.v3.atr, 8),
                     }
-                  : {}),
+                  : btcLiveMeasured || {}),
                 peak_price: round(btcLiveRow.entry, 8),
                 score: btcLiveRow.score,
                 pattern: patternFor(btcLiveRow.side, btcLiveRow.market_cap_bucket, "BTC"),
@@ -2082,9 +2127,9 @@ export default async function (req) {
               entry_price: fillPx,
               quantity: filledQty,
               size_usd: sizeBtcUsd,
-              stop_price: round(btcLiveRow.stop, 8),
-              target_price: btcTargetLive == null ? null : round(btcTargetLive, 8),
-              target_r: btcLiveRow.v3 ? 0 : liveEngine.targetR,
+              stop_price: btcLiveMeasured ? btcLiveMeasured.v3_stop : round(btcLiveRow.stop, 8),
+              target_price: btcLiveMeasured || btcTargetLive == null ? null : round(btcTargetLive, 8),
+              target_r: btcLiveMeasured || btcLiveRow.v3 ? 0 : liveEngine.targetR,
               ...(btcLiveRow.v3
                 ? {
                     v3_algo: true,
@@ -2092,7 +2137,7 @@ export default async function (req) {
                     v3_horizon_bars: btcLiveRow.v3.horizon_bars,
                     v3_atr: round(btcLiveRow.v3.atr, 8),
                   }
-                : {}),
+                : btcLiveMeasured || {}),
               peak_price: fillPx,
               score: btcLiveRow.score,
               pattern: patternFor(btcLiveRow.side, btcLiveRow.market_cap_bucket, "BTC"),

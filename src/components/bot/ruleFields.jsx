@@ -237,6 +237,12 @@ export function scanEngineFields(form, setNum, setV) {
           onChange={setV('v3_algo')}
         />
         <Toggle
+          label="Measured exit"
+          hint="Runs the researched exit on this desk's own entries instead of its fixed target: a 2×ATR stop from the entry bar, no target, and a 30-bar horizon. The exit study replayed V3's entries under 21 exit rules and this held to the horizon best — +7.18%, +7.76% and +1.62% per trade out of sample against the fixed target's +1.35%, +2.40% and −0.48%. It holds through a normal pullback instead of stopping out of a move still going, but it is a longer hold: the target, break-even, scale-out, trailing and mood exits are then skipped, exactly as V3's own are. Leave it off while you compare: the entry rules are unchanged either way."
+          checked={form.v3_exit === true}
+          onChange={setV('v3_exit')}
+        />
+        <Toggle
           label="Desk analyst"
           hint="A read-only analyst on this desk: once a day it writes a short note from the desk's own trades and rules, plus the scanner's setups, BTC's tape, recent alerts and your watchlist. It cannot place, close, size or approve anything — it only tells you what it sees."
           checked={form.analyst_on === true}

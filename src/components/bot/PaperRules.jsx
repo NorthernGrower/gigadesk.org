@@ -42,6 +42,7 @@ export default function PaperRules({ config, onSaved }) {
     always_take_count: c?.always_take_count ?? 5,
     analyst_on: c?.analyst_on === true,
     btc_markets: c?.btc_markets === true,
+    v3_exit: c?.v3_exit === true,
   });
   const [paper, setPaper] = useState(() => fromConfig(config));
 
@@ -85,6 +86,7 @@ export default function PaperRules({ config, onSaved }) {
         always_take_count: Math.max(1, Math.min(10, Math.round(Number(paper.always_take_count) || 5))),
         analyst_on: paper.analyst_on === true,
         btc_markets: paper.btc_markets === true,
+        v3_exit: paper.v3_exit === true,
       });
       toast({ title: 'Paper rules saved', description: 'The paper desk picks them up on its next cycle. Live rules are untouched.' });
       if (onSaved) onSaved();

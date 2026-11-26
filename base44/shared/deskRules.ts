@@ -31,6 +31,10 @@ export const LIVE_DEFAULTS = {
   margin_leverage: 2,
   v3_algo: false,
   v3_profile: "loose",
+  // the measured exit on this desk's own entries: 2xATR stop, no target and a
+  // 30-bar horizon, from the exit study (+7.18% / +7.76% / +1.62% per trade
+  // out of sample against the fixed target's +1.35% / +2.40% / -0.48%)
+  v3_exit: false,
   btc_gate_mode: "any",
   always_take_top: false,
   always_take_count: 5,
