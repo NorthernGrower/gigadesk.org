@@ -12,7 +12,7 @@ import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan, V3 } from "../../shared/v3algo.ts";
 import { usdInQuote, quoteOf, patternFor } from "../../shared/quotes.ts";
-import { capPositionSize, losingStreak, riskState } from "../../shared/risk.ts";
+import { capPositionSize, losingStreak, riskState, profitLock } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
 import { toUsd } from "../../shared/quotes.ts";
 
@@ -663,6 +663,29 @@ export default async function (req) {
           if (side === "short" && trail < stop) stop = trail;
         }
         if (peak !== prevPeak) updates.peak_price = round(peak, 8);
+      }
+      // the live desk's profit lock: once a trade is up by its arm threshold,
+      // its stop keeps a share of the best price it reached, so a run books
+      // most of itself instead of riding back to the entry stop. It is the same
+      // rule the scheduled guard runs while the app is closed (see risk.ts and
+      // deskGuard), and both only ever raise a stop — the higher one wins, so
+      // the two can never fight. A V3 or measured-exit position returns above
+      // and takes it from the guard instead.
+      if (isRealPos && lrVal("profit_lock", true) !== false) {
+        const lock = profitLock({
+          side,
+          entry,
+          stop,
+          peak,
+          price,
+          armPct: Number(lrVal("lock_arm_pct", 2)) || 0,
+          givebackPct: Number(lrVal("giveback_pct", 50)) || 0,
+        });
+        if (lock) {
+          if (lock.peak !== prevPeak) updates.peak_price = round(lock.peak, 8);
+          peak = lock.peak;
+          if (lock.raised) stop = lock.stop;
+        }
       }
       if (stop !== Number(t.stop_price)) updates.stop_price = round(stop, 8);
 

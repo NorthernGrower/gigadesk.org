@@ -1,7 +1,9 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
+import { asArray } from '../../shared/market.ts';
 
 const BASE = 1_000_000; // the ad desk's demo equity
 const TTL = 60_000;
+const CACHE_KEY = 'giga_ticker';
 let cache = null;
 
 export default async function (req) {
@@ -10,7 +12,21 @@ export default async function (req) {
     const base44 = createClientFromRequest(req);
 
     // Deliberately public advertisement stats: aggregates only, never per-user
-    // rows, so the landing ticker works for signed-out visitors too.
+    // rows, so the landing ticker works for signed-out visitors too. Nothing
+    // personal can be read here, and nothing is written except this cache.
+    // The aggregate is kept on the app as well as in memory, so a burst of
+    // anonymous visitors runs seven sums once a minute, not once each.
+    const stored = asArray(
+      await base44.asServiceRole.entities.MarketCache
+        .filter({ key: CACHE_KEY }, { limit: 1 })
+        .catch(() => []),
+    )[0];
+    const storedAt = Number(((stored || {}).value || {}).at) || 0;
+    if (stored && storedAt && Date.now() - storedAt < TTL && (stored.value || {}).data) {
+      cache = { value: stored.value.data, at: storedAt };
+      return Response.json(cache.value);
+    }
+
     const dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
     const [closedAgg, winsAgg, todayAgg, startAgg, bestAgg, openAgg, decisiveAgg] = await Promise.all([
@@ -54,6 +70,11 @@ export default async function (req) {
       updated_at: new Date().toISOString(),
     };
     cache = { value, at: Date.now() };
+    // the shared copy, so the next instance (and the next anonymous burst)
+    // answers from here instead of running the sums again
+    await base44.asServiceRole.entities.MarketCache
+      .upsert([{ key: CACHE_KEY, value: { at: cache.at, data: value } }], { key: 'key' })
+      .catch(() => {});
     return Response.json(value);
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

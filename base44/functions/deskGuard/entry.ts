@@ -32,7 +32,12 @@ export default async function (req) {
       .me()
       .catch((e) => (e.status === 401 ? null : Promise.reject(e)));
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    if (user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+    // a scheduled workflow has no signed-in admin: the docs' only documented
+    // session is a frontend call, and a workflow step runs as the app. So a
+    // service account passes the same check an admin does — an ordinary user
+    // never does, and a signed-out caller never reaches this line.
+    if (user.role !== "admin" && user.is_service !== true)
+      return Response.json({ error: "Forbidden" }, { status: 403 });
 
     const lastRun = asArray(
       await base44.asServiceRole.entities.MarketCache.filter({ key: RUN_KEY }, { limit: 1 }),

@@ -24,7 +24,11 @@ export default async function (req) {
       .me()
       .catch((e) => (e.status === 401 ? null : Promise.reject(e)));
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    if (user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+    // a scheduled workflow has no signed-in admin: a workflow step runs as the
+    // app, so a service account passes the same check an admin does. An
+    // ordinary user never does, and a signed-out caller never gets this far.
+    if (user.role !== "admin" && user.is_service !== true)
+      return Response.json({ error: "Forbidden" }, { status: 403 });
 
     // single run per cooldown window, whoever calls: the scheduler and an
     // on-demand refresh never double up, and repeated anonymous hits reuse the

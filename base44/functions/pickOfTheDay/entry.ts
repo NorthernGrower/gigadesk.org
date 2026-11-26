@@ -1,11 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { fetchCandles } from "../../shared/market.ts";
+import { fetchCandles, asArray } from "../../shared/market.ts";
 
 // One public setup, chosen from the day's top 10 desk picks, for the landing
 // page ad. The choice is anchored to the UTC day, so every visitor sees the
 // same call and it rotates by itself every 24 hours. The payload carries what
 // the desk's own call card shows — candles, the indicator snapshot and a full
 // AI read with levels — so the homepage card can mirror the real thing.
+//
+// Public on purpose: the homepage has to render for signed-out visitors. What
+// that means for a public endpoint, and what it therefore must not do:
+//  - it reads only the app's own scan results (signals), never a person's
+//    positions, rules or exchange account, so there is nothing personal here;
+//  - the paid model call is limited to one a day, claimed on the app before it
+//    is made, so reloading the homepage can no longer drive the bill;
+//  - the only write is that cached read on the signal it belongs to.
 const AI_SCHEMA = {
   type: "object",
   properties: {
@@ -47,20 +55,40 @@ export default async function(req) {
     // whole day of visitors reuses one call instead of paying for each visit
     let ai = pick.indicators?.ai_featured || null;
     if (!ai) {
-      ai = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `You are a crypto desk analyst writing a short public promo read on one setup for a trading platform's homepage.
+      // and only one paid call a day, whoever calls: the day's slot is claimed
+      // on the app before the model is invoked, then re-read to confirm the
+      // claim stuck, so a burst of visitors at the same moment still produces
+      // exactly one call — an anonymous caller can no longer drive the bill by
+      // reloading the homepage
+      const slotKey = `featured_ai:${new Date().toISOString().slice(0, 10)}`;
+      const slot = asArray(
+        await base44.asServiceRole.entities.MarketCache.filter({ key: slotKey }, { limit: 1 }),
+      )[0];
+      if (!slot) {
+        const claim = Date.now();
+        await base44.asServiceRole.entities.MarketCache
+          .upsert([{ key: slotKey, value: { at: claim, symbol: pick.symbol } }], { key: 'key' })
+          .catch(() => {});
+        const fresh = asArray(
+          await base44.asServiceRole.entities.MarketCache.filter({ key: slotKey }, { limit: 1 }).catch(() => []),
+        )[0];
+        if (fresh && Number((fresh.value || {}).at) === claim) {
+          ai = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `You are a crypto desk analyst writing a short public promo read on one setup for a trading platform's homepage.
 
 Coin: ${pick.name || pick.symbol} (${pick.symbol})
 Side: ${pick.side} | price ${pick.price} USD | entry ${pick.entry} | target ${pick.target} | stop ${pick.stop} | required move ${pick.required_move_pct}% | risk/reward ${pick.risk_reward} | score ${pick.score}/100 (${pick.grade})
 Desk reasons: ${(pick.reasons || []).join("; ")}
 
 Write a punchy but honest thesis (max 55 words) on why this setup stands out today, and the main risks (max 35 words). Judge the direction, refine the entry, target and stop if the numbers above are off, say what would invalidate the setup and the horizon it plays out over, and grade its setup quality. Never promise a return and never invent data beyond what is given.`,
-        response_json_schema: AI_SCHEMA,
-      }).catch(() => null);
-      if (ai) {
-        await base44.asServiceRole.entities.Signal.update(pick.id, {
-          indicators: { ...(pick.indicators || {}), ai_featured: ai },
-        });
+            response_json_schema: AI_SCHEMA,
+          }).catch(() => null);
+          if (ai) {
+            await base44.asServiceRole.entities.Signal.update(pick.id, {
+              indicators: { ...(pick.indicators || {}), ai_featured: ai },
+            }).catch(() => {});
+          }
+        }
       }
     }
 
