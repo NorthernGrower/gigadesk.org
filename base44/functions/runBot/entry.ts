@@ -2463,6 +2463,9 @@ export default async function (req) {
 
     const exposure = positions.reduce((a, p) => a + p.size_usd, 0);
     const unrealized = positions.reduce((a, p) => a + p.pnl_usd, 0);
+    // the Bitcoin the account holds, read from the connection's own balance
+    // list: the funding the BTC markets spend
+    const btcHeld = connRow ? pickBtcBalance(connRow.balances) : 0;
 
     // anchor the paper cash to the trades themselves: the original balance
     // plus everything booked minus what is deployed. Trusting the running
@@ -2655,6 +2658,11 @@ export default async function (req) {
           : null,
         eligible_markets: eligibleCount,
         balance_usd: exchangeBalance,
+        // the account's Bitcoin holding and what it is worth: the funding the
+        // BTC markets spend, surfaced so it can be watched as it is bought
+        btc_balance: round(btcHeld, 8),
+        btc_balance_usd: round(btcHeld * btcUsdNow, 2),
+        btc_rate: round(btcUsdNow, 2),
         balance_as_of: balanceAsOf,
         balance_stale: balanceStale,
         balance_error: balanceError,

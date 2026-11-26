@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   CheckCircle2,
+  Landmark,
   Layers,
   PauseCircle,
   PlayCircle,
@@ -195,8 +196,20 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         </div>
       ) : null}
 
-      {/* the four figures the paper desk leads with, on live money */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* the money the bot can actually spend leads the desk: the exchange
+          balance first, then what the account is worth with the open positions
+          marked to market */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <StatCard
+          label="Exchange balance"
+          value={balanceUsd != null ? fmtUsd(balanceUsd) : '—'}
+          sub={
+            balanceUsd != null
+              ? `exchange-reported · saved ${ago(balanceAsOf)}`
+              : 'unavailable — verify the connection'
+          }
+          icon={Landmark}
+        />
         <StatCard
           label="Equity"
           value={liveEquity == null ? '—' : fmtUsd(liveEquity)}
@@ -221,6 +234,33 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
           sub={`${bot?.scanned || 0} coins scanned`}
           tone={(live.unrealized || 0) >= 0 ? 'up' : 'down'}
         />
+      </div>
+
+      {/* the Bitcoin the account holds: the funding the BTC markets spend, so
+          it is here to watch while it is bought and used */}
+      <div className="surface flex flex-wrap items-center justify-between gap-3 p-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            BTC on the exchange
+          </p>
+          <p className="num mt-1 text-lg font-semibold">
+            {Number(live.btc_balance) > 0 ? `${live.btc_balance} BTC` : '0 BTC'}
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            {Number(live.btc_balance) > 0 ? fmtUsd(live.btc_balance_usd || 0) : '$0.00'}
+            {live.btc_rate ? ` at ${fmtUsd(live.btc_rate)}` : ''} · the funding BTC-quoted
+            markets spend
+          </p>
+        </div>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
+            bot?.btc_markets?.live_on
+              ? 'bg-primary/15 text-primary'
+              : 'bg-secondary text-muted-foreground'
+          }`}
+        >
+          {bot?.btc_markets?.live_on ? 'BTC markets on' : 'BTC markets off'}
+        </span>
       </div>
 
       <TodayProgress
@@ -266,16 +306,10 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         </div>
       </div>
 
-      {/* live only, below the desk's shared layout: the exchange's own figures,
-          the day's best and worst, and the last real closes */}
+      {/* live only, below the desk's shared layout: the exchange's own counts,
+          the day's best and worst, and the last real closes (the balance and
+          the Bitcoin holding lead the page now, above) */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <div className="surface p-3">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Exchange balance</p>
-          <p className="num mt-1 text-lg font-semibold">{balanceUsd != null ? fmtUsd(balanceUsd) : '—'}</p>
-          <p className="text-[11px] text-muted-foreground">
-            {balanceUsd != null ? `exchange-reported · saved ${ago(balanceAsOf)}` : 'unavailable — verify the connection'}
-          </p>
-        </div>
         <div className="surface p-3">
           <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Eligible markets</p>
           <p className="num mt-1 text-lg font-semibold">
