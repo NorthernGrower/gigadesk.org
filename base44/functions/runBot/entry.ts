@@ -11,7 +11,7 @@ import { loadSmartBias } from "../../shared/smartmoney.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan, V3 } from "../../shared/v3algo.ts";
-import { usdInQuote } from "../../shared/quotes.ts";
+import { usdInQuote, quoteOf, patternFor } from "../../shared/quotes.ts";
 import { capPositionSize, losingStreak, riskState } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
 import { toUsd } from "../../shared/quotes.ts";
@@ -257,10 +257,14 @@ export default async function (req) {
     let liveBudget = liveBudgetCap > 0
       ? liveBudgetCap -
         openTrades
-          .filter((t) => (t.mode || "paper") === "real")
+          .filter((t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "USD")
           .reduce((a, t) => a + (Number(t.size_usd) || 0), 0)
       : Infinity;
     let cash = Number(config.cash_balance) || 0;
+    // the paper Bitcoin book's own bankroll: sized, spent and re-anchored
+    // against itself, so the two currencies can never fund one another
+    const btcStart = Number(config.btc_starting_balance) || 10000;
+    let btcCash = Number(config.btc_cash_balance) || btcStart;
     const closed = [];
     const positions = [];
     const pendingMarks = [];
@@ -892,8 +896,13 @@ export default async function (req) {
     // scan itself stays shared — one board, two rule sets read from it.
     const closedIds = new Set(closed.map((c) => c.id));
     const stillOpen = openTrades.filter((t) => !closedIds.has(t.id));
-    const liveOpenCount = stillOpen.filter((t) => (t.mode || "paper") === "real").length;
-    const paperOpenCount = stillOpen.filter((t) => (t.mode || "paper") === "paper").length;
+    // each currency is its own book on its desk. The dollar counts below are
+    // the dollar book's, and the Bitcoin book counts itself: a BTC position
+    // never takes a dollar slot, and a dollar position never fills one.
+    const liveOpenCount = stillOpen.filter((t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "USD").length;
+    const paperOpenCount = stillOpen.filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "USD").length;
+    const liveBtcOpen = stillOpen.filter((t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "BTC").length;
+    const paperBtcOpen = stillOpen.filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "BTC").length;
     const openCount = stillOpen.length;
     const paperMaxOpen = Math.max(1, Number(config.max_open_positions) || 8);
     const liveMaxOpen = Math.max(1, Number(lrVal("max_open_positions", 8)) || 8);
@@ -911,6 +920,8 @@ export default async function (req) {
     // portfolio risk state for the paper desk: filled in when this cycle
     // actually looks for entries, surfaced in the response for the bot page
     let paperRisk = null;
+    // the paper Bitcoin book's own brakes, computed from its own trades
+    let btcRisk = null;
     // the guarded stages' failure reasons, reported for the page. They are
     // declared here, not inside the scan block below, because the cycle's
     // response reads them whether or not that block ran: a light cycle — the
@@ -921,7 +932,9 @@ export default async function (req) {
 
     const scanGateOpen =
       paperOpenCount < paperMaxOpen ||
-      (live.conn != null && liveVerified && liveOpenCount < liveMaxOpen);
+      (btcMarketsOn(paperView) && paperBtcOpen < paperMaxOpen) ||
+      (live.conn != null && liveVerified &&
+        (liveOpenCount < liveMaxOpen || (btcMarketsOn(liveView) && liveBtcOpen < liveMaxOpen)));
 
     stage = "scan";
     if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight && (dryRun || claimConfirmed)) {
@@ -1056,6 +1069,42 @@ export default async function (req) {
           .map((t) => t.symbol),
         ...pendingPaper,
       ]);
+      // the Bitcoin book keeps its own cooldowns, its own proposals and its own
+      // blocked symbols: a dollar close on a coin says nothing about its Bitcoin
+      // market, and the other way round
+      const blockedLiveBtc = new Set([
+        ...stillOpen
+          .filter((t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "BTC")
+          .map((t) => t.symbol),
+        ...recent
+          .filter((t) => {
+            if ((t.mode || "paper") !== "real" || quoteOf(t.quote_asset) !== "BTC") return false;
+            const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
+            const window = t.exit_reason === "time" ? reentryMs : liveCooldownMs;
+            return Date.now() - closedMs < window;
+          })
+          .map((t) => t.symbol),
+        ...pending
+          .filter((t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "BTC")
+          .map((t) => t.symbol),
+        ...failedRecently,
+      ]);
+      const blockedPaperBtc = new Set([
+        ...stillOpen
+          .filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "BTC")
+          .map((t) => t.symbol),
+        ...recent
+          .filter((t) => {
+            if ((t.mode || "paper") === "real" || quoteOf(t.quote_asset) !== "BTC") return false;
+            const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
+            const window = t.exit_reason === "time" ? reentryMs : paperCooldownMs;
+            return Date.now() - closedMs < window;
+          })
+          .map((t) => t.symbol),
+        ...pending
+          .filter((t) => (t.mode || "paper") !== "real" && quoteOf(t.quote_asset) === "BTC")
+          .map((t) => t.symbol),
+      ]);
 
       // trading style bends the rules without touching what the user saved:
       // timid waits for stronger setups with less at stake, aggressive
@@ -1089,23 +1138,33 @@ export default async function (req) {
           closed_at: { $gte: new Date(Date.now() - 180 * 86400000).toISOString() },
         });
         const paperClosed = riskWindow
-          .filter((t) => (t.mode || "paper") === "paper")
+          .filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "USD")
+          .sort((a, b) => String(b.closed_at || "").localeCompare(String(a.closed_at || "")));
+        const btcClosed = riskWindow
+          .filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "BTC")
           .sort((a, b) => String(b.closed_at || "").localeCompare(String(a.closed_at || "")));
         const riskDayStart = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
-        paperRisk = riskState({
-          starting_balance: Number(config.starting_balance) || 10000,
-          realized_pnl_total: paperClosed.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
-          realized_pnl_today: paperClosed
-            .filter((t) => t.closed_at && Date.parse(t.closed_at) >= riskDayStart)
-            .reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
-          open_size_usd: stillOpen
-            .filter((t) => (t.mode || "paper") === "paper")
-            .reduce((a, t) => a + (Number(t.size_usd) || 0), 0),
-          losing_streak: losingStreak(paperClosed),
-        });
+        // one function, run over one book's trades and one book's bankroll: a
+        // dollar drawdown can not stop a Bitcoin entry, or the other way round
+        const bookState = (rows, bookStart, quote) =>
+          riskState({
+            starting_balance: bookStart,
+            realized_pnl_total: rows.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
+            realized_pnl_today: rows
+              .filter((t) => t.closed_at && Date.parse(t.closed_at) >= riskDayStart)
+              .reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0),
+            open_size_usd: stillOpen
+              .filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === quote)
+              .reduce((a, t) => a + (Number(t.size_usd) || 0), 0),
+            losing_streak: losingStreak(rows),
+          });
+        paperRisk = bookState(paperClosed, Number(config.starting_balance) || 10000, "USD");
+        btcRisk = bookState(btcClosed, btcStart, "BTC");
       } catch (err) {
         riskError = String((err && err.message) || err);
         console.log(`risk check failed: ${riskError}`);
+        // both books fail closed: a risk read that broke can not be trusted to
+        // size anything, in either currency
         paperRisk = {
           size_multiplier: 0,
           block_entries: true,
@@ -1115,6 +1174,7 @@ export default async function (req) {
           losing_streak: 0,
           deployed_usd: 0,
         };
+        btcRisk = { ...paperRisk };
       }
       const riskPct = Math.min(
         25,
@@ -1129,8 +1189,8 @@ export default async function (req) {
       // scores the same way — aligned with their flow, capped at +-5 points
       const smartBias = await loadSmartBias(base44);
 
-      const applyEdges = (rows) => rows.map((r) => {
-        const adj = lessonMap.get(`${r.side}/${r.market_cap_bucket}`)?.adj || 0;
+      const applyEdges = (rows, quote = "USD") => rows.map((r) => {
+        const adj = lessonMap.get(patternFor(r.side, r.market_cap_bucket, quote))?.adj || 0;
         let smartAdj = 0;
         let smartNote = null;
         const smart = smartBias.get(r.symbol);
@@ -1155,8 +1215,8 @@ export default async function (req) {
       const tradableLive = liveBoard === board ? tradable : applyEdges(liveBoard.rows);
       // the Bitcoin board's rows take the same score nudges, read from their
       // own book: decisive candles and the market-cap tiers follow the pair's
-      // rank on the BTC market, not on the dollar one
-      const btcTradable = btcBoard ? applyEdges(btcBoard.rows) : [];
+      // rank on the BTC market, and its lessons are its own
+      const btcTradable = btcBoard ? applyEdges(btcBoard.rows, "BTC") : [];
 
       // engine targets: 6R from entry with the combo stack on (the pooled
       // flat-tape winner), 3R under the margin engine, 2.5R under the old
@@ -1342,9 +1402,11 @@ export default async function (req) {
       // risk brakes, blocked symbols and slots are the desk's own, so a coin
       // already held — in either currency — is left alone.
       const btcQualifies = (r, desk) => {
-        const blocked = desk === "live" ? blockedLive : blockedPaper;
+        // the Bitcoin book's own blocked symbols and its own brakes: a dollar
+        // cooldown or a dollar drawdown never reaches this side
+        const blocked = desk === "live" ? blockedLiveBtc : blockedPaperBtc;
         if (blocked.has(r.symbol)) return false;
-        if (desk === "paper" && paperRisk && paperRisk.block_entries) return false;
+        if (desk === "paper" && btcRisk && btcRisk.block_entries) return false;
         if (btcV3DeskOn[desk]) {
           const ev = btcV3Evals.get(r.symbol);
           if (!ev || ev.state !== "entry") return false;
@@ -1734,11 +1796,13 @@ export default async function (req) {
       // A failure here costs BTC entries, never the cycle.
       try {
         const paperBtcOn =
-          btcMarketsOn(paperView) && btcUsdNow > 0 && paperOpenCount < paperMaxOpen && !dryRun;
+          btcMarketsOn(paperView) && btcUsdNow > 0 && paperBtcOpen < paperMaxOpen && !dryRun;
+        // only the Bitcoin book's own positions and its own openings keep a coin
+        // out: the same coin may be held in dollars and in bitcoin, because they
+        // are two markets on two bankrolls
         const already = new Set([
-          ...liveSymbols,
-          ...paperWanted.map((r) => r.symbol),
-          ...stillOpen.map((t) => t.symbol),
+          ...stillOpen.filter((t) => quoteOf(t.quote_asset) === "BTC").map((t) => t.symbol),
+          ...opened.filter((o) => o.quote === "BTC").map((o) => o.symbol),
         ]);
         // the Bitcoin market's own board decides, exactly as the dollar board
         // decides the dollar book: the desk's gates, its top-pick option, its
@@ -1755,24 +1819,21 @@ export default async function (req) {
           .filter((r) => !already.has(r.symbol))
           .slice(0, 5);
         for (const btcRow of paperBtcOn ? btcCandidates : []) {
-          const btcTaken = opened.filter((o) => o.mode === "paper").length;
-          if (btcTaken >= Math.max(0, paperMaxOpen - paperOpenCount)) break;
+          const btcTaken = opened.filter((o) => o.mode === "paper" && o.quote === "BTC").length;
+          if (btcTaken >= Math.max(0, paperMaxOpen - paperBtcOpen)) break;
           if (!(Number(btcRow.entry) > 0)) continue;
           const stopUsd = Math.abs(btcRow.entry - btcRow.stop) * btcUsdNow;
           if (!(stopUsd > 0)) continue;
-          const freeBtcSlots = Math.max(
-            1,
-            paperMaxOpen - paperOpenCount - opened.filter((o) => o.mode === "paper").length - proposed.length,
-          );
-          const btcRiskUsd = (cash * riskPct) / 100;
+          const freeBtcSlots = Math.max(1, paperMaxOpen - paperBtcOpen - btcTaken);
+          const btcRiskUsd = (btcCash * riskPct) / 100;
           let btcQty = btcRiskUsd / stopUsd;
           let btcSizeUsd = btcQty * btcRow.entry * btcUsdNow;
-          const btcCap = cash / freeBtcSlots;
+          const btcCap = btcCash / freeBtcSlots;
           if (btcSizeUsd > btcCap) {
             btcSizeUsd = btcCap;
             btcQty = btcSizeUsd / (btcRow.entry * btcUsdNow);
           }
-          const btcCapped = capPositionSize(btcSizeUsd, Number(config.starting_balance) || 10000);
+          const btcCapped = capPositionSize(btcSizeUsd, btcStart);
           if (btcCapped < btcSizeUsd && btcCapped >= 10) {
             btcSizeUsd = btcCapped;
             btcQty = btcSizeUsd / (btcRow.entry * btcUsdNow);
@@ -1802,7 +1863,7 @@ export default async function (req) {
               : {}),
             peak_price: round(btcRow.entry, 8),
             score: btcRow.score,
-            pattern: `${btcRow.side}/${btcRow.market_cap_bucket}`,
+            pattern: patternFor(btcRow.side, btcRow.market_cap_bucket, "BTC"),
             entry_source: btcRow.v3 ? "v3" : btcRow.top_pick ? "top_pick" : "gated",
             quote_asset: "BTC",
             fx_usd: round(btcUsdNow, 2),
@@ -1813,7 +1874,7 @@ export default async function (req) {
             opened_at: new Date().toISOString(),
           });
           if (config.mode === "auto") {
-            cash -= btcSizeUsd;
+            btcCash -= btcSizeUsd;
             opened.push({
               id: btcCreated.id,
               symbol: btcRow.symbol,
@@ -1821,6 +1882,7 @@ export default async function (req) {
               entry: btcRow.entry,
               size_usd: round(btcSizeUsd),
               mode: "paper",
+              quote: "BTC",
             });
             await base44.entities.Alert.create({
               symbol: btcRow.symbol,
@@ -1862,15 +1924,15 @@ export default async function (req) {
         const btcSpendableNow = connRow ? pickBtcBalance(connRow.balances) : 0;
         if (
           btcMarketsOn(liveView) && liveReady && btcUsdNow > 0 &&
-          btcSpendableNow > 0 && liveBudget >= 10 && !dryRun
+          btcSpendableNow > 0 && !dryRun
         ) {
+          // the live Bitcoin book's own positions and its own openings: never
+          // the dollar book's, which is a different market and a different money
           const takenBtc = new Set([
-            ...liveSymbols,
-            ...paperWanted.map((r) => r.symbol),
-            ...stillOpen.map((t) => t.symbol),
-            // and everything opened this cycle, whichever desk and quote: one
-            // coin is never entered twice by one cycle
-            ...opened.map((o) => o.symbol),
+            ...stillOpen
+              .filter((t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "BTC")
+              .map((t) => t.symbol),
+            ...opened.filter((o) => o.quote === "BTC").map((o) => o.symbol),
           ]);
           // the same selection the dollar book gets — the desk's gates, its
           // top-pick option, its V3 plan — read on the Bitcoin board. Longs
@@ -1887,12 +1949,13 @@ export default async function (req) {
             .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
             .filter((r) => !takenBtc.has(r.symbol))
             .slice(0, 5);
-          // the desk's free slots stay one number: the dollar plans were
-          // sized against them first, and a BTC entry takes one of what is
-          // left rather than opening a position past the desk's limit
-          const btcSlots = liveMaxOpen - liveOpenCount - livePlans.length;
+          // this book's slots are its own: the dollar plans were sized against
+          // the dollar book, and neither can take the other's room
+          const btcSlots = liveMaxOpen - liveBtcOpen;
           let btcLeft = btcSpendableNow;
-          let btcBudgetUsd = liveBudget;
+          // the budget is the Bitcoin the account actually holds — this book
+          // has no dollar cap, and the dollar cap never limits it
+          let btcBudgetUsd = btcSpendableNow * btcUsdNow;
           for (const seed of btcSeeds) {
             if (!(btcSlots > 0)) break;
             if (opened.filter((o) => o.mode === "real").length >= btcSlots) break;
@@ -1905,6 +1968,7 @@ export default async function (req) {
             const btcOpen = await base44.entities.Trade.count({
               status: "open",
               symbol: btcLiveRow.symbol,
+              quote_asset: "BTC",
               created_by_id: config.created_by_id || user.id,
             });
             if (btcOpen) continue;
@@ -1960,7 +2024,7 @@ export default async function (req) {
                   : {}),
                 peak_price: round(btcLiveRow.entry, 8),
                 score: btcLiveRow.score,
-                pattern: `${btcLiveRow.side}/${btcLiveRow.market_cap_bucket}`,
+                pattern: patternFor(btcLiveRow.side, btcLiveRow.market_cap_bucket, "BTC"),
                 entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
                 quote_asset: "BTC",
                 fx_usd: round(btcUsdNow, 2),
@@ -2000,10 +2064,10 @@ export default async function (req) {
               });
               break;
             }
-            // what it just spent is no longer free for the next coin
+            // what it just spent is no longer free for the next coin. The
+            // dollar budget is untouched: this book never spends dollars.
             btcLeft -= sizeBtc * 1.005;
             btcBudgetUsd -= sizeBtcUsd;
-            liveBudget -= sizeBtcUsd;
             const filledQty = round(Number(order.filled_qty) || baseQty, 8);
             const fillPx = round(Number(order.avg_price) || btcLiveRow.entry, 8);
             const btcCreatedLive = await base44.entities.Trade.create({
@@ -2029,7 +2093,7 @@ export default async function (req) {
                 : {}),
               peak_price: fillPx,
               score: btcLiveRow.score,
-              pattern: `${btcLiveRow.side}/${btcLiveRow.market_cap_bucket}`,
+              pattern: patternFor(btcLiveRow.side, btcLiveRow.market_cap_bucket, "BTC"),
               entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
               quote_asset: "BTC",
               fx_usd: round(btcUsdNow, 2),
@@ -2045,6 +2109,7 @@ export default async function (req) {
               entry: btcLiveRow.entry,
               size_usd: sizeBtcUsd,
               mode: "real",
+              quote: "BTC",
             });
             await base44.entities.Alert.create({
               symbol: btcLiveRow.symbol,
@@ -2094,11 +2159,15 @@ export default async function (req) {
     // and the four equity-candle reads — in one parallel round instead of
     // eight serial waits; this chain was seconds of every cycle
     stage = "stats";
-    const [todays, realizedAgg, deployedAgg, prevCandlesPage, existingCandlePage, prevLivePage, existingLivePage] =
+    const [todays, realizedAgg, deployedAgg, btcRealizedAgg, btcDeployedAgg, prevCandlesPage, existingCandlePage, prevLivePage, existingLivePage] =
       await Promise.all([
         readAll({ status: "closed", closed_at: { $gte: dayStart.toISOString() }, created_by_id: user.id }),
         base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper", created_by_id: user.id }, sum: "pnl_usd" }),
         base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper", created_by_id: user.id }, sum: "size_usd" }),
+        // the Bitcoin book is matched positively, so a desk that never traded it
+        // reads exactly as it did before the book existed
+        base44.entities.Trade.aggregate({ query: { status: "closed", mode: "paper", quote_asset: "BTC", created_by_id: user.id }, sum: "pnl_usd" }),
+        base44.entities.Trade.aggregate({ query: { status: "open", mode: "paper", quote_asset: "BTC", created_by_id: user.id }, sum: "size_usd" }),
         base44.entities.EquityCandle.filter({ owner: user.id, day: { $lt: todayKey } }, { sort: "-day", limit: 1 }),
         base44.entities.EquityCandle.filter({ owner: user.id, day: todayKey }, { limit: 1 }),
         base44.entities.EquityCandle.filter({ owner: `${user.id}|live`, day: { $lt: todayKey } }, { sort: "-day", limit: 1 }),
@@ -2110,8 +2179,12 @@ export default async function (req) {
     const existingLive = asArray(existingLivePage)[0];
     // the headline counter and the daily goal track the paper bot's results —
     // real trades already report through the live stats block
-    const paperTodays = todays.filter((t) => (t.mode || "paper") === "paper");
+    // the headline counter, the daily goal and the equity candle are the dollar
+    // book's. The Bitcoin book reports its own day and never moves these.
+    const paperTodays = todays.filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "USD");
+    const btcTodays = todays.filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "BTC");
     const realizedToday = paperTodays.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
+    const btcRealizedToday = btcTodays.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
     const startBalance = Number(config.starting_balance) || 10000;
     const goal = (startBalance * (Number(config.daily_target_pct) || 2)) / 100;
     let goalHit = false;
@@ -2153,6 +2226,7 @@ export default async function (req) {
         image: t.image,
         side,
         mode: "real",
+        quote_asset: quoteOf(t.quote_asset),
         exchange: t.exchange || null,
         pair: `${t.symbol}/${(funding && funding.asset) || QUOTE_ASSET[t.exchange] || "USDT"}`,
         entry_price: entry,
@@ -2165,7 +2239,14 @@ export default async function (req) {
         progress_pct: goal ? round(Math.max(0, Math.min(100, (travelled / goal) * 100))) : 0,
       };
     });
-    const liveExposure = livePositions.reduce((a, p) => a + p.size_usd, 0);
+    // the live cap is the dollar book's, so only dollar positions count against
+    // it. The Bitcoin book's limit is the Bitcoin the account holds.
+    const liveExposure = livePositions
+      .filter((p) => quoteOf(p.quote_asset) === "USD")
+      .reduce((a, p) => a + p.size_usd, 0);
+    const liveBtcExposure = livePositions
+      .filter((p) => quoteOf(p.quote_asset) === "BTC")
+      .reduce((a, p) => a + p.size_usd, 0);
     const liveUnrealized = livePositions.reduce((a, p) => a + p.pnl_usd, 0);
     // already fetched with the paper day's closes above: same status and same
     // time window, only the mode differs — no second read needed
@@ -2293,8 +2374,10 @@ export default async function (req) {
     // with positions open) and the desk quietly traded on money it didn't
     // have; anchored, equity always ties to booked profit exactly.
     // totals were fetched in the parallel stats read above
-    const realizedTotal = realizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0;
-    const deployedTotal = deployedAgg?.rows?.[0]?.sum_size_usd ?? 0;
+    const realizedTotal = (realizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0) - (btcRealizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0);
+    const deployedTotal = (deployedAgg?.rows?.[0]?.sum_size_usd ?? 0) - (btcDeployedAgg?.rows?.[0]?.sum_size_usd ?? 0);
+    const btcRealizedTotal = btcRealizedAgg?.rows?.[0]?.sum_pnl_usd ?? 0;
+    const btcDeployedTotal = btcDeployedAgg?.rows?.[0]?.sum_size_usd ?? 0;
     // profit handling: compound rolls booked profit back into the trading
     // pool; stack sets profits aside so only the starting capital (plus any
     // accumulated losses) is at risk
@@ -2314,9 +2397,17 @@ export default async function (req) {
     // missing. After touching anything here, check both desk panels still
     // show sane percentages (paper and live) before shipping.
     const equity = startBalance + realizedTotal + unrealized;
+    // the Bitcoin book anchors its own cash the same way: its starting bankroll
+    // plus what it booked minus what it holds — never the dollar figures
+    const btcAnchoredCash = btcStart + btcRealizedTotal - btcDeployedTotal;
+    const btcUnrealized = positions
+      .filter((p) => quoteOf(p.quote_asset) === "BTC")
+      .reduce((a, p) => a + (Number(p.pnl_usd) || 0), 0);
+    const btcEquity = btcStart + btcRealizedTotal + btcUnrealized;
 
     await base44.entities.BotConfig.update(config.id, {
       cash_balance: round(anchoredCash),
+      btc_cash_balance: round(btcAnchoredCash),
       last_run_at: new Date().toISOString(),
     });
 
@@ -2415,6 +2506,22 @@ export default async function (req) {
         scanned: btcBoard ? btcBoard.scannedCount : 0,
         universe: btcBoard ? btcBoard.universeCount : 0,
         v3: btcV3Summary,
+        // the Bitcoin book's own ledger: its own bankroll, its own cash, its own
+        // open positions and its own brakes. Nothing here is shared with the
+        // dollar figures above.
+        book: {
+          starting_balance: round(btcStart),
+          cash: round(btcAnchoredCash),
+          equity: round(btcEquity),
+          realized_today: round(btcRealizedToday),
+          realized_total: round(btcRealizedTotal),
+          open_paper: paperBtcOpen,
+          open_live: liveBtcOpen,
+          live_exposure: round(liveBtcExposure),
+          risk: btcRisk
+            ? { block_entries: btcRisk.block_entries, size_multiplier: btcRisk.size_multiplier, reason: btcRisk.reason }
+            : null,
+        },
       },
       risk: paperRisk,
       diagnostics: { risk_error: riskError, v3_error: v3Error },

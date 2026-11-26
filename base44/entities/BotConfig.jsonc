@@ -109,6 +109,16 @@
       "type": "number",
       "default": 10000
     },
+    "btc_starting_balance": {
+      "type": "number",
+      "default": 10000,
+      "description": "The paper desk's Bitcoin book bankroll, separate from the dollar one. A BTC-quoted paper trade is sized, banked and reset against this balance only, so a dollar drawdown can never starve the Bitcoin book or the other way round"
+    },
+    "btc_cash_balance": {
+      "type": "number",
+      "default": 10000,
+      "description": "The paper Bitcoin book's live cash. Re-anchored every cycle from its own trades — this balance plus what they booked, minus what they hold — so it can never drift or borrow from the dollar balance"
+    },
     "cash_balance": {
       "type": "number",
       "default": 10000
@@ -186,7 +196,7 @@
     "btc_markets": {
       "type": "boolean",
       "default": false,
-      "description": "Also trade Kraken's BTC-quoted markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC with the dollar rate recorded on the trade, so its P&L still reads in USD. Off by default; the live desk keeps its own switch in live_rules.btc_markets. The paper desk sizes them from its own cash. The live desk sizes them from the account's Bitcoin spot balance and takes longs only — a Bitcoin short would need margin on a market the book has not been measured on, and the dollar quote's cash is never spent on one"
+      "description": "Also trade Kraken's BTC-quoted markets as a second, fully separate book on this desk. The Bitcoin market is scanned by the same engine and traded by the same rules, but it has its own bankroll (btc_starting_balance), its own cash, its own slots, its own cooldowns, its own risk brakes and its own lessons \u2014 a dollar position never takes a Bitcoin slot and a dollar drawdown never stops a Bitcoin entry, or the other way round. Prices on those trades are in BTC with the dollar rate recorded when they opened, so their P&L still reads in USD. Off by default; the live desk keeps its own switch in live_rules.btc_markets. The live book sizes from the account's Bitcoin spot balance and takes longs only \u2014 a Bitcoin short would need margin on a market this book has not been measured on"
     },
     "timeframe": {
       "type": "string",      "enum": [

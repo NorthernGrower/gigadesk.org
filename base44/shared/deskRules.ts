@@ -34,10 +34,12 @@ export const LIVE_DEFAULTS = {
   btc_gate_mode: "any",
   always_take_top: false,
   always_take_count: 5,
-  // BTC-quoted markets: off. Each desk switches them on for itself. The live
-  // desk sizes them from the account's own Bitcoin spot balance and takes
-  // longs only, so switching this on can never spend dollar cash and can
-  // never open a margin short on a Bitcoin market.
+  // BTC-quoted markets: a second, fully separate book on the desk. Each desk
+  // switches them on for itself. The live book sizes from the account's own
+  // Bitcoin spot balance and takes longs only, so switching this on can never
+  // spend dollar cash and can never open a margin short on a Bitcoin market.
+  // Its cash, slots, cooldowns, brakes and lessons are its own: nothing on the
+  // dollar side can starve it or be starved by it.
   btc_markets: false,
   // read-only commentary. It reaches no order path, and a desk with it off
   // makes no analyst call at all rather than calling and discarding the answer

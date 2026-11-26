@@ -8,6 +8,7 @@ import {
   fxUsd,
   orderQuote,
   pairFor,
+  patternFor,
   positionPnl,
   quoteOf,
   toQuote,
@@ -68,5 +69,15 @@ assert(flat.pnl_usd === 0, "no move in the pair, no USD P&L");
 // 7. a missing rate never invents a dollar figure
 const noRate = positionPnl({ side: "long", entry: 0.05, exit: 0.06, quantity: 1, quote: "BTC", fx: 0 });
 assert(noRate.pnl_usd === 0, "an unusable rate reports no USD P&L");
+
+// 8. the lesson key keeps the two books apart: a Bitcoin result can never
+// nudge a dollar score, and the dollar key is exactly what it always was
+assert(patternFor("long", "large", "USD") === "long/large", "a dollar lesson keeps its two-part key");
+assert(patternFor("long", "large", undefined) === "long/large", "a trade with no quote is a dollar lesson");
+assert(patternFor("long", "large", "BTC") === "long/large/BTC", "a Bitcoin lesson carries its own book");
+assert(
+  patternFor("short", "micro", "BTC") !== patternFor("short", "micro", "USD"),
+  "the same side and tier are two separate lessons across the books",
+);
 
 console.log("all quote self-tests passed");

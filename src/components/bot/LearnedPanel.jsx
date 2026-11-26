@@ -63,7 +63,9 @@ export default function LearnedPanel() {
       ) : (
         <div className="mt-3 space-y-2">
           {rows.map((row) => {
-            const [side, bucket] = String(row.pattern).split('/');
+            // a Bitcoin book's lesson carries its own third part, so its win
+            // rate never shows up against the dollar book's patterns
+            const [side, bucket, book] = String(row.pattern).split('/');
             const trades = row.count || 0;
             const winRate = Math.round((Number(row.avg_win) || 0) * 100);
             const avgPnl = Math.round((Number(row.avg_pnl_pct) || 0) * 100) / 100;
@@ -76,6 +78,7 @@ export default function LearnedPanel() {
                 <div>
                   <p className="text-sm font-medium capitalize">
                     {side} · {CAP_LABELS[bucket] || bucket}
+                    {book === 'BTC' ? ' · Bitcoin' : ''}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {trades} trade{trades === 1 ? '' : 's'} · {winRate}% win · avg {avgPnl > 0 ? '+' : ''}

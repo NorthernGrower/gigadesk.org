@@ -244,11 +244,18 @@ export function scanEngineFields(form, setNum, setV) {
         />
         <Toggle
           label="BTC markets"
-          hint="Also trades Kraken's Bitcoin markets: a coin this desk did not take in USD is read on its own BTC chart and opened on the pair (e.g. SOL/XBT), priced and managed in BTC, with the dollar rate kept on the trade so its P&L still reads in USD. The paper desk sizes them from its cash. The live desk needs Bitcoin in the account's spot wallet to size them and takes longs only — again never spending dollar cash."
+          hint="A second, fully separate book: Kraken's Bitcoin markets scanned by the same engine and traded by the same rules, with their own bankroll, cash, slots, cooldowns, risk brakes and lessons. Nothing crosses over — a dollar position never takes a Bitcoin slot, and a dollar drawdown never stops a Bitcoin entry. The live book needs Bitcoin in the account's spot wallet and takes longs only."
           checked={form.btc_markets === true}
           onChange={setV('btc_markets')}
         />
       </div>
+      {form.btc_markets === true ? (
+        <p className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+          The Bitcoin book keeps its own ledger: its own starting balance, its own cash, and up to its own
+          {` ${Number(form.max_open_positions) || 8} `}open positions. With both books on, this desk can therefore hold
+          twice the positions — the dollar book is not reduced to make room.
+        </p>
+      ) : null}
       {form.v3_algo === true ? (
         <p className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-300">
           V3 is on for this desk: entries come from its daily gates, and its positions exit on their own

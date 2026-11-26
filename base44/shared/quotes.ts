@@ -69,3 +69,15 @@ export function usdInQuote(usd: any, quote: any, btcUsd: any): number {
   const fx = fxUsd(quote, btcUsd);
   return fx > 0 ? amount / fx : 0;
 }
+
+
+/**
+ * The lesson key a trade is remembered under. A BTC-book trade's result is
+ * filed under its own key, so its win rate can never nudge a dollar score, and
+ * a dollar result can never nudge a Bitcoin one. USD keeps the two-part key it
+ * has always used, so every lesson already stored still resolves.
+ */
+export function patternFor(side: any, bucket: any, quote: any): string {
+  const base = `${String(side || "long")}/${String(bucket || "unknown")}`;
+  return quoteOf(quote) === "BTC" ? `${base}/BTC` : base;
+}

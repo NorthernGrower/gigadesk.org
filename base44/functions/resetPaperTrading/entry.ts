@@ -57,9 +57,11 @@ export default async function (req) {
       const lessons = await base44.asServiceRole.entities.Lesson.deleteMany({ created_by_id: user.id });
       counts.lessons = countOf(lessons);
       // balance back to the starting amount; the next cycle re-anchors it
-      // from the (now empty) trades, so the two agree exactly
+      // from the (now empty) trades, so the two agree exactly. The Bitcoin
+      // book has its own bankroll and is reset with it.
       await base44.asServiceRole.entities.BotConfig.update(config.id, {
         cash_balance: starting,
+        btc_cash_balance: Number(config.btc_starting_balance) || 10000,
       });
     }
 

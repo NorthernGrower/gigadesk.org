@@ -133,6 +133,8 @@ export function deskDigest(input: any) {
     symbol: (t && t.symbol) || "",
     side: t && t.side === "short" ? "short" : "long",
     source: sourceOf(t),
+    // a Bitcoin-book trade is a different market and a different bankroll
+    quote: t && t.quote_asset === "BTC" ? "BTC" : "USD",
     pnl_pct: round(Number(t && t.pnl_pct) || 0),
     pnl_usd: round(Number(t && t.pnl_usd) || 0),
     exit_reason: (t && t.exit_reason) || "",
@@ -143,6 +145,7 @@ export function deskDigest(input: any) {
     symbol: (t && t.symbol) || "",
     side: t && t.side === "short" ? "short" : "long",
     source: sourceOf(t),
+    quote: t && t.quote_asset === "BTC" ? "BTC" : "USD",
     size_usd: round(Number(t && t.size_usd) || 0),
     days_open: t && t.opened_at ? Math.max(0, Math.floor((nowMs - Date.parse(t.opened_at)) / DAY_MS)) : 0,
     stop_price: Number(t && t.stop_price) || 0,
