@@ -2,7 +2,7 @@
 //   deno run vps/risk_selftest.ts
 // Pure functions, synthetic inputs, non-zero exit on the first failed assertion.
 
-import { capPositionSize, drawdownPct, losingStreak, riskState } from "../base44/shared/risk.ts";
+import { capPositionSize, drawdownPct, losingStreak, riskState, safetyExit } from "../base44/shared/risk.ts";
 
 function assert(ok: boolean, label: string) {
   if (!ok) throw new Error(`FAILED: ${label}`);
@@ -66,5 +66,35 @@ assert(losingStreak([]) === 0, "no trades is no streak");
 // a zero balance cannot divide by zero
 const empty = riskState({ ...base, starting_balance: 0 });
 assert(Number.isFinite(empty.drawdown_pct), "a zero balance does not produce NaN");
+
+// the two exits a live position can never wait on: the scheduled desk guard
+// and the bot cycle decide them from this one function
+const stopHit = safetyExit({ side: "long", entry: 100, stop: 97.5, price: 97 });
+assert(stopHit != null && stopHit.reason === "stop", "a breached stop is a stop");
+assert(stopHit!.price === 97.5, "the stop fills at its own level, not the gap's print");
+assert(
+  safetyExit({ side: "long", entry: 100, stop: 97.5, price: 97.5 })!.reason === "stop",
+  "a bar that only touches the stop still closes it",
+);
+assert(
+  safetyExit({ side: "long", entry: 100, stop: 97.5, price: 96, maxLossPct: 3 })!.reason === "stop",
+  "a bar past both levels books as the stop, the conservative order",
+);
+assert(safetyExit({ side: "long", entry: 100, stop: 97.5, price: 98 }) === null, "a trade above its stop is left alone");
+assert(
+  safetyExit({ side: "long", entry: 100, stop: 80, price: 91, maxLossPct: 10 })!.reason === "max_loss",
+  "a wide stop still closes at the loss cap",
+);
+assert(
+  safetyExit({ side: "long", entry: 100, stop: 80, price: 91, maxLossPct: 20 }) === null,
+  "and the same trade is held while the cap is wider",
+);
+const shortUp = safetyExit({ side: "short", entry: 100, stop: 102.5, price: 103 });
+assert(shortUp != null && shortUp.reason === "stop" && shortUp.price === 102.5, "a short stops out as the price rises");
+assert(
+  safetyExit({ side: "short", entry: 100, stop: 102.5, price: 98 }) === null,
+  "and a short in profit is left alone",
+);
+assert(safetyExit({ side: "long", entry: 0, stop: 0, price: 50 }) === null, "an entry of zero decides nothing");
 
 console.log("risk selftest passed");

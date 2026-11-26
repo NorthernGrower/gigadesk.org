@@ -1,0 +1,44 @@
+{
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "desk_guard",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "guard": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "deskGuard"
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Check every live stop",
+            "description": "Closes a live position whose stop was breached, or whose per-trade loss cap was reached, while the app is closed"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "3-59/5 * * * *",
+      "one_time_date": null,
+      "timezone": "America/Edmonton",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "name": "Desk Guard",
+  "description": "Every five minutes, with the app closed: checks each live position's stop and per-trade loss cap and closes a breached one with a real market order. Until now a stop was only checked inside a bot cycle, which only runs while the app is open — a position could run straight past it. This closes only; targets, trailing, entries and the scan stay in the app's cycle."
+}

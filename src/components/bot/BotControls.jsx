@@ -35,7 +35,7 @@ export default function BotControls({ config, stats, desk = 'live', onModeChange
           <p className="mt-0.5 max-w-md text-[11px] leading-relaxed text-muted-foreground">
             {paper
               ? 'Stats below are the paper desk\u2019s own — simulated balance, positions and booked results. Live stats are untouched on the Live Desk.'
-              : 'Stats below are exchange-reported and the rules govern real orders only. The paper desk trades separately with its own rules.'}
+              : 'Stats below are exchange-reported and the rules govern real orders only. The paper desk trades separately with its own rules. A breached stop is closed within five minutes even while the app is closed.'}
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -136,3 +136,39 @@ export function losingStreak(closedTrades: any[]): number {
   }
   return streak;
 }
+
+export type SafetyExit = { reason: string; price: number; gain_pct: number } | null;
+
+/**
+ * The two exits a live position can never wait on: a breached stop and the
+ * per-trade loss cap. Pure, so the scheduled desk guard and the bot cycle can
+ * be checked against the same rule — two copies of this arithmetic would drift,
+ * and a drift here is a loss that should have been closed.
+ *
+ * The stop always wins and fills at its own level, even when the tape gapped
+ * past it: that is the fill the backtest assumes, and never the market price of
+ * a later cut. A bar that touched both levels fills the stop first.
+ */
+export function safetyExit(input: {
+  side: any;
+  entry: any;
+  stop: any;
+  price: any;
+  maxLossPct?: any;
+}): SafetyExit {
+  const long = String(input.side) !== "short";
+  const entry = Number(input.entry) || 0;
+  const stop = Number(input.stop) || 0;
+  const price = Number(input.price) || 0;
+  if (!(entry > 0) || !(price > 0)) return null;
+  const gainPct = ((long ? price - entry : entry - price) / entry) * 100;
+  const hitStop = stop > 0 && (long ? price <= stop : price >= stop);
+  const cap = Number(input.maxLossPct) || 0;
+  const hitMaxLoss = cap > 0 && gainPct <= -cap;
+  if (!hitStop && !hitMaxLoss) return null;
+  return {
+    reason: hitStop ? "stop" : "max_loss",
+    price: hitStop ? stop : price,
+    gain_pct: gainPct,
+  };
+}

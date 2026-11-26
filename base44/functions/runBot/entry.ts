@@ -312,6 +312,11 @@ export default async function (req) {
       // paper close reads null instead of throwing "sell is not defined".
       let sell = null;
       if (t.mode === "real" && t.exchange_order_id) {
+        // the scheduled desk guard can close this position between the cycle's
+        // read and this close: the live row is re-read so exactly one writer
+        // sends a sell — two would sell the position twice
+        const fresh = await base44.asServiceRole.entities.Trade.get(t.id).catch(() => null);
+        if (!fresh || fresh.status !== "open") return false;
         if (!managed.conn) {
           // never book a close the exchange has not confirmed: with live
           // trading paused or the connection unhealthy, the real position
@@ -461,6 +466,10 @@ export default async function (req) {
       if (!(entry > 0) || !(halfQty > 0)) return false;
       if (t.mode === "real" && t.exchange_order_id) {
         if (!managed.conn || isBackedOff(connRow)) return false;
+        // the same double-writer guard a close takes: a second scale-out would
+        // halve a position the guard already closed
+        const fresh = await base44.asServiceRole.entities.Trade.get(t.id).catch(() => null);
+        if (!fresh || fresh.status !== "open") return false;
         // half the order under the exchange minimum: stay whole and let the
         // full position close at its target instead of spamming refused orders
         // (the floor is the dollar minimum this position's size is in)

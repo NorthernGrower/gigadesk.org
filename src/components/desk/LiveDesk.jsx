@@ -131,7 +131,9 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
           </div>
           <p className="text-[11px] text-muted-foreground">
             Balances are exchange-reported, positions come from confirmed fills, and every position shows its
-            exchange and pair. Stops are software-monitored exits your rules execute each cycle.
+            exchange and pair. Stops are software-monitored exits your rules execute each cycle — and a breached
+            stop or the per-trade loss cap is closed within five minutes by the desk guard, even while the app is
+            closed.
           </p>
         </div>
         <div className="flex items-center gap-2">
