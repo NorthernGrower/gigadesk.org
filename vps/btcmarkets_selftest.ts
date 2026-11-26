@@ -8,6 +8,7 @@
 
 import { entryMinimum, liveEntrySize } from "../base44/shared/entryRules.ts";
 import { pickBtcBalance } from "../base44/shared/exchanges.ts";
+import { usdInQuote } from "../base44/shared/quotes.ts";
 
 function assert(ok: boolean, label: string) {
   if (!ok) throw new Error(`FAILED: ${label}`);
@@ -95,5 +96,14 @@ assert(
 );
 assert(pickBtcBalance([{ asset: "USD", total: 500 }]) === 0, "dollars are not Bitcoin");
 assert(pickBtcBalance([]) === 0, "an account holding no Bitcoin has none to spend");
+
+// ---- 5. a dollar rule expressed in the quote: an order floor, a liquidity floor
+assert(close(usdInQuote(10, "BTC", 60000), 10 / 60000), "a $10 order floor is a fraction of a bitcoin");
+assert(usdInQuote(10, "USD", 60000) === 10, "a dollar floor is itself on a dollar market");
+assert(
+  close(usdInQuote(5_000_000, "BTC", 60000), 5_000_000 / 60000),
+  "the $5m liquidity floor is the same rule in bitcoin",
+);
+assert(usdInQuote(10, "BTC", 0) === 0, "without a rate the floor is zero, never free");
 
 console.log("all BTC-market self-tests passed");

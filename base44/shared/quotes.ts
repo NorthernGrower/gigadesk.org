@@ -57,3 +57,15 @@ export function positionPnl(input: any) {
   const pnlQuote = (String(side) === "short" ? e - x : x - e) * q;
   return { pnl_quote: pnlQuote, pnl_usd: toUsd(pnlQuote, quote, fx) };
 }
+
+
+/**
+ * A dollar amount expressed in the quote at the given BTC rate — a $10 order
+ * floor, or a $5m liquidity floor, means the same rule on either book. 0 when
+ * the rate is unusable, so a floor never silently becomes "anything goes".
+ */
+export function usdInQuote(usd: any, quote: any, btcUsd: any): number {
+  const amount = Number(usd) || 0;
+  const fx = fxUsd(quote, btcUsd);
+  return fx > 0 ? amount / fx : 0;
+}

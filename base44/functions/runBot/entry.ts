@@ -10,7 +10,8 @@ import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntryS
 import { loadSmartBias } from "../../shared/smartmoney.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
-import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan } from "../../shared/v3algo.ts";
+import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan, V3 } from "../../shared/v3algo.ts";
+import { usdInQuote } from "../../shared/quotes.ts";
 import { capPositionSize, losingStreak, riskState } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
 import { toUsd } from "../../shared/quotes.ts";
@@ -903,6 +904,10 @@ export default async function (req) {
     let board = { rows: [], scannedCount: 0, universeCount: coins.length, summary: null, medianChange24h: 0, source: "cache" };
     let scanLog = null;
     let v3Summary = null;
+    // the Bitcoin market's own board and V3 read, declared at the cycle's own
+    // scope so the response can report them whether or not the scan ran
+    let btcBoard = null;
+    let btcV3Summary = null;
     // portfolio risk state for the paper desk: filled in when this cycle
     // actually looks for entries, surfaced in the response for the bot page
     let paperRisk = null;
@@ -969,6 +974,39 @@ export default async function (req) {
           confluenceV2: liveView.confluence_v2 !== false,
           feed: scanVenue,
         });
+      }
+
+      // ---- the BTC-quoted board: Kraken's Bitcoin markets, scanned by the same
+      // engine, so the desk's own tools read them — the same score gates, the
+      // same V3 daily gates, the same top-pick option, the same exits. A BTC
+      // pair's levels are in bitcoin, which is what its position, stop, target
+      // and fills work in; its dollar figures come through the rate recorded at
+      // the cycle. One board answers both desks, because the scan settings are
+      // the desk's own and the bars ignore the desk.
+      const btcBoardWanted = btcUsdNow > 0 && (btcMarketsOn(paperView) || btcMarketsOn(liveView));
+      if (btcBoardWanted) {
+        try {
+          // a live account can only trade the pairs its own venue lists
+          const btcListed = live.conn && btcMarketsOn(liveView)
+            ? await fetchListedSymbols(live.conn, ["BTC"])
+            : null;
+          btcBoard = await scanBoard({
+            timeframe: config.timeframe || "1h",
+            scope: config.market_cap_scope || "all",
+            count: 60,
+            dailyTargetPct: Number(config.daily_target_pct) || 2,
+            extraSymbols: watch.map((w) => w.symbol),
+            ...(btcListed ? { onlySymbols: btcListed } : {}),
+            confluenceV2: config.confluence_v2 !== false,
+            feed: btcFeed,
+            quote: "BTC",
+            btcUsd: btcUsdNow,
+          });
+        } catch (err) {
+          // a BTC board failure costs the BTC book, never the cycle
+          btcBoard = null;
+          console.log(`BTC market board failed: ${String((err && err.message) || err)}`);
+        }
       }
 
       // cooldowns are per desk: each desk leaves its own closed trades alone
@@ -1115,6 +1153,10 @@ export default async function (req) {
       });
       const tradable = applyEdges(board.rows);
       const tradableLive = liveBoard === board ? tradable : applyEdges(liveBoard.rows);
+      // the Bitcoin board's rows take the same score nudges, read from their
+      // own book: decisive candles and the market-cap tiers follow the pair's
+      // rank on the BTC market, not on the dollar one
+      const btcTradable = btcBoard ? applyEdges(btcBoard.rows) : [];
 
       // engine targets: 6R from entry with the combo stack on (the pooled
       // flat-tape winner), 3R under the margin engine, 2.5R under the old
@@ -1189,6 +1231,72 @@ export default async function (req) {
           v3Summary = { desks: v3DeskOn, evaluated: 0, entries: 0, error: v3Error };
         }
       }
+      // ---- V3 on the Bitcoin markets: the same daily gates, read on the
+      // pair's own chart. The one rule that depends on the currency is the
+      // liquidity floor, so it is expressed in bitcoin — $5m of BTC-quoted
+      // turnover is the same rule as $5m on the dollar book, not a different
+      // one. A failure here costs BTC V3 entries, never the cycle.
+      const btcV3DeskOn = {
+        live: v3DeskOn.live && btcMarketsOn(liveView),
+        paper: v3DeskOn.paper && btcMarketsOn(paperView),
+      };
+      const btcV3Evals = new Map();
+      btcV3Summary = null;
+      if (btcBoard && btcTradable.length && (btcV3DeskOn.live || btcV3DeskOn.paper)) {
+        try {
+          const btcWanted = btcTradable.map((r) => r.symbol).filter(Boolean).slice(0, 40);
+          const btcFloorBtc = usdInQuote(V3.min_adv_usd, "BTC", btcUsdNow);
+          const btcAbove = btcTrendUp(
+            await fetchCandles("BTC", "1d", 260, btcFeed).catch(() => null),
+          );
+          for (const group of chunk(btcWanted, 6)) {
+            const settled = await Promise.allSettled(
+              group.map((s) => fetchCandles(s, "1d", 260, btcFeed, "BTC")),
+            );
+            settled.forEach((res, i) => {
+              if (res.status !== "fulfilled" || !res.value) return;
+              btcV3Evals.set(group[i], evaluateV3({
+                candles: res.value,
+                btcAboveSma200: btcAbove,
+                minAdvUsd: btcFloorBtc,
+                profile: config.v3_profile || "loose",
+              }));
+            });
+          }
+          const btcGates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
+          let btcEntries = 0;
+          for (const ev of btcV3Evals.values()) {
+            if (ev.state === "entry") {
+              btcEntries += 1;
+              continue;
+            }
+            const g = ev.gates || {};
+            if (!g.history) btcGates.history += 1;
+            else if (!g.entry_signal) btcGates.entry_signal += 1;
+            else if (!g.liquidity) btcGates.liquidity += 1;
+            else if (!g.regime) btcGates.regime += 1;
+            else btcGates.confluence += 1;
+          }
+          btcV3Summary = {
+            desks: btcV3DeskOn,
+            candidates: btcWanted.length,
+            evaluated: btcV3Evals.size,
+            entries: btcEntries,
+            btc_above: btcAbove,
+            floor_btc: round(btcFloorBtc, 8),
+            gates: btcGates,
+          };
+        } catch (err) {
+          btcV3Evals.clear();
+          btcV3Summary = {
+            desks: btcV3DeskOn,
+            evaluated: 0,
+            entries: 0,
+            error: String((err && err.message) || err),
+          };
+          console.log(`BTC v3 evaluation failed: ${String((err && err.message) || err)}`);
+        }
+      }
       // a V3 row trades the algorithm's own plan: its stop, no target, and it
       // is a long whatever the intraday scan said
       // V3 only rewrites a row on a desk that runs V3. The evaluations are
@@ -1228,6 +1336,41 @@ export default async function (req) {
           return v3Plan({ entryPx: r.entry, atr: ev.atr }) != null;
         }
         return entryGate(r, desk) === null;
+      };
+      // the Bitcoin book runs the same two entry paths as the dollar book: the
+      // desk's scored gates, or its V3 plan when the desk runs V3. Cooldowns,
+      // risk brakes, blocked symbols and slots are the desk's own, so a coin
+      // already held — in either currency — is left alone.
+      const btcQualifies = (r, desk) => {
+        const blocked = desk === "live" ? blockedLive : blockedPaper;
+        if (blocked.has(r.symbol)) return false;
+        if (desk === "paper" && paperRisk && paperRisk.block_entries) return false;
+        if (btcV3DeskOn[desk]) {
+          const ev = btcV3Evals.get(r.symbol);
+          if (!ev || ev.state !== "entry") return false;
+          return v3Plan({ entryPx: r.entry, atr: ev.atr }) != null;
+        }
+        return entryGate(r, desk) === null;
+      };
+      const btcWithV3 = (row, desk) => {
+        if (!btcV3DeskOn[desk]) return row;
+        const ev = btcV3Evals.get(row.symbol);
+        if (!ev || ev.state !== "entry") return row;
+        const plan = v3Plan({ entryPx: row.entry, atr: ev.atr });
+        if (!plan) return row;
+        const formation = ev.formations.length ? ` with ${ev.formations.join(", ")}` : "";
+        return {
+          ...row,
+          side: "long",
+          stop: round(plan.stop, 8),
+          target: null,
+          required_move_pct: null,
+          v3: ev,
+          reasons: [
+            ...(row.reasons || []),
+            `V3 on the BTC market: ${ev.entry_signal.join(" + ")}${formation}, 2xATR stop, no target, ${ev.horizon_bars}-bar horizon`,
+          ],
+        };
       };
       // a live short is a margin order: only a venue whose margin API the desk
       // can place through may take one, so a spot-only account is never handed
@@ -1583,12 +1726,12 @@ export default async function (req) {
         }
       }
 
-      // ---- BTC-quoted leg (paper). The same desk rules read on Kraken's
-      // Bitcoin market: its own chart, its own currency, its own records. It
-      // takes only symbols the desk did not take this cycle, so a coin is never
-      // bought twice. It stays on paper until this book has been measured: the
-      // exchange path for a second quote is the one part not exercised yet.
-      // a BTC leg failure costs BTC entries, never the cycle
+      // ---- the Bitcoin book (paper). The desk's own rules, read on the BTC
+      // market's own board: the same score gates or V3 plan, the same top-pick
+      // option, the same risk sizing, cooldowns and slots. A BTC-quoted row is
+      // priced in bitcoin, so its entry, stop, target and quantity are all BTC
+      // while size_usd and pnl_usd are that move at the rate it opened at.
+      // A failure here costs BTC entries, never the cycle.
       try {
         const paperBtcOn =
           btcMarketsOn(paperView) && btcUsdNow > 0 && paperOpenCount < paperMaxOpen && !dryRun;
@@ -1597,25 +1740,23 @@ export default async function (req) {
           ...paperWanted.map((r) => r.symbol),
           ...stillOpen.map((t) => t.symbol),
         ]);
-        const btcCandidates = tradable.filter((r) => !already.has(r.symbol)).slice(0, 5);
-        const btcTf = config.timeframe || "1h";
-        for (const base of paperBtcOn ? btcCandidates : []) {
+        // the Bitcoin market's own board decides, exactly as the dollar board
+        // decides the dollar book: the desk's gates, its top-pick option, its
+        // V3 plan. `already` keeps one coin out of a second entry in another
+        // currency.
+        const btcGatedPaper = btcTradable
+          .filter((r) => !already.has(r.symbol) && btcQualifies(r, "paper"))
+          .map((r) => btcWithV3(r, "paper"));
+        const btcTopPaper = paperView.always_take_top === true && !btcV3DeskOn.paper
+          ? topPicksFor(btcTradable, "paper", topCount(paperView))
+          : [];
+        const btcCandidates = [...btcGatedPaper, ...btcTopPaper]
+          .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+          .filter((r) => !already.has(r.symbol))
+          .slice(0, 5);
+        for (const btcRow of paperBtcOn ? btcCandidates : []) {
           const btcTaken = opened.filter((o) => o.mode === "paper").length;
           if (btcTaken >= Math.max(0, paperMaxOpen - paperOpenCount)) break;
-          const bars = await fetchCandles(base.symbol, btcTf, 300, btcFeed, "BTC").catch(() => null);
-          if (!Array.isArray(bars) || bars.length < 60) continue;
-          const lastBtc = Number(bars[bars.length - 1].c) || 0;
-          if (!(lastBtc > 0)) continue;
-          // the BTC chart is the one that decides: entry, stop and target all
-          // land in BTC, which is what the position and its exits work in
-          const btcRow = analyzeCoin({ ...base, price: lastBtc }, bars, {
-            medianChange24h: board.medianChange24h || 0,
-            dailyTargetPct: Number(config.daily_target_pct) || 2,
-            barsPerDay:
-              { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[btcTf] || 24,
-            confluenceV2: config.confluence_v2 !== false,
-          });
-          if (!btcRow || !qualifies(btcRow, "paper")) continue;
           if (!(Number(btcRow.entry) > 0)) continue;
           const stopUsd = Math.abs(btcRow.entry - btcRow.stop) * btcUsdNow;
           if (!(stopUsd > 0)) continue;
@@ -1637,7 +1778,7 @@ export default async function (req) {
             btcQty = btcSizeUsd / (btcRow.entry * btcUsdNow);
           }
           if (!(btcSizeUsd >= 10) || !(btcQty > 0)) continue;
-          const btcTarget = paperUseEngine ? paperEngineTarget(btcRow) : btcRow.target;
+          const btcTarget = btcRow.v3 ? null : paperUseEngine ? paperEngineTarget(btcRow) : btcRow.target;
           const btcCreated = await base44.entities.Trade.create({
             symbol: btcRow.symbol,
             name: btcRow.name,
@@ -1649,12 +1790,20 @@ export default async function (req) {
             quantity: round(btcQty, 8),
             size_usd: round(btcSizeUsd),
             stop_price: round(btcRow.stop, 8),
-            target_price: round(btcTarget, 8),
-            target_r: paperEngine.targetR,
+            target_price: btcTarget == null ? null : round(btcTarget, 8),
+            target_r: btcRow.v3 ? 0 : paperEngine.targetR,
+            ...(btcRow.v3
+              ? {
+                  v3_algo: true,
+                  v3_stop: round(btcRow.stop, 8),
+                  v3_horizon_bars: btcRow.v3.horizon_bars,
+                  v3_atr: round(btcRow.v3.atr, 8),
+                }
+              : {}),
             peak_price: round(btcRow.entry, 8),
             score: btcRow.score,
             pattern: `${btcRow.side}/${btcRow.market_cap_bucket}`,
-            entry_source: "gated",
+            entry_source: btcRow.v3 ? "v3" : btcRow.top_pick ? "top_pick" : "gated",
             quote_asset: "BTC",
             fx_usd: round(btcUsdNow, 2),
             rationale: [
@@ -1713,7 +1862,7 @@ export default async function (req) {
         const btcSpendableNow = connRow ? pickBtcBalance(connRow.balances) : 0;
         if (
           btcMarketsOn(liveView) && liveReady && btcUsdNow > 0 &&
-          !v3DeskOn.live && btcSpendableNow > 0 && liveBudget >= 10 && !dryRun
+          btcSpendableNow > 0 && liveBudget >= 10 && !dryRun
         ) {
           const takenBtc = new Set([
             ...liveSymbols,
@@ -1723,9 +1872,21 @@ export default async function (req) {
             // coin is never entered twice by one cycle
             ...opened.map((o) => o.symbol),
           ]);
-          const liveRows = liveBoard === board ? tradable : tradableLive;
-          const btcSeeds = liveRows.filter((r) => !takenBtc.has(r.symbol)).slice(0, 5);
-          const btcTfLive = liveView.timeframe || "1h";
+          // the same selection the dollar book gets — the desk's gates, its
+          // top-pick option, its V3 plan — read on the Bitcoin board. Longs
+          // only: a Bitcoin short is a margin position on a market this book
+          // has not been measured on.
+          const btcGatedLive = btcTradable
+            .filter((r) => !takenBtc.has(r.symbol) && btcQualifies(r, "live"))
+            .map((r) => btcWithV3(r, "live"))
+            .filter((r) => r.side === "long");
+          const btcTopLive = liveView.always_take_top === true && !btcV3DeskOn.live
+            ? topPicksFor(btcTradable, "live", topCount(liveView)).filter((r) => r.side === "long")
+            : [];
+          const btcSeeds = [...btcGatedLive, ...btcTopLive]
+            .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+            .filter((r) => !takenBtc.has(r.symbol))
+            .slice(0, 5);
           // the desk's free slots stay one number: the dollar plans were
           // sized against them first, and a BTC entry takes one of what is
           // left rather than opening a position past the desk's limit
@@ -1736,21 +1897,7 @@ export default async function (req) {
             if (!(btcSlots > 0)) break;
             if (opened.filter((o) => o.mode === "real").length >= btcSlots) break;
             if (!(btcLeft > 0) || btcBudgetUsd < 10) break;
-            const bars = await fetchCandles(seed.symbol, btcTfLive, 300, btcFeed, "BTC").catch(() => null);
-            if (!Array.isArray(bars) || bars.length < 60) continue;
-            const lastBtcPx = Number(bars[bars.length - 1].c) || 0;
-            if (!(lastBtcPx > 0)) continue;
-            // the Bitcoin chart is the one that decides: entry, stop and
-            // target all land in BTC, which is what the position works in
-            const btcLiveRow = analyzeCoin({ ...seed, price: lastBtcPx }, bars, {
-              medianChange24h: (liveBoard || board).medianChange24h || 0,
-              dailyTargetPct: Number(lrVal("daily_target_pct", 2)) || 2,
-              barsPerDay:
-                { "15m": 96, "1h": 24, "4h": 6, "12h": 2, "1d": 1, "1w": 1 / 7, "1M": 1 / 30 }[btcTfLive] || 24,
-              confluenceV2: liveView.confluence_v2 !== false,
-            });
-            if (!btcLiveRow || btcLiveRow.side !== "long") continue;
-            if (!qualifies(btcLiveRow, "live")) continue;
+            const btcLiveRow = seed;
             if (!(Number(btcLiveRow.entry) > 0)) continue;
             // one position per coin: an open row in the same symbol means
             // the seed filter above already skipped it, and this catches a
@@ -1781,7 +1928,7 @@ export default async function (req) {
             if (!(sizeBtcUsd >= 10)) continue;
             const baseQty = round(sizeBtc / btcLiveRow.entry, 8);
             if (!(baseQty > 0)) continue;
-            const btcTargetLive = liveUseEngine ? liveEngineTarget(btcLiveRow) : btcLiveRow.target;
+            const btcTargetLive = btcLiveRow.v3 ? null : liveUseEngine ? liveEngineTarget(btcLiveRow) : btcLiveRow.target;
             const btcRationale = [
               ...(btcLiveRow.reasons || []),
               `BTC-quoted market ${btcLiveRow.symbol}/XBT on ${live.conn.label} — ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}`,
@@ -1801,12 +1948,20 @@ export default async function (req) {
                 quantity: baseQty,
                 size_usd: sizeBtcUsd,
                 stop_price: round(btcLiveRow.stop, 8),
-                target_price: round(btcTargetLive, 8),
-                target_r: liveEngine.targetR,
+                target_price: btcTargetLive == null ? null : round(btcTargetLive, 8),
+                target_r: btcLiveRow.v3 ? 0 : liveEngine.targetR,
+                ...(btcLiveRow.v3
+                  ? {
+                      v3_algo: true,
+                      v3_stop: round(btcLiveRow.stop, 8),
+                      v3_horizon_bars: btcLiveRow.v3.horizon_bars,
+                      v3_atr: round(btcLiveRow.v3.atr, 8),
+                    }
+                  : {}),
                 peak_price: round(btcLiveRow.entry, 8),
                 score: btcLiveRow.score,
                 pattern: `${btcLiveRow.side}/${btcLiveRow.market_cap_bucket}`,
-                entry_source: "gated",
+                entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
                 quote_asset: "BTC",
                 fx_usd: round(btcUsdNow, 2),
                 rationale: btcRationale,
@@ -1862,12 +2017,20 @@ export default async function (req) {
               quantity: filledQty,
               size_usd: sizeBtcUsd,
               stop_price: round(btcLiveRow.stop, 8),
-              target_price: round(btcTargetLive, 8),
-              target_r: liveEngine.targetR,
+              target_price: btcTargetLive == null ? null : round(btcTargetLive, 8),
+              target_r: btcLiveRow.v3 ? 0 : liveEngine.targetR,
+              ...(btcLiveRow.v3
+                ? {
+                    v3_algo: true,
+                    v3_stop: round(btcLiveRow.stop, 8),
+                    v3_horizon_bars: btcLiveRow.v3.horizon_bars,
+                    v3_atr: round(btcLiveRow.v3.atr, 8),
+                  }
+                : {}),
               peak_price: fillPx,
               score: btcLiveRow.score,
               pattern: `${btcLiveRow.side}/${btcLiveRow.market_cap_bucket}`,
-              entry_source: "gated",
+              entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
               quote_asset: "BTC",
               fx_usd: round(btcUsdNow, 2),
               exchange: live.conn.exchange,
@@ -2249,6 +2412,9 @@ export default async function (req) {
         on: btcMarketsOn(paperView),
         live_on: btcMarketsOn(liveView),
         btc_usd: round(btcUsdNow, 2),
+        scanned: btcBoard ? btcBoard.scannedCount : 0,
+        universe: btcBoard ? btcBoard.universeCount : 0,
+        v3: btcV3Summary,
       },
       risk: paperRisk,
       diagnostics: { risk_error: riskError, v3_error: v3Error },

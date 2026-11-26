@@ -372,6 +372,64 @@ export async function fetchVenueMarkets(feed) {
   return out;
 }
 
+/**
+ * Kraken's Bitcoin-quoted markets as the desk's own coin rows, priced in BTC.
+ *
+ * This is a market in its own right, not a view of the dollar one: a SOL/XBT
+ * chart moves differently from SOL/USD, and the desk trades it, sizes it and
+ * exits it in bitcoin. `btcUsd` turns each pair's turnover into dollars, so the
+ * liquidity floor and the volume ranking keep meaning what they mean on the
+ * dollar book. Without a rate the volume stays 0, which excludes the row
+ * instead of flattering it.
+ */
+export async function fetchBtcMarkets(db = null, feed = null, btcUsd = 0) {
+  const ex = String((feed && feed.exchange) || "");
+  const base = VENUE_BASE[ex];
+  const fx = Number(btcUsd) || 0;
+  // only Kraken is read for this book: its pair names and its ticker are the
+  // ones the order path uses, and a market the desk cannot trade is noise
+  if (ex !== "kraken" || !base || !(fx > 0)) return [];
+  const key = `btcmarkets:${ex}:${Math.round(fx / 100)}`;
+  const cached = cacheGet(key);
+  if (cached) return cached;
+
+  const idx = await krakenPairIndex();
+  const pairs = [...idx.byCanonical.values()].filter(
+    (p) => p.quote === "BTC" && p.base !== "BTC" && !isStable(p.base),
+  );
+  if (!pairs.length) return [];
+
+  const out = [];
+  for (const group of chunk(pairs, 80)) {
+    try {
+      const res = await fetchJson(
+        `${base}/0/public/Ticker?pair=${group.map((p) => p.altname).join(",")}`,
+        12000,
+      );
+      for (const [tickKey, t] of Object.entries((res && res.result) || {})) {
+        const p =
+          idx.byCanonical.get(String(tickKey).toUpperCase()) ||
+          idx.byAlt.get(String(tickKey).toUpperCase());
+        if (!p || p.quote !== "BTC" || !t) continue;
+        const last = Number(t.c && t.c[0]) || 0;
+        const open = Number(t.o && t.o[1]) || 0;
+        const vwap = Number(t.p && t.p[1]) || last;
+        if (!(last > 0)) continue;
+        out.push({
+          symbol: p.base,
+          price: last,
+          volume24h: (Number(t.v && t.v[1]) || 0) * vwap * fx,
+          change24h: open > 0 ? (last / open - 1) * 100 : 0,
+        });
+      }
+    } catch (err) {
+      console.log(`kraken BTC ticker batch failed: ${err && err.message}`);
+    }
+  }
+  const coins = await finalizeCoins(db, out);
+  return cacheSet(key, coins, 60000);
+}
+
 /** The venue's OHLCV for one coin, oldest bar first. Null when it has no pair.
  *  `quote` asks for a specific market: a BTC-quoted read must never be answered
  *  with a USD chart, so it returns null rather than falling back across quotes. */

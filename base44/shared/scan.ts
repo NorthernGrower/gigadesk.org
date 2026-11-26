@@ -1,4 +1,4 @@
-import { fetchMarkets, fetchCandles, chunk, asArray, round } from "./market.ts";
+import { fetchMarkets, fetchBtcMarkets, fetchCandles, chunk, asArray, round } from "./market.ts";
 import { analyzeCoin } from "./strategy.ts";
 
 const SCOPES = new Set(["all", "large", "mid", "small"]);
@@ -47,7 +47,19 @@ export async function resolveDeskVenue(base44, config) {
 }
 
 /** Whole-market snapshot plus the market-wide median move used for relative strength. */
-export async function loadUniverse(db = null, feed = null) {
+export async function loadUniverse(db = null, feed = null, quote = "USD", btcUsd = 0) {
+  // a Bitcoin market is its own universe: Kraken's XBT pairs, priced in BTC.
+  // Its turnover is put in dollars at the rate, so liquidity keeps the same
+  // meaning on both books and the two never share a row.
+  if (String(quote || "USD").toUpperCase() === "BTC") {
+    const btcCoins = await fetchBtcMarkets(db, feed, btcUsd);
+    const btcMoves = btcCoins.map((c) => c.change24h).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+    return {
+      coins: btcCoins,
+      source: { exchange: (feed && feed.exchange) || "kraken", quote: "BTC" },
+      medianChange24h: btcMoves.length ? btcMoves[Math.floor(btcMoves.length / 2)] : 0,
+    };
+  }
   const { coins, source } = await fetchMarkets(db, feed);
   const moves = coins
     .map((c) => c.change24h)
@@ -104,9 +116,11 @@ export async function scanBoard({
   confluenceV2 = true,
   feed = null,
   db = null,
+  quote = "USD",
+  btcUsd = 0,
 } = {}) {
   const safeScope = SCOPES.has(scope) ? scope : "all";
-  const { coins, source, medianChange24h } = await loadUniverse(db, feed);
+  const { coins, source, medianChange24h } = await loadUniverse(db, feed, quote, btcUsd);
   // coins with no market-cap data (0) are out of consideration whenever the
   // feed carries caps at all
   const hasCaps = coins.some((c) => (c.market_cap || 0) > 0);
@@ -123,7 +137,7 @@ export async function scanBoard({
   // wider batch shortens the scan's serial rounds from ~10 to ~6
   for (const group of chunk(candidates, 10)) {
     const settled = await Promise.allSettled(
-      group.map((c) => fetchCandles(c.symbol, timeframe, 300, feed)),
+      group.map((c) => fetchCandles(c.symbol, timeframe, 300, feed, quote)),
     );
     settled.forEach((res, i) => {
       if (res.status !== "fulfilled" || !res.value || !res.value.length) return;
