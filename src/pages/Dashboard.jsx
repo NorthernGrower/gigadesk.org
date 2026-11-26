@@ -8,6 +8,8 @@ import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import SmartMoneyPanel from '@/components/dashboard/SmartMoneyPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
 import LiveDesk from '@/components/desk/LiveDesk';
+import DayMovers from '@/components/desk/DayMovers';
+import RecentCloses from '@/components/desk/RecentCloses';
 import StatCard from '@/components/common/StatCard';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { Button } from '@/components/ui/button';
@@ -357,6 +359,11 @@ export default function Dashboard() {
               />
             </div>
           </div>
+
+          {/* the same two blocks the live desk closes with, so the desks show
+              the same items end to end */}
+          <DayMovers best={bot?.day_best} worst={bot?.day_worst} />
+          <RecentCloses mode="paper" />
         </>
       )}
 

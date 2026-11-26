@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
-  Activity,
   CheckCircle2,
-  Landmark,
+  Layers,
   PauseCircle,
   PlayCircle,
   Wallet,
@@ -13,9 +12,11 @@ import StatCard from '@/components/common/StatCard';
 import MarketPulse from '@/components/dashboard/MarketPulse';
 import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import EquityPanel from '@/components/dashboard/EquityPanel';
+import SmartMoneyPanel from '@/components/dashboard/SmartMoneyPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
-import LiveSignals from '@/components/desk/LiveSignals';
+import TopPicks from '@/components/desk/TopPicks';
 import DayMovers from '@/components/desk/DayMovers';
+import RecentCloses from '@/components/desk/RecentCloses';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -32,7 +33,7 @@ import {
 import { base44 } from '@/api/base44Client';
 import useSavedBalance from '@/hooks/useSavedBalance';
 import { emitBotTick, runBot } from '@/lib/market';
-import { fmtUsd } from '@/lib/format';
+import { fmtPct, fmtUsd } from '@/lib/format';
 import { formatDistanceToNowStrict } from 'date-fns';
 
 const ago = (iso) => {
@@ -44,31 +45,17 @@ const ago = (iso) => {
   }
 };
 
+// The live desk, laid out exactly as the paper desk is: the same four figures,
+// the same progress bar, and the same top pick, equity chart, positions, smart
+// money and market pulse in the same places. The only difference is the money —
+// every figure here is exchange-reported or a confirmed real fill. What the live
+// desk had beyond that (the connection, the pause control, the exchange's own
+// counts and the day's movers) sits below the shared layout, so nothing is lost.
 export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, closingId, closingAll, onBackToPaper }) {
+  const navigate = useNavigate();
   const { toast } = useToast();
   const [toggling, setToggling] = useState(false);
-  const [recent, setRecent] = useState([]);
-  // the top setup stays on the desk at all times: hold the last one the scan
-  // ranked first, and on a fresh load fall back to the newest stored signal
-  const [heldSetup, setHeldSetup] = useState(null);
-  const [fallbackSetup, setFallbackSetup] = useState(null);
-  useEffect(() => {
-    const fresh = bot?.top?.[0];
-    if (fresh) setHeldSetup(fresh);
-  }, [bot?.top]);
-  useEffect(() => {
-    if (bot?.top?.length || heldSetup) return undefined;
-    let alive = true;
-    base44.entities.Signal.filter({ status: 'new' }, { sort: '-detected_at', limit: 1 })
-      .then((page) => {
-        if (alive && page.items?.[0]) setFallbackSetup(page.items[0]);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [bot?.top, heldSetup]);
-  const topSetup = bot?.top?.[0] || heldSetup || fallbackSetup || null;
+
   const live = bot?.live || {};
   const connection = live.connection;
   const staleScan = bot?.updated_at ? Date.now() - Date.parse(bot.updated_at) > 10 * 60000 : true;
@@ -86,18 +73,9 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
           : null;
   const balanceAsOf =
     live.balance_as_of || savedBalance?.asOf || connection?.balance_updated_at || connection?.last_checked_at || null;
-
-  useEffect(() => {
-    let alive = true;
-    base44.entities.Trade.filter({ mode: 'real', status: 'closed' }, { sort: '-closed_at', limit: 6 })
-      .then((page) => {
-        if (alive) setRecent(page.items || []);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const liveEquity = balanceUsd != null ? (balanceUsd || 0) + (live.unrealized || 0) : null;
+  const liveDayPct = Number(bot?.config?.live_rules?.daily_target_pct ?? bot?.config?.daily_target_pct) || 2;
+  const goalPct = live.daily_goal ? ((Number(live.realized_today) || 0) / live.daily_goal) * 100 : 0;
 
   const setPaused = async (paused) => {
     setToggling(true);
@@ -141,6 +119,8 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
 
   return (
     <div className="space-y-4">
+      {/* live only: the connection behind every figure on this page, and the
+          double-confirmed control over whether new real orders may fire */}
       <div className="surface flex flex-wrap items-center justify-between gap-3 border-amber-400/20 p-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -213,74 +193,32 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {/* the four figures the paper desk leads with, on live money */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Equity"
-          value={balanceUsd != null ? fmtUsd((balanceUsd || 0) + (live.unrealized || 0)) : '—'}
-          sub="exchange balance plus unrealised P&L"
+          value={liveEquity == null ? '—' : fmtUsd(liveEquity)}
+          sub="exchange balance plus unrealised"
           icon={Wallet}
-        />
-        <StatCard
-          label="Exchange balance"
-          value={balanceUsd != null ? fmtUsd(balanceUsd) : '—'}
-          sub={
-            balanceUsd != null
-              ? `exchange-reported · saved ${ago(balanceAsOf)}`
-              : 'unavailable — verify the connection'
-          }
-          icon={Landmark}
-        />
-        <StatCard
-          label="Open positions"
-          value={live.open_count ?? 0}
-          sub={`${fmtUsd(live.exposure || 0)} deployed${live.cap_usd ? ` of ${fmtUsd(live.cap_usd)} cap` : ''}`}
-          icon={Activity}
-        />
-        <StatCard
-          label="Unrealised"
-          value={fmtUsd(live.unrealized || 0)}
-          sub="marked to market every cycle"
-          tone={(live.unrealized || 0) >= 0 ? 'up' : 'down'}
         />
         <StatCard
           label="Today realised"
           value={fmtUsd(live.realized_today || 0)}
-          sub="closed real trades today"
+          sub={`${fmtPct(goalPct)} of your ${fmtUsd(live.daily_goal || 0)} target`}
           tone={(live.realized_today || 0) >= 0 ? 'up' : 'down'}
         />
-      </div>
-
-      <EquityPanel
-        desk="live"
-        startingBalance={Number(live.balance_usd) || 0}
-        dailyTargetPct={
-          Number(bot?.config?.live_rules?.daily_target_pct ?? bot?.config?.daily_target_pct) || 2
-        }
-        liveEquity={live.balance_usd != null ? (live.balance_usd || 0) + (live.unrealized || 0) : null}
-      />
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <div className="surface p-3">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Eligible markets</p>
-          <p className="num mt-1 text-lg font-semibold">
-            {live.eligible_markets != null ? live.eligible_markets.toLocaleString() : '—'}
-          </p>
-          <p className="text-[11px] text-muted-foreground">
-            active pairs verified on {connection?.label || 'the exchange'}
-          </p>
-        </div>
-        <div className="surface p-3">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Scanned last cycle</p>
-          <p className="num mt-1 text-lg font-semibold">{bot?.scanned ?? '—'}</p>
-          <p className="text-[11px] text-muted-foreground">analysed with the current engine</p>
-        </div>
-        <div className="surface p-3">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Last scan</p>
-          <p className={`num mt-1 text-lg font-semibold ${staleScan ? 'text-amber-300' : ''}`}>{ago(bot?.updated_at)}</p>
-          <p className="text-[11px] text-muted-foreground">
-            {staleScan ? 'stale — waiting on the next full cycle' : 'fresh'}
-          </p>
-        </div>
+        <StatCard
+          label="Open positions"
+          value={live.open_count ?? 0}
+          sub={`${fmtUsd(live.exposure || 0)} deployed`}
+          icon={Layers}
+        />
+        <StatCard
+          label="Unrealised"
+          value={fmtUsd(live.unrealized || 0)}
+          sub={`${bot?.scanned || 0} coins scanned`}
+          tone={(live.unrealized || 0) >= 0 ? 'up' : 'down'}
+        />
       </div>
 
       <TodayProgress
@@ -292,51 +230,71 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         startingBalance={balanceUsd || 0}
       />
 
-      <MarketPulse
-        summary={pulse?.summary ?? bot?.summary}
-        medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
-        universe={pulse ? pulse.universe : bot?.universe}
-        updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
-      />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-4">
+          <TopPicks
+            rows={bot?.top || []}
+            positions={live.positions || []}
+            targetPct={liveDayPct}
+            onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
+            onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
+          />
 
-      <LiveSignals
-        rows={topSetup ? [topSetup] : []}
-        exchange={connection?.label}
-        held={!bot?.top?.length}
-      />
+          <EquityPanel desk="live" startingBalance={balanceUsd || 0} dailyTargetPct={liveDayPct} liveEquity={liveEquity} />
 
-      <PositionsPanel
-        positions={live.positions || []}
-        onClose={onClosePosition}
-        onCloseAll={onCloseAll}
-        closingId={closingId}
-        closingAll={closingAll}
-        hint="Your real positions on the exchange — each shows its exchange and pair. Closing sends a real sell order."
-      />
+          <PositionsPanel
+            positions={live.positions || []}
+            onClose={onClosePosition}
+            onCloseAll={onCloseAll}
+            closingId={closingId}
+            closingAll={closingAll}
+            hint="Your real positions on the exchange — each shows its exchange and pair. Closing sends a real sell order."
+          />
+
+          <SmartMoneyPanel />
+        </div>
+
+        <div className="min-w-0 space-y-4">
+          <MarketPulse
+            summary={pulse?.summary ?? bot?.summary}
+            medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
+            universe={pulse ? pulse.universe : bot?.universe}
+            updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
+          />
+        </div>
+      </div>
+
+      {/* live only, below the desk's shared layout: the exchange's own figures,
+          the day's best and worst, and the last real closes */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <div className="surface p-3">
+          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Exchange balance</p>
+          <p className="num mt-1 text-lg font-semibold">{balanceUsd != null ? fmtUsd(balanceUsd) : '—'}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {balanceUsd != null ? `exchange-reported · saved ${ago(balanceAsOf)}` : 'unavailable — verify the connection'}
+          </p>
+        </div>
+        <div className="surface p-3">
+          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Eligible markets</p>
+          <p className="num mt-1 text-lg font-semibold">
+            {live.eligible_markets != null ? live.eligible_markets.toLocaleString() : '—'}
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            active pairs verified on {connection?.label || 'the exchange'}
+          </p>
+        </div>
+        <div className="surface p-3">
+          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Last scan</p>
+          <p className={`num mt-1 text-lg font-semibold ${staleScan ? 'text-amber-300' : ''}`}>{ago(bot?.updated_at)}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {staleScan ? 'stale — waiting on the next full cycle' : 'fresh'}
+          </p>
+        </div>
+      </div>
 
       <DayMovers best={live.day_best} worst={live.day_worst} />
 
-      {recent.length ? (
-        <div className="surface p-4">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Recent closed live trades</p>
-          <div className="mt-2 space-y-1.5">
-            {recent.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-3 text-[12px]">
-                <span className="flex items-center gap-2">
-                  <span className="font-semibold">{t.symbol}</span>
-                  <span className="num text-[11px] text-muted-foreground">
-                    {t.exchange ? `${t.exchange} · ` : ''}
-                    {t.exchange_order_id ? `order ${String(t.exchange_order_id).slice(0, 10)}…` : 'logged by hand'}
-                  </span>
-                </span>
-                <span className={`num ${Number(t.pnl_usd) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {fmtUsd(t.pnl_usd)} ({t.pnl_pct ?? 0}%)
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <RecentCloses mode="real" />
     </div>
   );
 }

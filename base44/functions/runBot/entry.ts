@@ -2366,6 +2366,19 @@ export default async function (req) {
         closed_at: t.closed_at || null,
       }))
       .sort((a, b) => b.pnl_usd - a.pnl_usd);
+    // the paper desk's own day movers, in the same shape: both desks show the
+    // same block, each from its own book
+    const paperDayTrades = todays
+      .filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "USD")
+      .map((t) => ({
+        symbol: t.symbol,
+        side: t.side === "short" ? "short" : "long",
+        pnl_usd: round(Number(t.pnl_usd) || 0),
+        pnl_pct: round(Number(t.pnl_pct) || 0),
+        exit_reason: t.exit_reason || null,
+        closed_at: t.closed_at || null,
+      }))
+      .sort((a, b) => b.pnl_usd - a.pnl_usd);
 
     const exposure = positions.reduce((a, p) => a + p.size_usd, 0);
     const unrealized = positions.reduce((a, p) => a + p.pnl_usd, 0);
@@ -2539,6 +2552,8 @@ export default async function (req) {
       unrealized: round(unrealized),
       equity: round(equity),
       realized_today: round(realizedToday),
+      day_best: paperDayTrades[0] || null,
+      day_worst: paperDayTrades.length > 1 ? paperDayTrades[paperDayTrades.length - 1] : null,
       daily_goal: round(goal),
       goal_hit: goalHit,
       live: {
