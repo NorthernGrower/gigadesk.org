@@ -2330,6 +2330,15 @@ export default async function (req) {
     const liveBtcExposure = livePositions
       .filter((p) => quoteOf(p.quote_asset) === "BTC")
       .reduce((a, p) => a + p.size_usd, 0);
+    // the Bitcoin book's own live figures: its positions' P&L and its day, so
+    // a desk showing that book shows nothing of the dollar one
+    const liveBtcUnrealized = livePositions
+      .filter((p) => quoteOf(p.quote_asset) === "BTC")
+      .reduce((a, p) => a + (Number(p.pnl_usd) || 0), 0);
+    const liveBtcTodays = todays.filter(
+      (t) => (t.mode || "paper") === "real" && quoteOf(t.quote_asset) === "BTC",
+    );
+    const liveBtcRealizedToday = liveBtcTodays.reduce((a, t) => a + (Number(t.pnl_usd) || 0), 0);
     const liveUnrealized = livePositions.reduce((a, p) => a + p.pnl_usd, 0);
     // already fetched with the paper day's closes above: same status and same
     // time window, only the mode differs — no second read needed
@@ -2574,6 +2583,37 @@ export default async function (req) {
       );
     }
 
+    // the Bitcoin board's own top rows, in the shape the dollar board's are:
+    // a desk showing the Bitcoin book shows these and never a dollar pick
+    const btcTopRows = ((btcBoard && btcBoard.rows) || []).slice(0, 12).map((r) => {
+      const dist = (paperEngine.marginOn ? 3 : 6) * Math.abs(r.entry - r.stop);
+      const target =
+        (paperEngine.marginOn || paperEngine.comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
+          ? round(r.side === "long" ? r.entry + dist : r.entry - dist, 8)
+          : r.target;
+      return {
+        ...r,
+        target,
+        pair: `${r.symbol}/XBT`,
+        exchange: managed.conn ? managed.conn.exchange : null,
+      };
+    });
+    // the same day movers, from the Bitcoin book's own trades
+    const btcDayRow = (t) => ({
+      symbol: t.symbol,
+      side: t.side === "short" ? "short" : "long",
+      pnl_usd: round(Number(t.pnl_usd) || 0),
+      pnl_pct: round(Number(t.pnl_pct) || 0),
+      exit_reason: t.exit_reason || null,
+      closed_at: t.closed_at || null,
+    });
+    const btcPaperDay = todays
+      .filter((t) => (t.mode || "paper") === "paper" && quoteOf(t.quote_asset) === "BTC")
+      .sort((a, b) => (Number(b.pnl_usd) || 0) - (Number(a.pnl_usd) || 0));
+    const liveBtcDay = liveBtcTodays
+      .slice()
+      .sort((a, b) => (Number(b.pnl_usd) || 0) - (Number(a.pnl_usd) || 0));
+
     return Response.json({
       mode: config.mode,
       closed,
@@ -2605,6 +2645,16 @@ export default async function (req) {
         scanned: btcBoard ? btcBoard.scannedCount : 0,
         universe: btcBoard ? btcBoard.universeCount : 0,
         v3: btcV3Summary,
+        // the Bitcoin market's own board: its picks, its mood and its counts —
+        // a desk showing this book shows these and nothing off the dollar board
+        board: {
+          scanned: btcBoard ? btcBoard.scannedCount : 0,
+          universe: btcBoard ? btcBoard.universeCount : 0,
+          summary: btcBoard ? btcBoard.summary : null,
+          median_change_24h: btcBoard ? btcBoard.medianChange24h : 0,
+          source: btcBoard ? btcBoard.source : "cache",
+          top: btcTopRows,
+        },
         // the Bitcoin book's own ledger: its own bankroll, its own cash, its own
         // open positions and its own brakes. Nothing here is shared with the
         // dollar figures above.
@@ -2614,9 +2664,21 @@ export default async function (req) {
           equity: round(btcEquity),
           realized_today: round(btcRealizedToday),
           realized_total: round(btcRealizedTotal),
+          unrealized: round(btcUnrealized),
           open_paper: paperBtcOpen,
           open_live: liveBtcOpen,
           live_exposure: round(liveBtcExposure),
+          live_unrealized: round(liveBtcUnrealized),
+          live_realized_today: round(liveBtcRealizedToday),
+          // the account's own Bitcoin: the funding this book spends, in bitcoin
+          // and what it is worth at the live rate
+          balance_btc: round(btcHeld, 8),
+          balance_usd: round(btcHeld * btcUsdNow, 2),
+          equity_usd: round(btcHeld * btcUsdNow + liveBtcUnrealized, 2),
+          day_best: btcPaperDay.length ? btcDayRow(btcPaperDay[0]) : null,
+          day_worst: btcPaperDay.length > 1 ? btcDayRow(btcPaperDay[btcPaperDay.length - 1]) : null,
+          live_day_best: liveBtcDay.length ? btcDayRow(liveBtcDay[0]) : null,
+          live_day_worst: liveBtcDay.length > 1 ? btcDayRow(liveBtcDay[liveBtcDay.length - 1]) : null,
           risk: btcRisk
             ? { block_entries: btcRisk.block_entries, size_multiplier: btcRisk.size_multiplier, reason: btcRisk.reason }
             : null,

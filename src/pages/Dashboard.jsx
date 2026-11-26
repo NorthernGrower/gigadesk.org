@@ -8,6 +8,7 @@ import PositionsPanel from '@/components/dashboard/PositionsPanel';
 import SmartMoneyPanel from '@/components/dashboard/SmartMoneyPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
 import LiveDesk from '@/components/desk/LiveDesk';
+import BookSwitch from '@/components/desk/BookSwitch';
 import DayMovers from '@/components/desk/DayMovers';
 import RecentCloses from '@/components/desk/RecentCloses';
 import StatCard from '@/components/common/StatCard';
@@ -40,6 +41,9 @@ export default function Dashboard() {
   const [closingAll, setClosingAll] = useState(false);
   const botRef = useRef(null);
   const [deskMode, setDeskMode] = useState('paper');
+  // which book the page shows: the dollar market or the Bitcoin market. The two
+  // are separate books, so this is not a filter — every figure follows it.
+  const [bookMode, setBookMode] = useState('USD');
   const [confirmLive, setConfirmLive] = useState(false);
   // the market pulse refreshes on its own schedule (every 15 minutes), so its
   // stats never depend on when the bot's own cycle last scanned
@@ -79,6 +83,10 @@ export default function Dashboard() {
         );
         const desk = data?.config?.active_desk;
         if (desk === 'live' || desk === 'paper') setDeskMode(desk);
+        // the saved book follows a full cycle only: a fast pass can return the
+        // config a click just wrote, and flipping the page back under the
+        // reader would be worse than waiting one cycle for it
+        if (full) setBookMode(data?.config?.active_book === 'BTC' ? 'BTC' : 'USD');
       };
 
       runBot(true)
@@ -235,6 +243,17 @@ export default function Dashboard() {
     persistDesk(desk);
   };
 
+  // the book is the page's own view, saved with the desk so a reload and a
+  // second device come back to the same one. It changes every figure on the
+  // page: the two books share a journal, never a set of numbers.
+  const persistBook = (book) => {
+    const next = book === 'BTC' ? 'BTC' : 'USD';
+    setBookMode(next);
+    if (bot?.config?.id) {
+      base44.entities.BotConfig.update(bot.config.id, { active_book: next }).catch(() => {});
+    }
+  };
+
   botRef.current = bot;
 
   if (loading)
@@ -242,9 +261,58 @@ export default function Dashboard() {
       <LoadingBlock label="Setting up your desk — loading positions, setups and the market pulse" />
     );
 
-  const top = bot?.top?.[0];
   const config = bot?.config;
-  const goalPct = bot?.daily_goal ? (bot.realized_today / bot.daily_goal) * 100 : 0;
+  const btcMode = bookMode === 'BTC';
+  const btc = bot?.btc_markets || {};
+  const btcBook = btc.book || {};
+  const btcBoard = btc.board || {};
+  // one book on the page at a time: the dollar book or the Bitcoin book, never
+  // a mixture. A position belongs to the book its own quote names.
+  const bookPositions = (bot?.positions || []).filter((p) =>
+    btcMode ? p.quote_asset === 'BTC' : (p.quote_asset || 'USD') !== 'BTC',
+  );
+  const dailyTargetPct = Number(config?.daily_target_pct) || 2;
+  const btcDailyGoal = ((Number(btcBook.starting_balance) || 0) * dailyTargetPct) / 100;
+  const view = btcMode
+    ? {
+        equity: btcBook.equity || 0,
+        cash: btcBook.cash || 0,
+        realizedToday: btcBook.realized_today || 0,
+        unrealized: btcBook.unrealized || 0,
+        openCount: btcBook.open_paper || 0,
+        exposure: bookPositions.reduce((a, p) => a + (Number(p.size_usd) || 0), 0),
+        startingBalance: btcBook.starting_balance || 0,
+        dailyGoal: btcDailyGoal,
+        goalHit: btcDailyGoal > 0 && (btcBook.realized_today || 0) >= btcDailyGoal,
+        scanned: btcBoard.scanned || 0,
+        summary: btcBoard.summary || null,
+        medianChange24h: btcBoard.median_change_24h || 0,
+        universe: btcBoard.universe || 0,
+        top: btcBoard.top || [],
+        dayBest: btcBook.day_best,
+        dayWorst: btcBook.day_worst,
+        realizedTotal: btcBook.realized_total || 0,
+      }
+    : {
+        equity: bot?.equity || 0,
+        cash: bot?.cash || 0,
+        realizedToday: bot?.realized_today || 0,
+        unrealized: bot?.unrealized || 0,
+        openCount: bot?.open_count || 0,
+        exposure: bot?.exposure || 0,
+        startingBalance: Number(config?.starting_balance) || 10000,
+        dailyGoal: bot?.daily_goal || 0,
+        goalHit: bot?.goal_hit === true,
+        scanned: bot?.scanned || 0,
+        summary: pulse?.summary ?? bot?.summary,
+        medianChange24h: pulse ? pulse.median_change_24h : bot?.median_change_24h,
+        universe: pulse ? pulse.universe : bot?.universe,
+        top: bot?.top || [],
+        dayBest: bot?.day_best,
+        dayWorst: bot?.day_worst,
+        realizedTotal: null,
+      };
+  const goalPct = view.dailyGoal ? (view.realizedToday / view.dailyGoal) * 100 : 0;
 
   return (
     <div className="space-y-4">
@@ -272,17 +340,23 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
-        {deskMode === 'live' && bot?.live?.paused ? (
-          <span className="text-[11px] text-muted-foreground">
-            Live trading is paused — new live entries are stopped, open real positions stay managed.
-          </span>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {deskMode === 'live' && bot?.live?.paused ? (
+            <span className="text-[11px] text-muted-foreground">
+              Live trading is paused — new live entries are stopped, open real positions stay managed.
+            </span>
+          ) : null}
+          {/* the book switch, on the right of the desk switch: it changes
+              every figure below it, never a filter over one set of numbers */}
+          <BookSwitch value={bookMode} onChange={persistBook} />
+        </div>
       </div>
 
       {deskMode === 'live' ? (
         <LiveDesk
           bot={bot}
           pulse={pulse}
+          book={bookMode}
           onClosePosition={closePosition}
           onCloseAll={closeAll}
           closingId={closingId}
@@ -291,60 +365,106 @@ export default function Dashboard() {
         />
       ) : (
         <>
+          {/* every figure below follows the switch: the dollar book or the
+              Bitcoin book, never a mixture of the two */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label="Equity" value={fmtUsd(bot?.equity || 0)} sub={`${fmtUsd(bot?.cash || 0)} free cash`} icon={Wallet} />
+            <StatCard
+              label="Equity"
+              value={fmtUsd(view.equity)}
+              sub={`${fmtUsd(view.cash)} free cash`}
+              icon={Wallet}
+            />
             <StatCard
               label="Today realised"
-              value={fmtUsd(bot?.realized_today || 0)}
-              sub={`${fmtPct(goalPct)} of your ${fmtUsd(bot?.daily_goal || 0)} target`}
-              tone={(bot?.realized_today || 0) >= 0 ? 'up' : 'down'}
+              value={fmtUsd(view.realizedToday)}
+              sub={`${fmtPct(goalPct)} of your ${fmtUsd(view.dailyGoal)} target`}
+              tone={view.realizedToday >= 0 ? 'up' : 'down'}
             />
             <StatCard
               label="Open positions"
-              value={bot?.open_count ?? 0}
-              sub={`${fmtUsd(bot?.exposure || 0)} deployed`}
+              value={view.openCount}
+              sub={`${fmtUsd(view.exposure)} deployed`}
               icon={Layers}
             />
             <StatCard
               label="Unrealised"
-              value={fmtUsd(bot?.unrealized || 0)}
-              sub={`${bot?.scanned || 0} coins scanned`}
-              tone={(bot?.unrealized || 0) >= 0 ? 'up' : 'down'}
+              value={fmtUsd(view.unrealized)}
+              sub={`${view.scanned || 0} coins scanned`}
+              tone={view.unrealized >= 0 ? 'up' : 'down'}
             />
           </div>
 
           <TodayProgress
-            realizedToday={bot?.realized_today || 0}
-            dailyGoal={bot?.daily_goal || 0}
-            goalHit={bot?.goal_hit}
-            openCount={bot?.open_count}
-            scanned={bot?.scanned}
-            startingBalance={Number(config?.starting_balance) || 10000}
+            realizedToday={view.realizedToday}
+            dailyGoal={view.dailyGoal}
+            goalHit={view.goalHit}
+            openCount={view.openCount}
+            scanned={view.scanned}
+            startingBalance={view.startingBalance}
           />
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-4">
               <TopPicks
-                rows={bot?.top || []}
-                positions={bot?.positions || []}
-                targetPct={Number(config?.daily_target_pct) || 2}
+                rows={view.top}
+                positions={bookPositions}
+                targetPct={dailyTargetPct}
                 onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
                 onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
               />
 
-              <EquityPanel
-                startingBalance={Number(config?.starting_balance) || 10000}
-                dailyTargetPct={Number(config?.daily_target_pct) || 2}
-                liveEquity={bot?.equity}
-              />
+              {btcMode ? (
+                // the Bitcoin book has no equity chart of its own, and the
+                // dollar one would be a different book's line: its ledger is
+                // shown here instead, labelled as its own
+                <div className="surface p-4">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-amber-300">
+                    Bitcoin book
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bankroll</p>
+                      <p className="num mt-1 text-base font-semibold">{fmtUsd(view.startingBalance)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Free cash</p>
+                      <p className="num mt-1 text-base font-semibold">{fmtUsd(view.cash)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Realised (all)</p>
+                      <p className={`num mt-1 text-base font-semibold ${Number(view.realizedTotal) >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                        {fmtUsd(view.realizedTotal || 0)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Open positions</p>
+                      <p className="num mt-1 text-base font-semibold">{view.openCount}</p>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                    This is the Bitcoin book's own ledger — its own bankroll, cash, positions and results.
+                    The dollar book's equity chart is not shown here, because it is a different book's line.
+                  </p>
+                </div>
+              ) : (
+                <EquityPanel
+                  startingBalance={view.startingBalance}
+                  dailyTargetPct={dailyTargetPct}
+                  liveEquity={bot?.equity}
+                />
+              )}
 
               <PositionsPanel
-                positions={bot?.positions || []}
+                positions={bookPositions}
                 onClose={closePosition}
                 onCloseAll={closeAll}
                 closingId={closingId}
                 closingAll={closingAll}
-                hint="Live profit and loss, marked to market every cycle."
+                hint={
+                  btcMode
+                    ? 'Bitcoin-market positions only, marked to market every cycle. Each is priced in BTC on its own pair.'
+                    : 'Live profit and loss, marked to market every cycle.'
+                }
               />
 
               <SmartMoneyPanel />
@@ -352,18 +472,18 @@ export default function Dashboard() {
 
             <div className="min-w-0 space-y-4">
               <MarketPulse
-                summary={pulse?.summary ?? bot?.summary}
-                medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
-                universe={pulse ? pulse.universe : bot?.universe}
-                updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
+                summary={view.summary}
+                medianChange24h={view.medianChange24h}
+                universe={view.universe}
+                updatedAt={pulse && !btcMode ? pulse.updated_at : bot?.updated_at}
               />
             </div>
           </div>
 
           {/* the same two blocks the live desk closes with, so the desks show
               the same items end to end */}
-          <DayMovers best={bot?.day_best} worst={bot?.day_worst} />
-          <RecentCloses mode="paper" />
+          <DayMovers best={view.dayBest} worst={view.dayWorst} />
+          <RecentCloses mode="paper" quote={bookMode} />
         </>
       )}
 

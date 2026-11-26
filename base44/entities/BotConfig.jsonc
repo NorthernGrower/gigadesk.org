@@ -213,8 +213,16 @@
       "default": 5,
       "description": "How many top picks the always-take option buys per cycle, 1 to 10, still limited by free slots and risk brakes"
     },
-    "btc_markets": {
-      "type": "boolean",
+    "active_book": {
+      "type": "string",
+      "enum": [
+        "USD",
+        "BTC"
+      ],
+      "default": "USD",
+      "description": "Which book the desk page is showing: the dollar market or the Bitcoin market. The two are separate books — their own bankroll, positions, cooldowns, brakes, stats and scan — so switching the page changes every figure on it. Saved with the desk (active_desk), so a reload comes back to the same view"
+    },
+    "btc_markets": {      "type": "boolean",
       "default": false,
       "description": "Also trade Kraken's BTC-quoted markets as a second, fully separate book on this desk. The Bitcoin market is scanned by the same engine and traded by the same rules, but it has its own bankroll (btc_starting_balance), its own cash, its own slots, its own cooldowns, its own risk brakes and its own lessons \u2014 a dollar position never takes a Bitcoin slot and a dollar drawdown never stops a Bitcoin entry, or the other way round. Prices on those trades are in BTC with the dollar rate recorded when they opened, so their P&L still reads in USD. Off by default; the live desk keeps its own switch in live_rules.btc_markets. The live book sizes from the account's Bitcoin spot balance and takes longs only \u2014 a Bitcoin short would need margin on a market this book has not been measured on"
     },

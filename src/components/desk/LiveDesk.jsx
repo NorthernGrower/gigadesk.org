@@ -46,19 +46,32 @@ const ago = (iso) => {
   }
 };
 
-// The live desk, laid out exactly as the paper desk is: the same four figures,
-// the same progress bar, and the same top pick, equity chart, positions, smart
-// money and market pulse in the same places. The only difference is the money —
-// every figure here is exchange-reported or a confirmed real fill. What the live
-// desk had beyond that (the connection, the pause control, the exchange's own
-// counts and the day's movers) sits below the shared layout, so nothing is lost.
-export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, closingId, closingAll, onBackToPaper }) {
+// The live desk, laid out exactly as the paper desk is, showing one book at a
+// time — the dollar market or the Bitcoin market, from the switch beside the
+// desk switch. The book changes every figure on the page: its balance, its
+// equity, its day, its positions, its top pick and its mood. In the Bitcoin
+// book the balance is the Bitcoin the account holds with its dollar value, and
+// its positions are the BTC-quoted ones, priced in bitcoin on their own pairs.
+export default function LiveDesk({
+  bot,
+  pulse,
+  book = 'USD',
+  onClosePosition,
+  onCloseAll,
+  closingId,
+  closingAll,
+  onBackToPaper,
+}) {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [toggling, setToggling] = useState(false);
 
   const live = bot?.live || {};
   const connection = live.connection;
+  const btc = bot?.btc_markets || {};
+  const btcBook = btc.book || {};
+  const btcBoard = btc.board || {};
+  const btcMode = book === 'BTC';
   const staleScan = bot?.updated_at ? Date.now() - Date.parse(bot.updated_at) > 10 * 60000 : true;
   const connectionId = bot?.config?.real_connection_id || connection?.id || null;
   // a saved balance the desk keeps on the connection, refreshed every minute
@@ -74,9 +87,72 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
           : null;
   const balanceAsOf =
     live.balance_as_of || savedBalance?.asOf || connection?.balance_updated_at || connection?.last_checked_at || null;
-  const liveEquity = balanceUsd != null ? (balanceUsd || 0) + (live.unrealized || 0) : null;
   const liveDayPct = Number(bot?.config?.live_rules?.daily_target_pct ?? bot?.config?.daily_target_pct) || 2;
-  const goalPct = live.daily_goal ? ((Number(live.realized_today) || 0) / live.daily_goal) * 100 : 0;
+
+  // one book on the page at a time: a position belongs to the book its own
+  // quote names, so nothing here mixes the dollar book with the Bitcoin one
+  const bookPositions = (live.positions || []).filter((p) =>
+    btcMode ? p.quote_asset === 'BTC' : (p.quote_asset || 'USD') !== 'BTC',
+  );
+  const btcBalance = Number(btcBook.balance_btc) || Number(live.btc_balance) || 0;
+  const btcBalanceUsd =
+    btcBook.balance_usd != null ? Number(btcBook.balance_usd) : Number(live.btc_balance_usd) || 0;
+  const btcRate = Number(btc.btc_usd) || Number(live.btc_rate) || 0;
+  const btcDailyGoal = btcBalanceUsd > 0 ? (btcBalanceUsd * liveDayPct) / 100 : 0;
+  const usdEquity = balanceUsd != null ? (balanceUsd || 0) + (live.unrealized || 0) : null;
+
+  const view = btcMode
+    ? {
+        // the account's Bitcoin leads the Bitcoin book: what it holds, and what
+        // that is worth at the live rate
+        balanceLabel: 'Bitcoin balance',
+        balanceValue: btcBalance > 0 ? `${btcBalance} BTC` : '0 BTC',
+        balanceSub:
+          btcRate > 0
+            ? `${fmtUsd(btcBalanceUsd)} at ${fmtUsd(btcRate)}`
+            : btcBalance > 0
+              ? fmtUsd(btcBalanceUsd)
+              : 'no Bitcoin on the account yet',
+        equity: Number(btcBook.equity_usd) || btcBalanceUsd + (Number(btcBook.live_unrealized) || 0),
+        realizedToday: Number(btcBook.live_realized_today) || 0,
+        openCount: Number(btcBook.open_live) || 0,
+        unrealized: Number(btcBook.live_unrealized) || 0,
+        exposure: Number(btcBook.live_exposure) || 0,
+        dailyGoal: btcDailyGoal,
+        goalHit: btcDailyGoal > 0 && (Number(btcBook.live_realized_today) || 0) >= btcDailyGoal,
+        startingBalance: btcBalanceUsd,
+        top: btcBoard.top || [],
+        summary: btcBoard.summary || null,
+        medianChange24h: btcBoard.median_change_24h || 0,
+        universe: btcBoard.universe || 0,
+        scanned: btcBoard.scanned || 0,
+        dayBest: btcBook.live_day_best,
+        dayWorst: btcBook.live_day_worst,
+      }
+    : {
+        balanceLabel: 'Exchange balance',
+        balanceValue: balanceUsd != null ? fmtUsd(balanceUsd) : '—',
+        balanceSub:
+          balanceUsd != null
+            ? `exchange-reported · saved ${ago(balanceAsOf)}`
+            : 'unavailable — verify the connection',
+        equity: usdEquity,
+        realizedToday: Number(live.realized_today) || 0,
+        openCount: live.open_count ?? 0,
+        unrealized: Number(live.unrealized) || 0,
+        exposure: Number(live.exposure) || 0,
+        dailyGoal: live.daily_goal ?? 0,
+        goalHit: live.goal_hit === true,
+        startingBalance: balanceUsd || 0,
+        top: bot?.top || [],
+        summary: pulse?.summary ?? bot?.summary,
+        medianChange24h: pulse ? pulse.median_change_24h : bot?.median_change_24h,
+        universe: pulse ? pulse.universe : bot?.universe,
+        scanned: bot?.scanned || 0,
+        dayBest: live.day_best,
+        dayWorst: live.day_worst,
+      };
+  const goalPct = view.dailyGoal ? (view.realizedToday / view.dailyGoal) * 100 : 0;
 
   const setPaused = async (paused) => {
     setToggling(true);
@@ -188,7 +264,7 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         </div>
       </div>
 
-      {live.balance_stale ? (
+      {!btcMode && live.balance_stale ? (
         <div className="rounded-xl border border-rose-400/30 bg-rose-400/5 p-3 text-[12px] text-rose-300">
           The last balance read failed — showing the saved balance
           {balanceAsOf ? ` from ${ago(balanceAsOf)}` : ''}
@@ -196,101 +272,135 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         </div>
       ) : null}
 
-      {/* the money the bot can actually spend leads the desk: the exchange
-          balance first, then what the account is worth with the open positions
-          marked to market */}
+      {/* the money the bot can actually spend leads the desk: in the Bitcoin
+          book that is the Bitcoin the account holds, with its dollar value */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard
-          label="Exchange balance"
-          value={balanceUsd != null ? fmtUsd(balanceUsd) : '—'}
-          sub={
-            balanceUsd != null
-              ? `exchange-reported · saved ${ago(balanceAsOf)}`
-              : 'unavailable — verify the connection'
-          }
-          icon={Landmark}
+          label={view.balanceLabel}
+          value={view.balanceValue}
+          sub={view.balanceSub}
+          icon={btcMode ? Wallet : Landmark}
         />
         <StatCard
           label="Equity"
-          value={liveEquity == null ? '—' : fmtUsd(liveEquity)}
-          sub="exchange balance plus unrealised"
+          value={view.equity == null ? '—' : fmtUsd(view.equity)}
+          sub={btcMode ? 'Bitcoin value plus unrealised' : 'exchange balance plus unrealised'}
           icon={Wallet}
         />
         <StatCard
           label="Today realised"
-          value={fmtUsd(live.realized_today || 0)}
-          sub={`${fmtPct(goalPct)} of your ${fmtUsd(live.daily_goal || 0)} target`}
-          tone={(live.realized_today || 0) >= 0 ? 'up' : 'down'}
+          value={fmtUsd(view.realizedToday)}
+          sub={`${fmtPct(goalPct)} of your ${fmtUsd(view.dailyGoal || 0)} target`}
+          tone={view.realizedToday >= 0 ? 'up' : 'down'}
         />
         <StatCard
           label="Open positions"
-          value={live.open_count ?? 0}
-          sub={`${fmtUsd(live.exposure || 0)} deployed`}
+          value={view.openCount}
+          sub={`${fmtUsd(view.exposure)} deployed`}
           icon={Layers}
         />
         <StatCard
           label="Unrealised"
-          value={fmtUsd(live.unrealized || 0)}
-          sub={`${bot?.scanned || 0} coins scanned`}
-          tone={(live.unrealized || 0) >= 0 ? 'up' : 'down'}
+          value={fmtUsd(view.unrealized)}
+          sub={`${view.scanned || 0} coins scanned`}
+          tone={view.unrealized >= 0 ? 'up' : 'down'}
         />
       </div>
 
-      {/* the Bitcoin the account holds: the funding the BTC markets spend, so
-          it is here to watch while it is bought and used */}
-      <div className="surface flex flex-wrap items-center justify-between gap-3 p-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            BTC on the exchange
-          </p>
-          <p className="num mt-1 text-lg font-semibold">
-            {Number(live.btc_balance) > 0 ? `${live.btc_balance} BTC` : '0 BTC'}
-          </p>
-          <p className="text-[11px] text-muted-foreground">
-            {Number(live.btc_balance) > 0 ? fmtUsd(live.btc_balance_usd || 0) : '$0.00'}
-            {live.btc_rate ? ` at ${fmtUsd(live.btc_rate)}` : ''} · the funding BTC-quoted
-            markets spend
-          </p>
+      {!btcMode ? (
+        <div className="surface flex flex-wrap items-center justify-between gap-3 p-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              BTC on the exchange
+            </p>
+            <p className="num mt-1 text-lg font-semibold">
+              {btcBalance > 0 ? `${btcBalance} BTC` : '0 BTC'}
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              {btcBalance > 0 ? fmtUsd(btcBalanceUsd) : '$0.00'}
+              {btcRate ? ` at ${fmtUsd(btcRate)}` : ''} · the funding BTC-quoted markets spend
+            </p>
+          </div>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
+              btc.live_on ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'
+            }`}
+          >
+            {btc.live_on ? 'BTC markets on' : 'BTC markets off'}
+          </span>
         </div>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
-            bot?.btc_markets?.live_on
-              ? 'bg-primary/15 text-primary'
-              : 'bg-secondary text-muted-foreground'
-          }`}
-        >
-          {bot?.btc_markets?.live_on ? 'BTC markets on' : 'BTC markets off'}
-        </span>
-      </div>
+      ) : null}
 
       <TodayProgress
-        realizedToday={live.realized_today || 0}
-        dailyGoal={live.daily_goal ?? 0}
-        goalHit={live.goal_hit === true}
-        openCount={live.open_count ?? 0}
-        scanned={bot?.scanned || 0}
-        startingBalance={balanceUsd || 0}
+        realizedToday={view.realizedToday}
+        dailyGoal={view.dailyGoal ?? 0}
+        goalHit={view.goalHit}
+        openCount={view.openCount}
+        scanned={view.scanned}
+        startingBalance={view.startingBalance || 0}
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
           <TopPicks
-            rows={bot?.top || []}
-            positions={live.positions || []}
+            rows={view.top}
+            positions={bookPositions}
             targetPct={liveDayPct}
             onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
             onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
           />
 
-          <EquityPanel desk="live" startingBalance={balanceUsd || 0} dailyTargetPct={liveDayPct} liveEquity={liveEquity} />
+          {btcMode ? (
+            // the Bitcoin book has no equity chart of the account's own, and the
+            // dollar one is a different book's line: its account is summarised
+            // here instead
+            <div className="surface p-4">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-amber-300">Bitcoin account</p>
+              <div className="mt-2 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bitcoin held</p>
+                  <p className="num mt-1 text-base font-semibold">
+                    {btcBalance > 0 ? `${btcBalance} BTC` : '0 BTC'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Worth</p>
+                  <p className="num mt-1 text-base font-semibold">{fmtUsd(btcBalanceUsd)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Deployed</p>
+                  <p className="num mt-1 text-base font-semibold">{fmtUsd(view.exposure)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Positions</p>
+                  <p className="num mt-1 text-base font-semibold">{view.openCount}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                The Bitcoin book spends only the Bitcoin on the account, never the dollar cash. Its positions are
+                priced in BTC on their own pairs, so its dollar figures are each pair's own move at the rate.
+              </p>
+            </div>
+          ) : (
+            <EquityPanel
+              desk="live"
+              startingBalance={view.startingBalance || 0}
+              dailyTargetPct={liveDayPct}
+              liveEquity={usdEquity}
+            />
+          )}
 
           <PositionsPanel
-            positions={live.positions || []}
+            positions={bookPositions}
             onClose={onClosePosition}
             onCloseAll={onCloseAll}
             closingId={closingId}
             closingAll={closingAll}
-            hint="Your real positions on the exchange — each shows its exchange and pair. Closing sends a real sell order."
+            hint={
+              btcMode
+                ? 'Your real Bitcoin-market positions — each is priced in BTC on its own pair. Closing sends a real sell on that pair.'
+                : 'Your real positions on the exchange — each shows its exchange and pair. Closing sends a real sell order.'
+            }
           />
 
           <SmartMoneyPanel />
@@ -298,17 +408,16 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
 
         <div className="min-w-0 space-y-4">
           <MarketPulse
-            summary={pulse?.summary ?? bot?.summary}
-            medianChange24h={pulse ? pulse.median_change_24h : bot?.median_change_24h}
-            universe={pulse ? pulse.universe : bot?.universe}
-            updatedAt={pulse ? pulse.updated_at : bot?.updated_at}
+            summary={view.summary}
+            medianChange24h={view.medianChange24h}
+            universe={view.universe}
+            updatedAt={pulse && !btcMode ? pulse.updated_at : bot?.updated_at}
           />
         </div>
       </div>
 
       {/* live only, below the desk's shared layout: the exchange's own counts,
-          the day's best and worst, and the last real closes (the balance and
-          the Bitcoin holding lead the page now, above) */}
+          the day's best and worst, and the last real closes */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <div className="surface p-3">
           <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Eligible markets</p>
@@ -328,9 +437,9 @@ export default function LiveDesk({ bot, pulse, onClosePosition, onCloseAll, clos
         </div>
       </div>
 
-      <DayMovers best={live.day_best} worst={live.day_worst} />
+      <DayMovers best={view.dayBest} worst={view.dayWorst} />
 
-      <RecentCloses mode="real" />
+      <RecentCloses mode="real" quote={book} />
     </div>
   );
 }

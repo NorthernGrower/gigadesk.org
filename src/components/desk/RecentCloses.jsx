@@ -7,28 +7,35 @@ import { fmtUsd } from '@/lib/format';
  * picks the book — "real" on the live desk, "paper" on the paper one — and the
  * exchange details only appear where there is an exchange behind the trade.
  */
-export default function RecentCloses({ mode = 'paper', limit = 6 }) {
+export default function RecentCloses({ mode = 'paper', limit = 6, quote = 'USD' }) {
   const [rows, setRows] = useState([]);
+  const book = quote === 'BTC' ? 'BTC' : 'USD';
 
   useEffect(() => {
     let alive = true;
-    base44.entities.Trade.filter({ mode, status: 'closed' }, { sort: '-closed_at', limit })
+    base44.entities.Trade.filter({ mode, status: 'closed' }, { sort: '-closed_at', limit: limit * 3 })
       .then((page) => {
         if (!alive) return;
-        setRows(Array.isArray(page) ? page : page?.items || []);
+        const items = Array.isArray(page) ? page : page?.items || [];
+        // only this book's closes: the two books share a journal but never a page
+        setRows(
+          items
+            .filter((t) => (t.quote_asset === 'BTC' ? 'BTC' : 'USD') === book)
+            .slice(0, limit),
+        );
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [mode, limit]);
+  }, [mode, limit, book]);
 
   if (!rows.length) return null;
 
   return (
     <div className="surface p-4">
       <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-        Recent closed {mode === 'real' ? 'live' : 'paper'} trades
+        Recent closed {mode === 'real' ? 'live' : 'paper'} {book === 'BTC' ? 'Bitcoin' : 'dollar'} trades
       </p>
       <div className="mt-2 space-y-1.5">
         {rows.map((t) => (
