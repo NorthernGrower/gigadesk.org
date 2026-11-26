@@ -82,11 +82,11 @@ assert(
 );
 assert(safetyExit({ side: "long", entry: 100, stop: 97.5, price: 98 }) === null, "a trade above its stop is left alone");
 assert(
-  safetyExit({ side: "long", entry: 100, stop: 80, price: 91, maxLossPct: 10 })!.reason === "max_loss",
+  safetyExit({ side: "long", entry: 100, stop: 80, price: 89, maxLossPct: 10 })!.reason === "max_loss",
   "a wide stop still closes at the loss cap",
 );
 assert(
-  safetyExit({ side: "long", entry: 100, stop: 80, price: 91, maxLossPct: 20 }) === null,
+  safetyExit({ side: "long", entry: 100, stop: 80, price: 89, maxLossPct: 20 }) === null,
   "and the same trade is held while the cap is wider",
 );
 const shortUp = safetyExit({ side: "short", entry: 100, stop: 102.5, price: 103 });
