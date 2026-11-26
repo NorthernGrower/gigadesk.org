@@ -148,6 +148,21 @@
       "default": 20,
       "description": "Per-trade max loss guard: a trade down this percent of its own deployed size is force-closed at market on the next cycle, even if its stop has not fired. 0 = off"
     },
+    "profit_lock": {
+      "type": "boolean",
+      "default": true,
+      "description": "The live desk's profit lock: once a position is up by the arm threshold, its stop is raised to keep the share below of the best price it reached, so a run books most of itself instead of riding back down to the entry stop. Runs every five minutes on the desk guard, so it holds while the app is closed, and it can only ever raise a stop, never lower one — a breached stop still fills at its own level. The exit study measured the trade-off honestly: protecting the peak lifts the win rate and lowers the money per trade, so the default keeps half the peak and arms only at +2%. Off = the stop only ever moves by break-even and trailing in the app's cycle"
+    },
+    "lock_arm_pct": {
+      "type": "number",
+      "default": 2,
+      "description": "How far in profit a live position must be before the profit lock raises its stop, as a percent of the entry"
+    },
+    "giveback_pct": {
+      "type": "number",
+      "default": 50,
+      "description": "How much of the best profit the lock allows a trade to give back, as a percent of the peak gain. 50 keeps half of the move, 40 keeps more but exits sooner, 0 turns the lock off"
+    },
     "trailing_stop": {
       "type": "boolean",
       "default": true

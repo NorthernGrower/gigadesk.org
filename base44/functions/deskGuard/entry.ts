@@ -4,7 +4,7 @@ import { placeMarketOrder, resolveLiveConnection } from '../../shared/orders.ts'
 import { isBackedOff } from '../../shared/exchanges.ts';
 import { liveRule } from '../../shared/deskRules.ts';
 import { toUsd } from '../../shared/quotes.ts';
-import { safetyExit } from '../../shared/risk.ts';
+import { safetyExit, profitLock } from '../../shared/risk.ts';
 import { recordLesson } from '../../shared/learn.ts';
 
 // The desk's safety net, on a schedule. Until now a live position's stop was
@@ -84,7 +84,14 @@ export default async function (req) {
       const btcUsd = Number(prices.get("BTC")) || 0;
       const maxLossPct = Number(liveRule(LR, "max_trade_loss_pct", 20)) || 0;
       const leverage = Number(liveRule(LR, "margin_leverage", 2)) || 2;
+      // the profit lock's own settings: a trade must be up by the arm
+      // threshold, and from then on it may give back no more than the share
+      const lockOn = liveRule(LR, "profit_lock", true) !== false;
+      const lockArmPct = Number(liveRule(LR, "lock_arm_pct", 2)) || 0;
+      const lockGivebackPct = Number(liveRule(LR, "giveback_pct", 50)) || 0;
       const closed = [];
+      // stops this pass raised to lock in profit, for the summary
+      let trailed = 0;
 
       for (const t of open) {
         const quote = String(t.quote_asset || "").toUpperCase() === "BTC" ? "BTC" : "USD";
@@ -98,11 +105,62 @@ export default async function (req) {
         const side = t.side === "short" ? "short" : "long";
         const entry = Number(t.entry_price) || 0;
         if (!(entry > 0)) continue;
-        const stop = Number(t.stop_price) || (side === "long" ? entry * 0.975 : entry * 1.025);
+        // the profit lock: a position up by the desk's arm threshold has its
+        // stop raised to keep a share of the best price it reached — so a run
+        // like this one's +5% books most of itself instead of riding back
+        // down to the entry stop. It runs here, on the schedule, so it holds
+        // while the app is closed, and it can only ever raise a stop.
+        let stop = Number(t.stop_price) || (side === "long" ? entry * 0.975 : entry * 1.025);
+        const update: Record<string, any> = {};
+        if (lockOn) {
+          const lock = profitLock({
+            side,
+            entry,
+            stop,
+            peak: t.peak_price,
+            price,
+            armPct: lockArmPct,
+            givebackPct: lockGivebackPct,
+          });
+          if (lock) {
+            if (round(lock.peak, 8) !== round(Number(t.peak_price) || 0, 8))
+              update.peak_price = round(lock.peak, 8);
+            if (lock.raised) {
+              const moved = stop > 0 ? Math.abs(lock.stop - stop) / stop : 1;
+              stop = lock.stop;
+              trailed += 1;
+              update.stop_price = round(lock.stop, 8);
+              // a V3 or measured-exit position reads its own stop field, so
+              // both move together: a raised stop can never be ignored
+              if (t.v3_algo === true) update.v3_stop = round(lock.stop, 8);
+              // only a stop that actually moved matters, so the feed is told
+              // once per raise instead of on every pass
+              if (moved > 0.001)
+                await base44.asServiceRole.entities.Alert.create({
+                  symbol: t.symbol,
+                  title: `${t.symbol} stop raised to lock in profit`,
+                  message: `${side === "long" ? "Long" : "Short"} up ${round(((side === "long" ? price - entry : entry - price) / entry) * 100, 2)}% — the stop moved to ${round(lock.stop, 8)}${
+                    quote === "BTC" ? " BTC" : ""
+                  }, keeping ${round(100 - lockGivebackPct)}% of the peak. It can only ever move up, never down.`,
+                  mode: "live",
+                  kind: "bot_open",
+                  severity: "info",
+                  trade_id: t.id,
+                  created_by_id: config.created_by_id,
+                }).catch(() => {});
+            }
+          }
+        }
         // the same rule the cycle decides from, so the two can never disagree
         // about whether a stop was hit or where it fills
         const decision = safetyExit({ side, entry, stop, price, maxLossPct });
-        if (!decision) continue;
+        if (!decision) {
+          // nothing closed: persist the raised stop and the new peak, or the
+          // next pass would forget it and the lock would never ratchet
+          if (Object.keys(update).length)
+            await base44.asServiceRole.entities.Trade.update(t.id, update).catch(() => {});
+          continue;
+        }
         const exitPrice = decision.price;
         const reason = decision.reason;
         // the app and this pass can meet on the same position: the row is
@@ -170,7 +228,7 @@ export default async function (req) {
         await recordLesson(base44, { ...t, quote_asset: quote }, pnlPct, pnl, reason).catch(() => {});
         closed.push({ symbol: t.symbol, side, reason, exit_price: round(filled, 8), pnl_usd: round(pnl) });
       }
-      owners.push({ owner: config.created_by_id, exchange: live.conn.label, closed });
+      owners.push({ owner: config.created_by_id, exchange: live.conn.label, closed, locked: trailed });
     }
 
     // per-owner summaries carry other users' positions for an admin caller

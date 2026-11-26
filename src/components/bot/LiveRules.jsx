@@ -39,6 +39,9 @@ export default function LiveRules({ config, onSaved }) {
       trailing_stop: lr.trailing_stop ?? true,
       trailing_trigger_pct: lr.trailing_trigger_pct ?? 3,
       trailing_distance_pct: lr.trailing_distance_pct ?? 1.5,
+      profit_lock: lr.profit_lock ?? true,
+      lock_arm_pct: lr.lock_arm_pct ?? 2,
+      giveback_pct: lr.giveback_pct ?? 50,
       trading_style: lr.trading_style ?? 'mild',
       timeframe: lr.timeframe ?? '1h',
       market_cap_scope: lr.market_cap_scope ?? 'all',
@@ -98,6 +101,9 @@ export default function LiveRules({ config, onSaved }) {
           trailing_stop: live.trailing_stop,
           trailing_trigger_pct: roundTo(live.trailing_trigger_pct, 2),
           trailing_distance_pct: roundTo(live.trailing_distance_pct, 2),
+          profit_lock: live.profit_lock !== false,
+          lock_arm_pct: roundTo(Number(live.lock_arm_pct) || 2, 2),
+          giveback_pct: Math.max(0, Math.min(90, roundTo(Number(live.giveback_pct), 0))),
           trading_style: live.trading_style,
           timeframe: live.timeframe,
           market_cap_scope: live.market_cap_scope,
@@ -180,6 +186,40 @@ export default function LiveRules({ config, onSaved }) {
       {riskFields(live, setLiveNum, setLiveV)}
 
       {pyramidFields(live, setLiveNum, setLiveV)}
+
+      {/* the profit lock: the one exit that runs on the schedule, so a live
+          position keeps locking in profit while the app is closed */}
+      <div className="space-y-3 rounded-xl border border-border/60 bg-secondary/20 p-3">
+        <Toggle
+          label="Profit lock"
+          hint="Once a position is up by the arm threshold, its stop is raised to keep the share below of the best price it reached — so a run books most of itself instead of riding back down to the entry stop. It runs every five minutes on the desk guard, so it holds while the app is closed, and it can only ever raise a stop. The exit study is blunt about the trade-off: protecting the peak lifts the win rate and lowers the money per trade."
+          checked={live.profit_lock !== false}
+          onChange={setLiveV('profit_lock')}
+        />
+        {live.profit_lock !== false ? (
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <Field label="Arm at gain %" hint="How far in profit a position must be before its stop is raised.">
+              <Input
+                className="num"
+                inputMode="decimal"
+                value={live.lock_arm_pct}
+                onChange={setLiveNum('lock_arm_pct')}
+              />
+            </Field>
+            <Field
+              label="Give back %"
+              hint="How much of the best profit the lock allows back. 50 keeps half the move, 40 keeps more but exits sooner, 0 turns it off."
+            >
+              <Input
+                className="num"
+                inputMode="decimal"
+                value={live.giveback_pct}
+                onChange={setLiveNum('giveback_pct')}
+              />
+            </Field>
+          </div>
+        ) : null}
+      </div>
 
       {scanEngineFields(live, setLiveNum, setLiveV)}
 

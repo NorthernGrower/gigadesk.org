@@ -137,6 +137,54 @@ export function losingStreak(closedTrades: any[]): number {
   return streak;
 }
 
+export type ProfitLock = { stop: number; peak: number; locked: boolean; raised: boolean } | null;
+
+/**
+ * The profit lock: once a position is up by `armPct`, its stop is raised to keep
+ * a share of the best price it reached. Two properties make it safe to run on
+ * real money without a person watching:
+ *
+ *  - it only ever *raises* a stop (lowers it for a short) and never moves one
+ *    backwards, so a tighter stop is never undone;
+ *  - it never sets a stop at or beyond the market, so it cannot close a trade
+ *    by itself — the close still happens through the ordinary stop check.
+ *
+ * `peak` is the best price the trade has already reached, so a caller must
+ * persist what this returns or a restart would forget the peak.
+ */
+export function profitLock(input: {
+  side: any;
+  entry: any;
+  stop: any;
+  peak: any;
+  price: any;
+  armPct?: any;
+  givebackPct?: any;
+}): ProfitLock {
+  const long = String(input.side) !== "short";
+  const entry = Number(input.entry) || 0;
+  const stop = Number(input.stop) || 0;
+  const price = Number(input.price) || 0;
+  const armPct = Number(input.armPct) || 0;
+  const giveback = Number(input.givebackPct) || 0;
+  if (!(entry > 0) || !(price > 0)) return null;
+  const prior = Number(input.peak) || 0;
+  // best price: the highest for a long, the lowest for a short
+  const peak = !(prior > 0) ? price : long ? Math.max(prior, price) : Math.min(prior, price);
+  // a lock the desk switched off still remembers the peak, so turning it on
+  // later does not wait for a new high
+  if (!(armPct > 0) || giveback <= 0 || giveback >= 100)
+    return { stop, peak, locked: false, raised: false };
+  const gainPct = ((long ? peak - entry : entry - peak) / entry) * 100;
+  if (gainPct < armPct) return { stop, peak, locked: false, raised: false };
+  // keep the share asked for, measured from the entry: the rest of the peak
+  // may be given back, and no more
+  const keep = 1 - giveback / 100;
+  const lock = long ? entry + (peak - entry) * keep : entry - (entry - peak) * keep;
+  const raised = long ? lock > stop : lock < stop;
+  return { stop: raised ? lock : stop, peak, locked: true, raised };
+}
+
 export type SafetyExit = { reason: string; price: number; gain_pct: number } | null;
 
 /**

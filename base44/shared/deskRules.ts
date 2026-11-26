@@ -49,6 +49,12 @@ export const LIVE_DEFAULTS = {
   // makes no analyst call at all rather than calling and discarding the answer
   analyst_on: false,
   max_trade_loss_pct: 20,
+  // the live profit lock: armed at +2%, keeping half of the best profit. It
+  // runs on the five-minute desk guard, so it holds with the app closed, and
+  // it only ever raises a stop
+  profit_lock: true,
+  lock_arm_pct: 2,
+  giveback_pct: 50,
   pyramid: false,
   pyramid_trigger_pct: 1.5,
 };
