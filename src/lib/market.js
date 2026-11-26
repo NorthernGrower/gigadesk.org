@@ -88,6 +88,25 @@ function unwrap(res) {
   return data;
 }
 
+/**
+ * The server's own message out of a failed function call. The SDK throws a bare
+ * "status code 500" (or 502) and the reason — which coin could not be priced, or
+ * which stage stopped the cycle — is only in the response body. A body that is
+ * not JSON (a platform timeout page, a gateway error) carries no `error` field,
+ * so its text is used instead, flattened and capped.
+ */
+function serverError(err) {
+  const body = (err && err.response && (err.response.data || err.response.body)) || null;
+  const plain =
+    typeof body === 'string' ? body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  const detail =
+    (body && typeof body === 'object' && (body.error || body.detail || body.message)) ||
+    (plain ? plain.slice(0, 300) : null) ||
+    (err && err.data && err.data.error) ||
+    null;
+  return detail ? String(detail) : null;
+}
+
 export async function ensureBotConfig() {
   const existing = pageItems(
     await base44.entities.BotConfig.filter({}, { sort: '-updated_date', limit: 1 }),
@@ -247,21 +266,8 @@ export function runBot(light = false) {
       rememberBot(data);
       return data;
     } catch (err) {
-      const body = (err && err.response && (err.response.data || err.response.body)) || null;
-      // a body that is not JSON — a platform timeout page, a gateway error —
-      // has no `error` field, and the SDK's bare "status code 500" names
-      // nothing. Its text still says what happened, so it is shown instead,
-      // with the markup and the line breaks flattened and the length capped.
-      const plain =
-        typeof body === 'string'
-          ? body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-          : '';
-      const detail =
-        (body && typeof body === 'object' && (body.error || body.detail || body.message)) ||
-        (plain ? plain.slice(0, 300) : null) ||
-        (err && err.data && err.data.error) ||
-        null;
-      if (detail) throw new Error(String(detail));
+      const detail = serverError(err);
+      if (detail) throw new Error(detail);
       throw err;
     }
   };
@@ -280,7 +286,15 @@ export function runBot(light = false) {
 
 /** `tradeId` is optional: the `close_all` action works without one. */
 export async function tradeAction(action, tradeId = '') {
-  return unwrap(await base44.functions.invoke('tradeAction', { action, trade_id: tradeId }));
+  try {
+    return unwrap(await base44.functions.invoke('tradeAction', { action, trade_id: tradeId }));
+  } catch (err) {
+    // a refused close answers 502 with the reason — which coin could not be
+    // priced — and the SDK's bare "status code 502" would hide it
+    const detail = serverError(err);
+    if (detail) throw new Error(detail);
+    throw err;
+  }
 }
 
 /** The desk analyst's read on one desk. Read-only commentary: it returns a note

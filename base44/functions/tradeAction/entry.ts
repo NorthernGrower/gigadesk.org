@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { fetchMarkets, asArray, round } from "../../shared/market.ts";
+import { fetchMarkets, fetchLivePrices, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, pickFundingQuote, pickBtcBalance, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
 import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
@@ -80,8 +80,17 @@ export default async function (req) {
       }
 
       const { coins } = await fetchMarkets(base44.asServiceRole);
-      const btcUsd = Number(coins.find((c) => c.symbol === "BTC")?.price) || 0;
-      const priceOf = (symbol) => coins.find((c) => c.symbol === symbol)?.price;
+      // the board a desk scans is the exchange's own, so a coin the desk trades
+      // can be one the public board no longer lists — closing it must not be
+      // refused for that. Every open symbol is priced from the live feed as
+      // well, and only a symbol neither source prices is skipped.
+      const symbols = [...new Set(openTrades.map((t) => String(t.symbol || "").toUpperCase()))];
+      const freshPx = await fetchLivePrices([...symbols, "BTC"]).catch(() => new Map());
+      const btcUsd = Number(coins.find((c) => c.symbol === "BTC")?.price) || Number(freshPx.get("BTC")) || 0;
+      const priceOf = (symbol) =>
+        Number(coins.find((c) => c.symbol === symbol)?.price) ||
+        Number(freshPx.get(String(symbol || "").toUpperCase())) ||
+        0;
       // a BTC-quoted position's levels are in bitcoin: its exit is the pair's
       // price at the rate, and its P&L is translated at that same rate
       const fxOf = (t) => (t.quote_asset === "BTC" ? btcUsd : 1);
@@ -93,7 +102,11 @@ export default async function (req) {
         (t) => Number(priceOf(t.symbol)) > 0 && inQuote(t, priceOf(t.symbol)) > 0,
       );
       if (!closeable.length) {
-        return Response.json({ error: "No live prices for your open positions right now" }, { status: 502 });
+        const first = String(openTrades[0]?.symbol || "your position");
+        return Response.json(
+          { error: `No live price for ${first} right now — nothing was closed, try again in a moment` },
+          { status: 502 },
+        );
       }
 
       // closing positions is management: it must work even with new entries paused
@@ -315,18 +328,34 @@ export default async function (req) {
         return Response.json({ error: "Only an open position can be closed" }, { status: 409 });
       }
       const { coins } = await fetchMarkets(base44.asServiceRole);
+      // a desk scans its own venue's board, so a coin it trades can be one the
+      // public board does not list — and a paper close must never be refused
+      // for that. The position's own symbol and the rate are read from the live
+      // feed as well, and the close only fails when neither source prices it.
+      const isBtcQuote = trade.quote_asset === "BTC";
+      const freshPx = await fetchLivePrices([String(trade.symbol || "").toUpperCase(), "BTC"]).catch(
+        () => new Map(),
+      );
       // a BTC-quoted position's own market is priced in bitcoin, so its exit
       // and its P&L are translated at the rate — a dollar price compared
       // with a BTC entry would book a nonsense result
-      const btcUsd = Number(coins.find((c) => c.symbol === "BTC")?.price) || 0;
-      const isBtcQuote = trade.quote_asset === "BTC";
+      const btcUsd = Number(coins.find((c) => c.symbol === "BTC")?.price) || Number(freshPx.get("BTC")) || 0;
       const fx = isBtcQuote ? btcUsd : 1;
       if (!(fx > 0)) {
-        return Response.json({ error: "No live Bitcoin price to close this position" }, { status: 502 });
+        return Response.json(
+          { error: "No live Bitcoin price right now — the position was left open, try again in a moment" },
+          { status: 502 },
+        );
       }
-      const priceUsd = coins.find((c) => c.symbol === trade.symbol)?.price;
+      const priceUsd =
+        Number(coins.find((c) => c.symbol === trade.symbol)?.price) ||
+        Number(freshPx.get(String(trade.symbol || "").toUpperCase())) ||
+        0;
       if (!(Number(priceUsd) > 0)) {
-        return Response.json({ error: "No live price for this coin right now" }, { status: 502 });
+        return Response.json(
+          { error: `No live price for ${trade.symbol} right now — the position was left open, try again in a moment` },
+          { status: 502 },
+        );
       }
       let closePrice = Number(priceUsd) / fx;
       let dustNote = "";
