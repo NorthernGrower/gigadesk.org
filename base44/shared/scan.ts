@@ -1,4 +1,4 @@
-import { fetchMarkets, fetchBtcMarkets, fetchCandles, chunk, asArray, round } from "./market.ts";
+import { fetchMarkets, fetchBtcMarkets, fetchCandles, chunk, asArray, round, btcQuoteVenue } from "./market.ts";
 import { analyzeCoin } from "./strategy.ts";
 
 const SCOPES = new Set(["all", "large", "mid", "small"]);
@@ -42,6 +42,44 @@ export async function resolveDeskVenue(base44, config) {
     };
   } catch (err) {
     console.log(`venue resolution failed: ${err && err.message}`);
+    return null;
+  }
+}
+
+/**
+ * The connected exchange that can actually serve the Bitcoin book: a venue whose
+ * own spot market lists pairs quoted in bitcoin, on an account this desk has
+ * connected and not in backoff. The desk's chosen connection wins; another
+ * connected venue that lists them stands in when the chosen one does not. A
+ * view-only account still serves the scan, because the market read is public —
+ * the live entry itself is what requires a trading-enabled connection.
+ * `null` means no connected exchange can serve this book: its scan must then
+ * read nothing, rather than a venue the desk has no account on.
+ */
+export async function resolveBtcVenue(base44, config) {
+  try {
+    const owner = (config && config.created_by_id) || "";
+    const LR = (config && config.live_rules) || {};
+    const id = LR.real_connection_id || (config && config.real_connection_id) || "";
+    const rows = asArray(
+      await base44.asServiceRole.entities.ExchangeConnection.filter(
+        { created_by_id: owner, status: "connected" },
+        { sort: "-updated_date", limit: 12 },
+      ),
+    ).filter(
+      (c) => c && btcQuoteVenue(c.exchange) && !(c.backoff_until && Date.parse(c.backoff_until) > Date.now()),
+    );
+    if (!rows.length) return null;
+    const chosen = rows.find((c) => c.id === id) || rows[0];
+    return {
+      id: chosen.id,
+      exchange: chosen.exchange,
+      testnet: Boolean(chosen.testnet),
+      label: chosen.label || chosen.exchange,
+      balances: Array.isArray(chosen.balances) ? chosen.balances : [],
+    };
+  } catch (err) {
+    console.log(`BTC venue resolution failed: ${err && err.message}`);
     return null;
   }
 }

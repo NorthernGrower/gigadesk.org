@@ -392,6 +392,15 @@ export default function LiveDesk({
                   <p className="num mt-1 text-base font-semibold">{view.openCount}</p>
                 </div>
               </div>
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                {btc.venue_label
+                  ? `Scanning ${btc.venue_label}'s Bitcoin markets — the connected exchange that lists them${
+                      btc.live_tradeable === false && connection?.exchange !== btc.venue
+                        ? '. Real Bitcoin orders need your live connection to be that same exchange, so this book runs its paper side only.'
+                        : ''
+                    }`
+                  : 'No connected exchange lists Bitcoin markets, so this book has nothing to scan. Connect one — Kraken quotes in Bitcoin — under Settings.'}
+              </p>
               <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
                 The Bitcoin book spends only the Bitcoin on the account, never the dollar cash. Its positions are
                 priced in BTC on their own pairs, so its dollar figures are each pair's own move at the rate.

@@ -372,6 +372,15 @@ export async function fetchVenueMarkets(feed) {
   return out;
 }
 
+// The venues whose spot market lists pairs quoted in bitcoin. The Bitcoin book
+// prices, charts, sizes and settles in BTC, so only a venue that lists those
+// pairs can serve it: a connected exchange without them can never trade this
+// book, whatever its account holds.
+export const BTC_QUOTE_VENUES = new Set(["kraken"]);
+
+export const btcQuoteVenue = (exchange) =>
+  BTC_QUOTE_VENUES.has(String(exchange || "").trim().toLowerCase());
+
 /**
  * Kraken's Bitcoin-quoted markets as the desk's own coin rows, priced in BTC.
  *
@@ -386,9 +395,10 @@ export async function fetchBtcMarkets(db = null, feed = null, btcUsd = 0) {
   const ex = String((feed && feed.exchange) || "");
   const base = VENUE_BASE[ex];
   const fx = Number(btcUsd) || 0;
-  // only Kraken is read for this book: its pair names and its ticker are the
-  // ones the order path uses, and a market the desk cannot trade is noise
-  if (ex !== "kraken" || !base || !(fx > 0)) return [];
+  // only a venue that lists pairs quoted in bitcoin can serve this book: its
+  // pair names and its ticker are the ones the order path uses, and a market
+  // the desk cannot trade is noise
+  if (!btcQuoteVenue(ex) || !base || !(fx > 0)) return [];
   const key = `btcmarkets:${ex}:${Math.round(fx / 100)}`;
   const cached = cacheGet(key);
   if (cached) return cached;
@@ -440,6 +450,9 @@ export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 3
   const sym = String(symbol || "").toUpperCase();
   const wantBtc = String(quote || "USD").toUpperCase() === "BTC";
   if (!base || !iv || !sym) return null;
+  // a BTC-quoted read must never be answered with a dollar chart: only a venue
+  // that lists those pairs can answer it, and anything else returns null
+  if (wantBtc && !btcQuoteVenue(ex)) return null;
   try {
     if (ex === "kucoin") {
       // KuCoin's candle endpoint answers with the last 100 bars unless the

@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
-import { scanBoard, resolveDeskVenue } from "../../shared/scan.ts";
+import { scanBoard, resolveDeskVenue, resolveBtcVenue } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, keepBalances, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
@@ -179,6 +179,14 @@ export default async function (req) {
     // on the coins it actually lists
     stage = "markets";
     const scanVenue = light ? null : await resolveDeskVenue(base44, config);
+    // the connected exchange that can serve the Bitcoin book: its own spot market
+    // lists the pairs quoted in bitcoin, so it is the only venue the book may be
+    // scanned, charted and traded on. A desk with no such connection gets no
+    // Bitcoin scan at all — rather than a market it has no account on — and the
+    // reason travels back to the desk with the cycle. It is resolved on light
+    // passes too: those carry no scan, and the desk would otherwise read that
+    // it has no connected exchange on every quiet refresh
+    const btcVenue = await resolveBtcVenue(base44, config);
     const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole, scanVenue);
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
@@ -240,6 +248,12 @@ export default async function (req) {
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
+    // a live Bitcoin entry is placed on the venue that lists the pair, so the
+    // live connection itself must be the Bitcoin venue: a KuCoin account never
+    // buys a Kraken-only pair, and this book then runs paper only
+    const liveBtcVenue =
+      btcVenue != null && live.conn != null &&
+      String(live.conn.exchange) === String(btcVenue.exchange);
     // a check can flag a key (temporary lockout, a revoked permission) without
     // the key being unusable — management still attempts real orders through
     // it, but new live entries keep requiring a verified, trading-enabled
@@ -272,9 +286,11 @@ export default async function (req) {
       Number((priceMap.get("BTC") || {}).price) ||
       Number((coins.find((c) => c.symbol === "BTC") || {}).price) ||
       0;
-    // the venue the BTC leg reads its charts from: Kraken's own market, which
-    // is public, so a paper desk with no exchange attached can still read it
-    const btcFeed = { exchange: "kraken" };
+    // the venue the BTC leg reads its charts from, and the only one it may be
+    // traded on: the connected exchange resolved above. A desk with no connected
+    // exchange that lists Bitcoin markets has no market to read, which is why the
+    // book reports nothing instead of a board from an account it does not have.
+    const btcFeed = btcVenue ? { exchange: btcVenue.exchange, testnet: btcVenue.testnet } : null;
 
     // ---- the account's Bitcoin, as it is now. The live Bitcoin book spends
     // it, but its only source is the balance list stored on the connection —
@@ -1144,13 +1160,14 @@ export default async function (req) {
       // and fills work in; its dollar figures come through the rate recorded at
       // the cycle. One board answers both desks, because the scan settings are
       // the desk's own and the bars ignore the desk.
-      const btcBoardWanted = btcUsdNow > 0 && (btcMarketsOn(paperView) || btcMarketsOn(liveView));
+      const btcBoardWanted =
+        btcFeed != null && btcUsdNow > 0 && (btcMarketsOn(paperView) || btcMarketsOn(liveView));
       if (btcBoardWanted) {
         try {
-          // a live account can only trade the pairs its own venue lists
-          const btcListed = live.conn && btcMarketsOn(liveView)
-            ? await fetchListedSymbols(live.conn, ["BTC"])
-            : null;
+          // the Bitcoin venue lists the pairs this book can hold: reading them
+          // from the live account instead would filter a Kraken market by a
+          // listing Kraken never published
+          const btcListed = btcVenue ? await fetchListedSymbols(btcVenue, ["BTC"]) : null;
           btcBoard = await scanBoard({
             timeframe: paperBtcView.timeframe || "1h",
             scope: paperBtcView.market_cap_scope || "all",
@@ -1180,9 +1197,9 @@ export default async function (req) {
         (a.confluence_v2 !== false) === (b.confluence_v2 !== false) &&
         (Number(a.daily_target_pct) || 2) === (Number(b.daily_target_pct) || 2);
       liveBtcBoard = btcBoard;
-      if (btcBoard && live.conn != null && liveVerified && btcMarketsOn(liveView) && !btcSameScan(paperBtcView, liveBtcView)) {
+      if (btcBoard && liveBtcVenue && liveVerified && btcMarketsOn(liveView) && !btcSameScan(paperBtcView, liveBtcView)) {
         try {
-          const liveBtcListed = await fetchListedSymbols(live.conn, ["BTC"]);
+          const liveBtcListed = await fetchListedSymbols(btcVenue, ["BTC"]);
           liveBtcBoard = await scanBoard({
             timeframe: liveBtcView.timeframe || "1h",
             scope: liveBtcView.market_cap_scope || "all",
@@ -1410,8 +1427,13 @@ export default async function (req) {
       // own book: decisive candles and the market-cap tiers follow the pair's
       // rank on the BTC market, and its lessons are its own
       const btcTradable = btcBoard ? applyEdges(btcBoard.rows, "BTC") : [];
-      // the live Bitcoin book's rows: its own board when it scans differently
-      const btcTradableLive = liveBtcBoard && liveBtcBoard !== btcBoard ? applyEdges(liveBtcBoard.rows, "BTC") : btcTradable;
+      // the live Bitcoin book's rows: its own board when it scans differently,
+      // and nothing at all when the live account cannot trade this market
+      const btcTradableLive = !liveBtcVenue
+        ? []
+        : liveBtcBoard && liveBtcBoard !== btcBoard
+          ? applyEdges(liveBtcBoard.rows, "BTC")
+          : btcTradable;
 
       // engine targets: 6R from entry with the combo stack on (the pooled
       // flat-tape winner), 3R under the margin engine, 2.5R under the old
@@ -1496,7 +1518,7 @@ export default async function (req) {
       // turnover is the same rule as $5m on the dollar book, not a different
       // one. A failure here costs BTC V3 entries, never the cycle.
       const btcV3DeskOn = {
-        live: v3On(liveBtcView) && btcMarketsOn(liveView),
+        live: v3On(liveBtcView) && btcMarketsOn(liveView) && liveBtcVenue,
         paper: v3On(paperBtcView) && btcMarketsOn(paperView),
       };
       const btcV3Evals = new Map();
@@ -2150,8 +2172,11 @@ export default async function (req) {
       // never the cycle.
       try {
         const btcSpendableNow = pickBtcBalance(btcBalances);
+        // the live connection must be the venue that lists these pairs, so a
+        // Bitcoin entry is never sent to an account without the market: the book
+        // then keeps scanning for its paper side only
         if (
-          btcMarketsOn(liveView) && liveReady && btcUsdNow > 0 &&
+          liveBtcVenue && btcMarketsOn(liveView) && liveReady && btcUsdNow > 0 &&
           btcSpendableNow > 0 && !dryRun
         ) {
           // the live Bitcoin book's own positions and its own openings: never
@@ -2820,6 +2845,14 @@ export default async function (req) {
       btc_markets: {
         on: btcMarketsOn(paperView),
         live_on: btcMarketsOn(liveView),
+        // the connected exchange that serves this book, and why it has nothing
+        // to scan when no connected exchange lists Bitcoin markets
+        venue: btcVenue ? btcVenue.exchange : null,
+        venue_label: btcVenue ? btcVenue.label : null,
+        venue_reason: btcVenue ? null : "No connected exchange lists Bitcoin markets",
+        // a live Bitcoin entry is placed on the live connection, so the book
+        // trades real money only when that account is the Bitcoin venue
+        live_tradeable: liveBtcVenue,
         // the live Bitcoin book's own board, only when it scans differently
         live_board: liveBtcBoard && liveBtcBoard !== btcBoard
           ? {
