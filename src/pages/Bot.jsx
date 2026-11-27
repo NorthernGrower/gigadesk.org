@@ -271,7 +271,15 @@ export default function Bot() {
           <LearnedPanel />
           <AnalystPanel desk={desk} config={config} />
           <div id="risk-rules">
-            <RiskSettings config={config} onSaved={() => cycle(true)} desk={desk} book={book} />
+            <RiskSettings
+              config={config}
+              onSaved={() => cycle(true)}
+              desk={desk}
+              book={book}
+              btcBook={bot?.btc_markets?.book || null}
+              btcRate={Number(bot?.btc_markets?.btc_usd) || 0}
+              btcBlocked={bot?.btc_markets?.blocked_reason || null}
+            />
           </div>
         </div>
       </div>

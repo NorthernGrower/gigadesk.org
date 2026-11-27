@@ -1092,6 +1092,9 @@ export default async function (req) {
     // the live Bitcoin book's own board, when its scan settings differ
     let liveBtcBoard = null;
     let btcV3Summary = null;
+    // why the live Bitcoin book could not open an entry this pass — the desk
+    // shows this line instead of leaving a book that never trades unexplained
+    let btcBlocked = null;
     // portfolio risk state for the paper desk: filled in when this cycle
     // actually looks for entries, surfaced in the response for the bot page
     let paperRisk = null;
@@ -2186,6 +2189,26 @@ export default async function (req) {
         // under its hard cap. The rest stays on the exchange untouched, so a 50%
         // setting or a small cap never spends the whole holding
         const btcSpendableNow = btcSpendLimit(pickBtcBalance(btcBalances), btcUsePct, btcCapBtc);
+        // the first gate this pass would fail, in the order they are checked:
+        // the desk reads this back so an idle Bitcoin book says why, whether the
+        // reason is the switch, the venue, the key, the holding or the limits
+        btcBlocked = !btcMarketsOn(liveView)
+          ? "BTC markets are off for the live book — switch them on under Bot → Rules → Live rules."
+          : !btcVenue
+            ? "No connected exchange lists Bitcoin markets — connect one under Settings."
+            : !liveBtcVenue
+              ? `The live account is on ${live.conn ? live.conn.exchange : "another exchange"}, not ${btcVenue.label}, so a Bitcoin order would have no market to fill on.`
+              : !liveVerified
+                ? "The exchange key is not verified for trading — reconnect it under Settings."
+                : isBackedOff(connRow)
+                  ? "The exchange locked this key after failed reads — no order can fire until the lock clears or the key is reconnected."
+                  : !(btcUsdNow > 0)
+                    ? "The Bitcoin rate is missing this cycle, so nothing can be sized."
+                    : !(btcSpendableNow > 0)
+                      ? "No Bitcoin on the exchange to spend — the book spends only the spot Bitcoin it holds."
+                      : !(btcSpendableNow * btcUsdNow >= 10)
+                        ? `The usable Bitcoin (${round(btcSpendableNow, 8)} BTC ≈ ${round(btcSpendableNow * btcUsdNow)} USD) is under the 10 USD minimum entry — raise the share or the hard cap.`
+                        : null;
         // the live connection must be the venue that lists these pairs, so a
         // Bitcoin entry is never sent to an account without the market: the book
         // then keeps scanning for its paper side only
@@ -2867,6 +2890,9 @@ export default async function (req) {
         // a live Bitcoin entry is placed on the live connection, so the book
         // trades real money only when that account is the Bitcoin venue
         live_tradeable: liveBtcVenue,
+        // why no live Bitcoin entry could fire this pass, or null when the road
+        // was clear and the desk simply found nothing that qualified
+        blocked_reason: btcBlocked,
         // the live Bitcoin book's own board, only when it scans differently
         live_board: liveBtcBoard && liveBtcBoard !== btcBoard
           ? {
