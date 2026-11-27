@@ -90,6 +90,8 @@ export default function AnalystPanel({ desk = 'paper', config }) {
   const groups = (data?.decay?.groups || []).filter((g) => g.trades > 0);
   const counts = data?.digest?.counts || null;
   const booked = data?.digest?.booked?.usd_180d;
+  // the patterns actually shaping future scores, best record first
+  const learned = (data?.learned?.patterns || []).filter((p) => p.adj !== 0).slice(0, 3);
 
   return (
     <div className="surface space-y-2.5 p-3">
@@ -221,6 +223,32 @@ export default function AnalystPanel({ desk = 'paper', config }) {
                   A verdict needs {data.decay.min_trades} closed trades on one source.
                 </p>
               ) : null}
+            </div>
+          ) : null}
+
+          {note?.lesson ? (
+            <p className="text-[11px] leading-snug text-muted-foreground">Lesson: {note.lesson}</p>
+          ) : null}
+
+          {learned.length ? (
+            <div className="space-y-1">
+              <Label>What the bot learned</Label>
+              {learned.map((p) => (
+                <div key={p.pattern} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="text-muted-foreground">
+                    {String(p.pattern).replace('/', ' · ')} · {p.trades} · {p.win_rate}% win ·{' '}
+                    {p.avg_pct > 0 ? '+' : ''}
+                    {p.avg_pct}%
+                  </span>
+                  <span
+                    className={`num shrink-0 font-semibold ${
+                      p.adj > 0 ? 'text-primary' : 'text-destructive'
+                    }`}
+                  >
+                    {p.adj > 0 ? `+${p.adj}` : p.adj} score
+                  </span>
+                </div>
+              ))}
             </div>
           ) : null}
 

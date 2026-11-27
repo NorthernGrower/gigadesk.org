@@ -61,7 +61,9 @@ export default function LearnedPanel() {
           at least 5 closed trades its win rate starts shaping future scores.
         </p>
       ) : (
-        <div className="mt-3 space-y-2">
+        // six rows fit the panel; anything past them scrolls instead of pushing
+        // the rest of the desk off the screen
+        <div className="mt-3 max-h-[26rem] space-y-2 overflow-y-auto pr-1">
           {rows.map((row) => {
             // a Bitcoin book's lesson carries its own third part, so its win
             // rate never shows up against the dollar book's patterns

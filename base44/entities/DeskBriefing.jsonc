@@ -50,6 +50,15 @@
     "risks": {
       "type": "string"
     },
+    "lesson": {
+      "type": "string",
+      "description": "What the bot learned from its closed calls, in the analyst's words: which pattern is paying, which exit keeps giving the money back. Prose only, and only from the learned record below"
+    },
+    "learned": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The lesson numbers the note was written from: closed calls grouped by pattern and by exit, with each pattern's win rate, average and the score bump it has earned"
+    },
     "digest": {
       "type": "object",
       "additionalProperties": true,

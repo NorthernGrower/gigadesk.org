@@ -181,6 +181,74 @@ export function deskDigest(input: any) {
 }
 
 /**
+ * The score bump a pattern's own record earns it — one rule, written once here
+ * so the panel, the analyst and the engine's own memory can never disagree.
+ */
+export function scoreAdjustment(trades: number, winRate: number) {
+  const count = Math.max(0, Math.floor(Number(trades) || 0));
+  const rate = Number(winRate) || 0;
+  if (count < 5) return 0;
+  if (rate >= 0.65) return Math.min(8, Math.round((rate - 0.5) * 20));
+  if (rate <= 0.35) return -Math.min(8, Math.round((0.5 - rate) * 20));
+  return 0;
+}
+
+/**
+ * What the bot learned: its closed calls grouped by the pattern it traded and by
+ * the exit that closed them, with the same win rate and average the panel shows
+ * and the score bump each pattern has actually earned. Pure — the caller reads
+ * the Lesson rows and passes them in.
+ *
+ * This is the desk's own record, not a measurement of an edge: a handful of
+ * trades is listed as a handful, and the note that reads this is told so.
+ */
+export function learningReport(rows: any[], options: any = {}) {
+  const lessons = (Array.isArray(rows) ? rows : []).filter((r) => r && r.pattern);
+  const patterns = new Map<string, any>();
+  const exits = new Map<string, any>();
+  const tally = (bucket: Map<string, any>, key: string) => {
+    const row = bucket.get(key) || { key, trades: 0, wins: 0, pct: 0 };
+    bucket.set(key, row);
+    return row;
+  };
+  for (const lesson of lessons) {
+    const pattern = tally(patterns, String(lesson.pattern));
+    pattern.trades += 1;
+    pattern.wins += Number(lesson.win) === 1 ? 1 : 0;
+    pattern.pct += Number(lesson.pnl_pct) || 0;
+    const exit = tally(exits, String(lesson.exit_reason || "unknown"));
+    exit.trades += 1;
+    exit.wins += Number(lesson.win) === 1 ? 1 : 0;
+    exit.pct += Number(lesson.pnl_pct) || 0;
+  }
+  const shape = (row: any) => ({
+    trades: row.trades,
+    win_rate: Math.round((row.wins / row.trades) * 100),
+    avg_pct: round(row.pct / row.trades),
+    adj: scoreAdjustment(row.trades, row.wins / row.trades),
+  });
+  const ranked = [...patterns.values()].sort((a, b) => b.trades - a.trades);
+  const limit = Math.max(1, Math.min(12, Number(options.limit) || 8));
+  const byPattern = ranked.slice(0, limit).map((row) => ({ pattern: row.key, ...shape(row) }));
+  const byExit = [...exits.values()]
+    .sort((a, b) => b.trades - a.trades)
+    .map((row) => ({ reason: row.key, ...shape(row) }));
+  const wins = lessons.filter((row) => Number(row.win) === 1).length;
+  return {
+    as_of: new Date().toISOString(),
+    lessons: lessons.length,
+    win_rate: lessons.length ? Math.round((wins / lessons.length) * 100) : 0,
+    avg_pct: lessons.length
+      ? round(lessons.reduce((a, row) => a + (Number(row.pnl_pct) || 0), 0) / lessons.length)
+      : 0,
+    // how many patterns are actually shaping future scores right now
+    adjusting: ranked.filter((row) => scoreAdjustment(row.trades, row.wins / row.trades) !== 0).length,
+    patterns: byPattern,
+    exits: byExit,
+  };
+}
+
+/**
  * BTC's tape from its daily candles: above its 200-day average, and its last
  * daily move. Null when the candles are missing or too short to read.
  */
@@ -297,13 +365,14 @@ export const BRIEFING_SCHEMA = {
     },
     watch: { type: "array", items: { type: "string" } },
     risks: { type: "string" },
+    lesson: { type: "string" },
   },
-  required: ["headline", "summary", "stance", "closes", "watch", "risks"],
+  required: ["headline", "summary", "stance", "closes", "watch", "risks", "lesson"],
 };
 
 /** The one prompt the analyst sends. Kept here so the rules travel with the
  *  schema and a change to either is visible in one place. */
-export function briefingPrompt(digest: any, decay: any, context: any = null) {
+export function briefingPrompt(digest: any, decay: any, context: any = null, learning: any = null) {
   return [
     "You are the read-only analyst on one crypto trading desk. You are writing the note the owner reads when they open the desk page.",
     "",
@@ -321,6 +390,7 @@ export function briefingPrompt(digest: any, decay: any, context: any = null) {
     "- closes: one note of at most 30 words for each recent close listed, saying why it worked or failed, in terms of the recorded exit, side and numbers.",
     "- watch: up to 4 short things worth watching on this desk's own terms. You may name scanner setups or the BTC tape from the context.",
     "- risks: the main risk to this desk over the next few days, at most 45 words.",
+    "- lesson: at most 45 words on what the closed calls have taught, from the pattern and exit records below — name the pattern that is doing well or badly, and the exit that keeps taking the money or giving it back. Say plainly when a pattern has too few trades to judge, and never call a pattern proven.",
     "- stance: stand_aside, selective, normal or caution.",
     "",
     "Desk data:",
@@ -328,6 +398,9 @@ export function briefingPrompt(digest: any, decay: any, context: any = null) {
     "",
     "Results against the backtest that set the expectation:",
     JSON.stringify(decay, null, 2),
+    "",
+    "What the bot learned from its closed calls (grouped by pattern and by exit):",
+    JSON.stringify(learning || {}, null, 2),
     "",
     "Context beside the desk (scanner setups, BTC tape, alerts, watchlist):",
     JSON.stringify(context || {}, null, 2),
@@ -357,5 +430,5 @@ export function cleanBriefing(raw: any) {
   const watch = Array.isArray(raw.watch)
     ? raw.watch.map((w: any) => text(w, 140)).filter(Boolean).slice(0, 4)
     : [];
-  return { headline, summary, stance, closes, watch, risks: text(raw.risks, 500) };
+  return { headline, summary, stance, closes, watch, risks: text(raw.risks, 500), lesson: text(raw.lesson, 400) };
 }

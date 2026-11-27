@@ -2,7 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { liveRulesView } from "../../shared/deskRules.ts";
 import { entryRulesFor } from "../../shared/entryRules.ts";
 import { fetchCandles } from "../../shared/market.ts";
-import { briefingPrompt, cleanBriefing, decayReport, deskDigest, marketContext, BRIEFING_SCHEMA } from "../../shared/analyst.ts";
+import { briefingPrompt, cleanBriefing, decayReport, deskDigest, learningReport, marketContext, BRIEFING_SCHEMA } from "../../shared/analyst.ts";
 
 // The desk analyst: read-only commentary on one desk.
 //
@@ -74,6 +74,19 @@ export default async function (req) {
     const digest = deskDigest({ desk, closed, open, config: view });
     const decay = decayReport(closed);
 
+    // what the bot learned from its closed calls: the same records the panel
+    // reads, grouped by pattern and by exit, with the score bump each pattern
+    // has actually earned. Read fresh on every call and passed to the note, so
+    // the analyst never has to guess what the bot has been learning.
+    stage = "lessons";
+    const learned = learningReport(
+      list(
+        await base44.entities.Lesson
+          .filter({ created_by_id: owner }, { sort: "-created_date", limit: 500 })
+          .catch(() => []),
+      ),
+    );
+
     // what the desk can see beside its own trades: the scanner's setups, the BTC
     // tape, this desk's recent alerts and the watchlist. Read fresh on every
     // call — they are cheap. Each read fails soft, so a missing read leaves its
@@ -120,7 +133,7 @@ export default async function (req) {
     const ageMs = existing && existing.generated_at ? Date.now() - Date.parse(existing.generated_at) : Infinity;
     const holds = !!existing && (!existing.model_error || ageMs < 15 * 60000);
     if (holds && !force) {
-      return Response.json({ enabled: true, cached: true, note: existing, digest, decay, context });
+      return Response.json({ enabled: true, cached: true, note: existing, digest, decay, learned, context });
     }
 
     stage = "model";
@@ -128,7 +141,7 @@ export default async function (req) {
     let modelError = null;
     try {
       const raw = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: briefingPrompt(digest, decay, context),
+        prompt: briefingPrompt(digest, decay, context, learned),
         response_json_schema: BRIEFING_SCHEMA,
       });
       brief = cleanBriefing(raw);
@@ -146,6 +159,7 @@ export default async function (req) {
       generated_at: new Date().toISOString(),
       digest,
       decay,
+      learned,
       ...(brief || {}),
       model_error: modelError || "",
     };
@@ -158,7 +172,7 @@ export default async function (req) {
       console.log(`desk analyst note not saved: ${String((err && err.message) || err)}`);
     }
 
-    return Response.json({ enabled: true, cached: false, note, digest, decay, context, error: modelError });
+    return Response.json({ enabled: true, cached: false, note, digest, decay, learned, context, error: modelError });
   } catch (error) {
     return Response.json(
       { error: `${stage}: ${String((error && error.message) || error)}` },

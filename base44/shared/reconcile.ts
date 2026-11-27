@@ -7,6 +7,7 @@
 // for long. Server-side only: this module must never be imported from the
 // frontend.
 import { asArray, round, fetchLivePrices } from "./market.ts";
+import { recordLesson } from "./learn.ts";
 import {
   callJson,
   hmacHex,
@@ -387,6 +388,9 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           exit_reason: "synced",
         });
         out.closed.push({ symbol: sym, pnl_usd: round(pnl) });
+        // the close is remembered like any other, so a sync close teaches the
+        // bot instead of leaving a hole in its record
+        await recordLesson(base44, t, size ? (pnl / size) * 100 : 0, pnl, "synced").catch(() => {});
         await base44.entities.Alert.create({
           symbol: sym,
           title: `${sym} closed (no longer held on ${conn.label})`,
@@ -485,6 +489,8 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           exit_reason: "synced",
         });
         out.closed.push({ symbol: h.asset, pnl_usd: round(pnl) });
+        // remembered like any other close — see the note on the branch above
+        await recordLesson(base44, t, size ? (pnl / size) * 100 : 0, pnl, "synced").catch(() => {});
         await base44.entities.Alert.create({
           symbol: h.asset,
           title: `${h.asset} closed (sold on ${conn.label})`,
