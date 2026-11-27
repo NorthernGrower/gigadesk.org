@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { TIMEFRAMES, TIERS } from '@/lib/market';
+import { fmtUsd } from '@/lib/format';
 
 export function Field({ label, hint, children }) {
   return (
@@ -23,6 +24,49 @@ export function Toggle({ label, hint, checked, onChange }) {
         {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+// What the exchange account holds in Bitcoin, as the last bot cycle read it,
+// and what the Bitcoin book's own share and cap allow of it. Shown at the top
+// of the rules panel on both desks, so the book never asks how much to spend
+// without saying how much there is — and, on the live desk, why no Bitcoin
+// entry could fire.
+export function BtcBalanceNote({ book, rate = 0, blocked = null, note }) {
+  const held = Number((book || {}).balance_btc) || 0;
+  const usable = Number((book || {}).usable_btc) || 0;
+  const pct = Math.max(1, Math.min(100, Number((book || {}).use_pct) || 100));
+  const cap = Number((book || {}).cap_btc) || 0;
+  return (
+    <div className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bitcoin on the exchange</p>
+        <p className="num text-[11px] text-muted-foreground">
+          {pct}% usable{cap > 0 ? ` · cap ${cap} BTC` : ''}
+        </p>
+      </div>
+      <p className="num mt-1 text-base font-semibold">
+        {held > 0 ? `${held} BTC` : '0 BTC'}
+        {held > 0 && rate > 0 ? (
+          <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+            {fmtUsd(held * rate)} at {fmtUsd(rate)}
+          </span>
+        ) : null}
+      </p>
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        {note ||
+          (usable > 0
+            ? `${usable} BTC may be put to work at that share and cap.`
+            : held > 0
+              ? 'Nothing usable at that share and cap.'
+              : 'No Bitcoin on the exchange, so no Bitcoin-market entry can fire.')}
+      </p>
+      {blocked ? (
+        <p className="mt-1.5 rounded-lg border border-amber-400/30 bg-amber-400/5 px-2 py-1.5 text-[11px] leading-snug text-amber-300">
+          Last cycle: {blocked}
+        </p>
+      ) : null}
     </div>
   );
 }

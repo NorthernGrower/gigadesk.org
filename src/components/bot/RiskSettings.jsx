@@ -26,5 +26,13 @@ export default function RiskSettings({
         btcBlocked={btcBlocked}
       />
     );
-  return <PaperRules config={config} onSaved={onSaved} book={book} />;
+  return (
+    <PaperRules
+      config={config}
+      onSaved={onSaved}
+      book={book}
+      btcBook={btcBook}
+      btcRate={btcRate}
+    />
+  );
 }

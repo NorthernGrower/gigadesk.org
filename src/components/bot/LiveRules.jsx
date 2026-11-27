@@ -6,9 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
-import { fmtUsd } from '@/lib/format';
 import { bookRuleKeys, bookRuleSet } from '@/lib/bookRules';
-import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, marginFields, pyramidFields } from '@/components/bot/ruleFields';
+import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, marginFields, pyramidFields, BtcBalanceNote } from '@/components/bot/ruleFields';
 
 const EXCHANGE_LABELS = {
   binance_us: 'Binance US',
@@ -26,10 +25,6 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
   const [saving, setSaving] = useState(null);
   const [connections, setConnections] = useState([]);
   const isBtc = book === 'BTC';
-  // what the account actually holds, as the last cycle read it: the rules say
-  // what the book has to spend instead of leaving the figure to the desk page
-  const heldBtc = Number(btcBook?.balance_btc) || 0;
-  const usableBtc = Number(btcBook?.usable_btc) || 0;
 
   // a rule never saved shows this book's own default, never another book's value
   const fromConfig = (c) => {
@@ -175,6 +170,12 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
         </p>
       </div>
 
+      {/* the account's Bitcoin belongs at the top of the Bitcoin book's rules:
+          the share and cap below are meaningless without the holding they
+          apply to, and this is the figure that decides whether an entry can
+          fire at all. It shows whether or not real orders are switched on. */}
+      {isBtc ? <BtcBalanceNote book={btcBook} rate={btcRate} blocked={btcBlocked} /> : null}
+
       <Toggle
         label="Real orders"
         hint="When on, live-qualified longs are sent as market orders to the chosen exchange. Auto opens them, approved proposals fire them."
@@ -203,40 +204,6 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
           </p>
           {isBtc ? (
             <>
-              {/* what the account holds, and what these rules let the book use
-                  of it — the one figure that decides whether a Bitcoin entry
-                  can fire at all, so it belongs beside the rules themselves */}
-              <div className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2.5">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                    Bitcoin on the exchange
-                  </p>
-                  <p className="num text-[11px] text-muted-foreground">
-                    {Math.max(1, Math.min(100, Number(live.btc_use_pct) || 100))}% usable
-                    {Number(live.btc_cap_btc) > 0 ? ` · cap ${Number(live.btc_cap_btc)} BTC` : ''}
-                  </p>
-                </div>
-                <p className="num mt-1 text-base font-semibold">
-                  {heldBtc > 0 ? `${heldBtc} BTC` : '0 BTC'}
-                  {heldBtc > 0 && btcRate > 0 ? (
-                    <span className="ml-2 text-[11px] font-normal text-muted-foreground">
-                      {fmtUsd(heldBtc * btcRate)} at {fmtUsd(btcRate)}
-                    </span>
-                  ) : null}
-                </p>
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  {usableBtc > 0
-                    ? `${usableBtc} BTC may be put to work at the share and cap above.`
-                    : heldBtc > 0
-                      ? 'Nothing usable at the share and cap above.'
-                      : 'No Bitcoin on the exchange, so no Bitcoin-market entry can fire.'}
-                </p>
-                {btcBlocked ? (
-                  <p className="mt-1.5 rounded-lg border border-amber-400/30 bg-amber-400/5 px-2 py-1.5 text-[11px] leading-snug text-amber-300">
-                    Last cycle: {btcBlocked}
-                  </p>
-                ) : null}
-              </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field
                   label="Bitcoin balance to use %"

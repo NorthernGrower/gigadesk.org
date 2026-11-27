@@ -7,13 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
 import { bookRuleKeys, bookRuleSet } from '@/lib/bookRules';
-import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields } from '@/components/bot/ruleFields';
+import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields, BtcBalanceNote } from '@/components/bot/ruleFields';
 // The margin engine is live-desk only — the paper panel never shows or saves it.
 
 // Each desk has a paper rules panel for each book. The books share the engine
 // and the trade logic, but save their values separately: the dollar book into
 // the config, the Bitcoin book into btc_rules.
-export default function PaperRules({ config, onSaved, book = 'USD' }) {
+export default function PaperRules({ config, onSaved, book = 'USD', btcBook = null, btcRate = 0 }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(null);
   const isBtc = book === 'BTC';
@@ -168,6 +168,16 @@ export default function PaperRules({ config, onSaved, book = 'USD' }) {
           These rules govern this paper book only — the other book and the live desk keep their own saved values. Both books run the same trade logic.
         </p>
       </div>
+
+      {/* the account's Bitcoin is what the live Bitcoin book spends; it is shown
+          here too, so a paper Bitcoin book never leaves the holding a mystery */}
+      {isBtc ? (
+        <BtcBalanceNote
+          book={btcBook}
+          rate={btcRate}
+          note="The account's Bitcoin funds the live Bitcoin book only — this paper book trades the bankroll below."
+        />
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Starting balance" hint="Your paper bankroll in USD.">
