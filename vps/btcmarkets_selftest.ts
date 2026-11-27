@@ -7,7 +7,7 @@
 // the desk would only find out from a refused order.
 
 import { entryMinimum, liveEntrySize } from "../base44/shared/entryRules.ts";
-import { pickBtcBalance } from "../base44/shared/exchanges.ts";
+import { keepBalances, pickBtcBalance } from "../base44/shared/exchanges.ts";
 import { usdInQuote } from "../base44/shared/quotes.ts";
 
 function assert(ok: boolean, label: string) {
@@ -96,6 +96,20 @@ assert(
 );
 assert(pickBtcBalance([{ asset: "USD", total: 500 }]) === 0, "dollars are not Bitcoin");
 assert(pickBtcBalance([]) === 0, "an account holding no Bitcoin has none to spend");
+
+// the stored balance list is capped: the Bitcoin row must survive the cap even
+// when it is the smallest holding by unit count, or the Bitcoin book reads zero
+const many = Array.from({ length: 30 }, (_, i) => ({ asset: `COIN${i}`, total: 1000 - i }));
+const capped = keepBalances([...many, { asset: "BTC", total: 0.00004321 }]);
+assert(capped.length <= 25, "the stored list stays bounded");
+assert(
+  close(pickBtcBalance(capped), 0.00004321),
+  "a small Bitcoin holding survives the cap at satoshi precision",
+);
+assert(
+  keepBalances([{ asset: "BTC", total: 0 }, { asset: "USD", total: 3 }]).every((b) => b.asset !== "BTC"),
+  "a zero Bitcoin row is not kept as a holding",
+);
 
 // ---- 5. a dollar rule expressed in the quote: an order floor, a liquidity floor
 assert(close(usdInQuote(10, "BTC", 60000), 10 / 60000), "a $10 order floor is a fraction of a bitcoin");
