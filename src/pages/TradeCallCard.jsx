@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
 import { VERDICT_LABEL, ensureBotConfig, getCoinDetail, tradeAction } from '@/lib/market';
 import { fmtDate, fmtPct, fmtPrice, fmtUsd } from '@/lib/format';
+import { tradeHash } from '@/lib/tradeHash';
 
 function Stat({ label, value, tone = 'text-foreground', hint }) {
   return (
@@ -205,6 +206,14 @@ export default function TradeCallCard() {
             {trade.manual ? (
               <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-accent">
                 manual buy
+              </span>
+            ) : null}
+            {trade.id ? (
+              <span
+                className="num rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                title="Trade hash — the journal's reference for this trade"
+              >
+                #{tradeHash(trade)}
               </span>
             ) : null}
             <span

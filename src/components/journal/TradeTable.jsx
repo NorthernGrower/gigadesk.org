@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/common/States';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
 import { fmtDate, fmtPct, fmtPrice, fmtUsd } from '@/lib/format';
+import { tradeHash } from '@/lib/tradeHash';
 
 const STATUS_TONES = {
   open: 'bg-accent/15 text-accent',
@@ -83,6 +84,7 @@ export default function TradeTable({ trades = [], onChanged, showMode = true }) 
       {trades.map((trade) => {
         const open = trade.status === 'open';
         const isClosing = closingId === trade.id;
+        const hash = tradeHash(trade);
         return (
           <div
             key={trade.id}
@@ -112,6 +114,14 @@ export default function TradeTable({ trades = [], onChanged, showMode = true }) 
                       {trade.status}
                       {trade.exit_reason ? ` · ${trade.exit_reason}` : ''}
                     </span>
+                    {hash ? (
+                      <span
+                        className="num rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        title="Trade hash — the journal's reference for this trade"
+                      >
+                        #{hash}
+                      </span>
+                    ) : null}
                   </div>
                   <p className="num mt-0.5 text-[11px] text-muted-foreground">
                     {fmtUsd(trade.size_usd)} · {fmtPrice(trade.entry_price)}
