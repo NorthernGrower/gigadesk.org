@@ -2351,9 +2351,10 @@ export default async function (req) {
       // else the rate recorded when the trade opened.
       const posQuote = quoteOf(t.quote_asset);
       const posFx = posQuote === "BTC" ? btcUsdNow || Number(t.fx_usd) || 0 : 1;
-      if (!(posFx > 0)) return null;
       const priceUsd = Number(priceMap.get(t.symbol)?.price) || 0;
-      const price = posQuote === "BTC" ? (priceUsd > 0 ? priceUsd / posFx : entry) : priceUsd || entry;
+      // without a rate the position is still listed, marked at its own entry —
+      // a position must never vanish off the desk because a price is missing
+      const price = posQuote === "BTC" ? (priceUsd > 0 && posFx > 0 ? priceUsd / posFx : entry) : priceUsd || entry;
       const qty = Number(t.quantity) || 0;
       const size = Number(t.size_usd) || 0;
       const unreal = entry && price
@@ -2386,8 +2387,7 @@ export default async function (req) {
         pnl_pct: size ? round((unreal / size) * 100) : 0,
         progress_pct: goal ? round(Math.max(0, Math.min(100, (travelled / goal) * 100))) : 0,
       };
-    })
-      .filter(Boolean);
+    });
     // the live cap is the dollar book's, so only dollar positions count against
     // it. The Bitcoin book's limit is the Bitcoin the account holds.
     const liveExposure = livePositions

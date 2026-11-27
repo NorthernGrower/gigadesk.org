@@ -156,9 +156,13 @@ export async function fetchListedSymbols(cfg, quotes = null) {
       // wrong spelling here becomes an EMPTY symbol set — which the scan then
       // honours as "nothing is listed", silently closing a whole book
       const rawQuotes = new Set(
-        (wanted || ["USDT"]).flatMap((q) =>
-          q === "BTC" ? ["XXBT", "XBT"] : [{ USD: "ZUSD", EUR: "ZEUR", GBP: "ZGBP" }[q] || q],
-        ),
+        (wanted || ["USDT"]).flatMap((q: string) => {
+          if (q === "BTC") return ["XXBT", "XBT"];
+          if (q === "USD") return ["ZUSD"];
+          if (q === "EUR") return ["ZEUR"];
+          if (q === "GBP") return ["ZGBP"];
+          return [q];
+        }),
       );
       set = new Set(
         pairs
@@ -692,8 +696,8 @@ export function pickFundingQuote(balances = [], exchange) {
  * zero Bitcoin balance, showed 0 BTC, and refused every BTC-market entry. The
  * Bitcoin row therefore always survives the cap, whatever its size.
  */
-export function keepBalances(list = [], limit = 24) {
-  const rows = (list || []).filter((b) => b && (Number(b.total) > 0 || Number(b.spot) > 0));
+export function keepBalances(list: any[] = [], limit = 24) {
+  const rows = (list || []).filter((b: any) => b && (Number(b.total) > 0 || Number(b.spot) > 0));
   const kept = rows.slice(0, Math.max(1, limit));
   for (const row of rows) {
     if (!kept.includes(row) && String(row.asset || "").toUpperCase() === "BTC") kept.push(row);
