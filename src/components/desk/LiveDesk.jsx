@@ -312,30 +312,9 @@ export default function LiveDesk({
         />
       </div>
 
-      {!btcMode ? (
-        <div className="surface flex flex-wrap items-center justify-between gap-3 p-3">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-              BTC on the exchange
-            </p>
-            <p className="num mt-1 text-lg font-semibold">
-              {btcBalance > 0 ? `${btcBalance} BTC` : '0 BTC'}
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              {btcBalance > 0 ? fmtUsd(btcBalanceUsd) : '$0.00'}
-              {btcRate ? ` at ${fmtUsd(btcRate)}` : ''} · the funding BTC-quoted markets spend
-            </p>
-          </div>
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
-              btc.live_on ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'
-            }`}
-          >
-            {btc.live_on ? 'BTC markets on' : 'BTC markets off'}
-          </span>
-        </div>
-      ) : null}
-
+      {/* the Bitcoin book's figures belong to the Bitcoin book: the dollar desk
+          shows the dollar account only, so nothing here reads as part of it. The
+          BTC markets switch is under Bot → Rules → Live rules. */}
       <TodayProgress
         realizedToday={view.realizedToday}
         dailyGoal={view.dailyGoal ?? 0}
