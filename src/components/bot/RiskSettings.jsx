@@ -14,6 +14,7 @@ export default function RiskSettings({
   btcBook = null,
   btcRate = 0,
   btcBlocked = null,
+  dominance = null,
 }) {
   if (desk === 'live')
     return (
@@ -24,6 +25,7 @@ export default function RiskSettings({
         btcBook={btcBook}
         btcRate={btcRate}
         btcBlocked={btcBlocked}
+        dominance={dominance}
       />
     );
   return (
@@ -33,6 +35,7 @@ export default function RiskSettings({
       book={book}
       btcBook={btcBook}
       btcRate={btcRate}
+      dominance={dominance}
     />
   );
 }

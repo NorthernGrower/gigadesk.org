@@ -20,7 +20,7 @@ const EXCHANGE_LABELS = {
 // The live desk has a rules panel for each book. Both run the same engine and
 // trade logic, but the dollar book saves into live_rules and the Bitcoin book
 // into live_rules.live_btc_rules. One book's save never moves the other's.
-export default function LiveRules({ config, onSaved, book = 'USD', btcBook = null, btcRate = 0, btcBlocked = null }) {
+export default function LiveRules({ config, onSaved, book = 'USD', btcBook = null, btcRate = 0, btcBlocked = null, dominance = null }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(null);
   const [connections, setConnections] = useState([]);
@@ -66,6 +66,7 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
       btc_markets: lr.btc_markets === true,
       v3_exit: lr.v3_exit === true,
       harmonics: lr.harmonics === true,
+      dominance: lr.dominance ?? true,
     };
   };
   const [live, setLive] = useState(() => fromConfig(config));
@@ -130,6 +131,7 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
         btc_markets: live.btc_markets === true,
         v3_exit: live.v3_exit === true,
         harmonics: live.harmonics === true,
+        dominance: live.dominance !== false,
       };
       const pick = Object.fromEntries(bookRuleKeys('live', book)
         // the BTC markets switch and the desk analyst belong to the whole desk,
@@ -293,7 +295,7 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
         ) : null}
       </div>
 
-      {scanEngineFields(live, setLiveNum, setLiveV)}
+      {scanEngineFields(live, setLiveNum, setLiveV, dominance)}
 
       {!isBtc ? marginFields(live, setLiveNum, setLiveV) : null}
 

@@ -34,6 +34,8 @@ export const BOOK_RULE_KEYS = [
   "v3_exit",
   // V3 only: a harmonic pattern at the price moves the setup's score by 5
   "harmonics",
+  // all books: Bitcoin's share of the board, as a score weight on alt entries
+  "dominance",
   "always_take_top",
   "always_take_count",
   "profit_lock",
@@ -73,6 +75,9 @@ export const BOOK_RULE_DEFAULTS: Record<string, any> = {
   v3_exit: false,
   // harmonic patterns as a score nudge for V3, off until the desk asks for it
   harmonics: false,
+  // Bitcoin dominance as a score weight on alt entries: on, because the desk
+  // otherwise trades the same setup in either tape
+  dominance: true,
   always_take_top: false,
   always_take_count: 5,
   profit_lock: true,

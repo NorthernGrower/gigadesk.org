@@ -12,6 +12,7 @@ import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan, V3 } from "../../shared/v3algo.ts";
 import { detectHarmonic, HARMONIC } from "../../shared/harmonics.ts";
+import { readDominance } from "../../shared/dominance.ts";
 import { usdInQuote, quoteOf, patternFor } from "../../shared/quotes.ts";
 import { capPositionSize, losingStreak, riskState, profitLock } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
@@ -1146,6 +1147,10 @@ export default async function (req) {
     // every trade opened under it, so a closed setup can be read in the market
     // it actually lived in rather than in today's
     let btcAbove200d = null;
+    // Bitcoin's share of the board and which way it moved over the day, as
+    // this cycle read it. Declared here so the response reports it whether or
+    // not the entry block ran — a light cycle reads no board and leaves it null
+    let dominance = null;
     // why the live Bitcoin book could not open an entry this pass — the desk
     // shows this line instead of leaving a book that never trades unexplained
     let btcBlocked = null;
@@ -1381,6 +1386,11 @@ export default async function (req) {
       const styleRiskFor = (style) => (style === "timid" ? 0.75 : style === "aggressive" ? 1.4 : 1);
       // BTC's 24h tape drives the combo regime gate (risk-off longs, flat-tape skips)
       const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
+      // Bitcoin's share of the board, and which way it moved over the last day,
+      // read from the market caps the scan already carries. The reading is kept
+      // on the desk so tomorrow's cycle has something to measure against; a dry
+      // run writes nothing, and a venue feed carries no caps at all.
+      dominance = await readDominance(dryRun ? null : base44.asServiceRole, coins);
       const rulesByDesk = {
         live: entryRulesFor(liveView, "live", btcChange),
         paper: entryRulesFor(paperView, "paper", btcChange),
@@ -1684,6 +1694,44 @@ export default async function (req) {
           ],
         };
       };
+      // ---- BTC dominance, as a weight only. Bitcoin's share of the board is
+      // the axis the alts trade on: money leaving Bitcoin is money arriving in
+      // them, and money going back to Bitcoin leaves them. So a long gains the
+      // fixed points while the share falls and loses them while it climbs, and
+      // a short is the same trade the other way round. It never adds a
+      // candidate, never removes one and never places an order: on a scored desk
+      // the score only orders the setups the gates already accepted, so this
+      // decides who is bought first when more qualify than the book has room
+      // for. Nothing here has been measured on the record yet, so it is a
+      // weight rather than a gate, and a desk can turn it off.
+      const dominancePts = dominance ? Number(dominance.points) || 0 : 0;
+      const withDominance = (row, view) => {
+        if (!dominancePts || !view || view.dominance === false) return row;
+        // Bitcoin is not an alt against itself: its own score is its own
+        if (String(row.symbol || "").toUpperCase() === "BTC") return row;
+        const long = row.side !== "short";
+        const points = long ? dominancePts : -dominancePts;
+        const falling = Number(dominance.change_24h) < 0;
+        return {
+          ...row,
+          score: Math.max(0, Math.min(100, (Number(row.score) || 0) + points)),
+          dominance: {
+            pct: dominance.pct,
+            change_24h: dominance.change_24h,
+            points,
+          },
+          reasons: [
+            ...(row.reasons || []),
+            `BTC dominance ${round(dominance.pct, 2)}%, ${falling ? "down" : "up"} ${Math.abs(
+              round(dominance.change_24h, 2),
+            )} points in 24h: ${points > 0 ? "+" : ""}${points} to the score — ${
+              long
+                ? "alts travel better while Bitcoin's share falls"
+                : "a short travels better while Bitcoin's share climbs"
+            }. A weight on the order setups are taken in, never a signal on its own`,
+          ],
+        };
+      };
       // a V3 row trades the algorithm's own plan: its stop, no target, and it
       // is a long whatever the intraday scan said
       // V3 only rewrites a row on a desk that runs V3. The evaluations are
@@ -1815,8 +1863,10 @@ export default async function (req) {
         : [];
       const liveWanted = [...liveGated, ...liveTop]
         .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
-        // best score first, so a harmonic pattern's weight decides which setups
-        // are taken when more qualify than the book has room for
+        // the pattern and the tape weights are applied here, then the best score
+        // goes first: they decide which setups are taken when more qualify than
+        // the book has room for
+        .map((r) => withDominance(r, liveView))
         .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
         .slice(0, Math.max(0, liveMaxOpen - liveOpenCount));
       // a desk with qualifying setups but nothing to pay with should say so
@@ -1905,6 +1955,7 @@ export default async function (req) {
         : [];
       const paperWanted = [...paperGated, ...paperTop]
         .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+        .map((r) => withDominance(r, paperView))
         .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
         .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
       if (dryRun) {
@@ -2057,6 +2108,7 @@ export default async function (req) {
               row: r,
               btcChange24h: btcChange,
               medianChange24h: board.medianChange24h,
+              dominance,
             }),
             exchange: live.conn.exchange,
             exchange_order_id: real.order_id,
@@ -2133,6 +2185,7 @@ export default async function (req) {
             row: r,
             btcChange24h: btcChange,
             medianChange24h: board.medianChange24h,
+            dominance,
           }),
           rationale: (r.reasons || []).join(" • "),
           opened_at: new Date().toISOString(),
@@ -2201,6 +2254,7 @@ export default async function (req) {
         const btcCandidates = [...btcGatedPaper, ...btcTopPaper]
           .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
           .filter((r) => !already.has(r.symbol))
+          .map((r) => withDominance(r, paperBtcView))
           .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
           .slice(0, 5);
         for (const btcRow of paperBtcOn ? btcCandidates : []) {
@@ -2263,6 +2317,7 @@ export default async function (req) {
               row: btcRow,
               btcChange24h: btcChange,
               medianChange24h: board.medianChange24h,
+              dominance,
             }),
             quote_asset: "BTC",
             fx_usd: round(btcUsdNow, 2),
@@ -2373,6 +2428,7 @@ export default async function (req) {
           const btcSeeds = [...btcGatedLive, ...btcTopLive]
             .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
             .filter((r) => !takenBtc.has(r.symbol))
+            .map((r) => withDominance(r, liveBtcView))
             .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
             .slice(0, 5);
           // this book's slots are its own: the dollar plans were sized against
@@ -2465,6 +2521,7 @@ export default async function (req) {
                   row: btcLiveRow,
                   btcChange24h: btcChange,
                   medianChange24h: board.medianChange24h,
+                  dominance,
                 }),
                 quote_asset: "BTC",
                 fx_usd: round(btcUsdNow, 2),
@@ -2543,6 +2600,7 @@ export default async function (req) {
                 row: btcLiveRow,
                 btcChange24h: btcChange,
                 medianChange24h: board.medianChange24h,
+                dominance,
               }),
               quote_asset: "BTC",
               fx_usd: round(btcUsdNow, 2),
@@ -3112,6 +3170,9 @@ export default async function (req) {
       universe: board.universeCount,
       summary: board.summary,
       median_change_24h: board.medianChange24h,
+      // BTC's share of the board and which way it moved over the day, as this
+      // cycle read it — the weight the alt entries carried
+      dominance,
       source: board.source,
       cash: round(anchoredCash),
       profit_mode: config.profit_mode || "compound",

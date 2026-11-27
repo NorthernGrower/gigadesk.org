@@ -7,7 +7,7 @@ const USD_KEYS = [
   'allow_shorts', 'trading_style', 'timeframe', 'market_cap_scope', 'sentiment_watch',
   'confluence_v2', 'engine_v2', 'champion_engine', 'btc_gate', 'max_trade_loss_pct',
   'pyramid', 'pyramid_trigger_pct', 'v3_algo', 'v3_exit', 'harmonics', 'always_take_top',
-  'always_take_count', 'analyst_on',
+  'always_take_count', 'analyst_on', 'dominance',
 ];
 
 const LIVE_KEYS = [

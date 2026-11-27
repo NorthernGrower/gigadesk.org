@@ -38,6 +38,8 @@ export const LIVE_DEFAULTS = {
   btc_gate_mode: "any",
   always_take_top: false,
   always_take_count: 5,
+  // Bitcoin's share of the board as a score weight on alt entries
+  dominance: true,
   // BTC-quoted markets: a second, fully separate book on the desk. Each desk
   // switches them on for itself. The live book sizes from the account's own
   // Bitcoin spot balance and takes longs only, so switching this on can never

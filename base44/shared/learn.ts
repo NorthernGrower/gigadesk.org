@@ -124,7 +124,7 @@ export function rulesSnapshot({ desk, book = "USD", view = null, btcAbove200d = 
  * Only numbers the scan actually produced are kept; what it did not read is
  * left out rather than filled in.
  */
-export function entryContext({ row, btcChange24h = null, medianChange24h = null }) {
+export function entryContext({ row, btcChange24h = null, medianChange24h = null, dominance = null }) {
   const r = row || {};
   const ind = r.indicators || {};
   const num = (x) => (x == null || !Number.isFinite(Number(x)) ? null : Number(x));
@@ -164,6 +164,10 @@ export function entryContext({ row, btcChange24h = null, medianChange24h = null 
     // the tape the setup was born in: BTC's own move, and the board's median
     btc_change_24h: num(btcChange24h),
     median_change_24h: num(medianChange24h),
+    // Bitcoin's share of the board, and which way it moved over the day: the
+    // axis alt entries are weighted on
+    btc_dominance: dominance ? num(dominance.pct) : null,
+    btc_dominance_change_24h: dominance ? num(dominance.change_24h) : null,
   };
 }
 

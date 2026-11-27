@@ -13,7 +13,7 @@ import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields
 // Each desk has a paper rules panel for each book. The books share the engine
 // and the trade logic, but save their values separately: the dollar book into
 // the config, the Bitcoin book into btc_rules.
-export default function PaperRules({ config, onSaved, book = 'USD', btcBook = null, btcRate = 0 }) {
+export default function PaperRules({ config, onSaved, book = 'USD', btcBook = null, btcRate = 0, dominance = null }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(null);
   const isBtc = book === 'BTC';
@@ -50,6 +50,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
       btc_markets: view.btc_markets === true,
       v3_exit: view.v3_exit === true,
       harmonics: view.harmonics === true,
+      dominance: view.dominance ?? true,
     };
   };
   const [paper, setPaper] = useState(() => fromConfig(config));
@@ -92,6 +93,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
     btc_markets: paper.btc_markets === true,
     v3_exit: paper.v3_exit === true,
     harmonics: paper.harmonics === true,
+    dominance: paper.dominance !== false,
   });
 
   // only this book's keys are written; the other book's set is never touched.
@@ -218,7 +220,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
         onChange={setPaperV('allow_shorts')}
       />
 
-      {scanEngineFields(paper, setPaperNum, setPaperV)}
+      {scanEngineFields(paper, setPaperNum, setPaperV, dominance)}
 
       <WarningsBox warnings={deskRuleWarnings(paper)} />
 

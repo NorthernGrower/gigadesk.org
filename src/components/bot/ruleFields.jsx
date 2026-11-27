@@ -71,6 +71,41 @@ export function BtcBalanceNote({ book, rate = 0, blocked = null, note }) {
   );
 }
 
+// What Bitcoin's share of the board is, and which way it moved over the day:
+// the axis the alt entries are weighted on. Shown next to the switches so a
+// desk sees the reading its score came from instead of trusting a number it
+// never sees.
+export function DominanceNote({ market }) {
+  const pct = Number(market && market.pct);
+  if (!(pct > 0)) return null;
+  const change = market && market.change_24h != null ? Number(market.change_24h) : null;
+  const points = Number(market && market.points) || 0;
+  const falling = change != null && change < 0;
+  return (
+    <div className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bitcoin dominance</p>
+        <p className="text-[11px] text-muted-foreground">last cycle</p>
+      </div>
+      <p className="num mt-1 text-base font-semibold">
+        {pct.toFixed(2)}%
+        {change != null ? (
+          <span className={`ml-2 text-[11px] font-normal ${falling ? 'text-emerald-400' : 'text-amber-400'}`}>
+            {falling ? 'down' : 'up'} {Math.abs(change).toFixed(2)} pts in 24h
+          </span>
+        ) : null}
+      </p>
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        {change == null
+          ? 'No reading from a day ago yet, so no weight is applied. It needs one cycle roughly a day apart before it can say which way the share is going.'
+          : `${falling ? 'Falling' : 'Climbing'} — alts travel ${falling ? 'better' : 'worse'} in this tape. A long carries ${
+              points > 0 ? '+' : ''
+            }${points} to its score, a short the same amount the other way. A weight on the order setups are taken in, never a signal on its own.`}
+      </p>
+    </div>
+  );
+}
+
 export function WarningsBox({ warnings }) {
   if (!warnings.length) return null;
   return (
@@ -196,7 +231,7 @@ export function riskFields(form, setNum, set) {
 
 // The per-desk scan and engine settings: trading style, timeframe, market
 // coverage, tone watch and the engine toggles — each desk keeps its own.
-export function scanEngineFields(form, setNum, setV) {
+export function scanEngineFields(form, setNum, setV, market = null) {
   return (
     <>
       <div className="grid grid-cols-2 gap-3">
@@ -247,6 +282,7 @@ export function scanEngineFields(form, setNum, setV) {
       >
         <Input className="num" inputMode="decimal" value={form.max_trade_loss_pct} onChange={setNum('max_trade_loss_pct')} />
       </Field>
+      {market ? <DominanceNote market={market} /> : null}
       <div className="grid gap-2.5 sm:grid-cols-2">
         <Toggle
           label="Market tone watch"
@@ -285,6 +321,12 @@ export function scanEngineFields(form, setNum, setV) {
           hint="V3 only, and a weight at most: a harmonic pattern (Gartley, Bat, Butterfly, Crab, Cypher, Shark, 5-0, Three Drives) whose reversal zone the price is sitting in adds 5 points to that V3 setup's score — one pointing the other way takes 5 away. It never opens a trade on its own and never blocks one; the score only decides the order V3 setups are taken in."
           checked={form.harmonics === true}
           onChange={setV('harmonics')}
+        />
+        <Toggle
+          label="BTC dominance"
+          hint="Bitcoin's share of the board, as a weight at most: while that share falls money is leaving Bitcoin for the alts, so a long gains 5 points and a short loses them — and the other way round while it climbs. It never opens a trade and never blocks one; the score only orders the setups the gates already accepted. Read once a cycle from the same market caps the scan uses."
+          checked={form.dominance !== false}
+          onChange={setV('dominance')}
         />
         <Toggle
           label="Measured exit"

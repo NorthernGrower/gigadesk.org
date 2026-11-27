@@ -176,6 +176,8 @@ export function deskDigest(input: any) {
       allow_shorts: cfg.allow_shorts !== false,
       trading_style: cfg.trading_style || "mild",
       timeframe: cfg.timeframe || "1h",
+      // Bitcoin's share of the board as a score weight on alt entries
+      dominance: cfg.dominance !== false,
     },
   };
 }

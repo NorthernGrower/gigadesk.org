@@ -279,6 +279,7 @@ export default function Bot() {
               btcBook={bot?.btc_markets?.book || null}
               btcRate={Number(bot?.btc_markets?.btc_usd) || 0}
               btcBlocked={bot?.btc_markets?.blocked_reason || null}
+              dominance={bot?.dominance || null}
             />
           </div>
         </div>
