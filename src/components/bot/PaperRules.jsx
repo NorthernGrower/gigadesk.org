@@ -6,89 +6,127 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
+import { bookRuleKeys, bookRuleSet } from '@/lib/bookRules';
 import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields } from '@/components/bot/ruleFields';
 // The margin engine is live-desk only — the paper panel never shows or saves it.
 
-// The paper desk's own rules — nothing here touches the live desk.
-export default function PaperRules({ config, onSaved }) {
+// Each desk has a paper rules panel for each book. The books share the engine
+// and the trade logic, but save their values separately: the dollar book into
+// the config, the Bitcoin book into btc_rules.
+export default function PaperRules({ config, onSaved, book = 'USD' }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(null);
+  const isBtc = book === 'BTC';
 
-  const fromConfig = (c) => ({
-    starting_balance: c?.starting_balance ?? 10000,
-    profit_mode: c?.profit_mode || 'compound',
-    score_bar: c?.score_bar ?? 70,
-    risk_per_trade_pct: c?.risk_per_trade_pct ?? 4,
-    max_open_positions: c?.max_open_positions ?? 8,
-    daily_target_pct: c?.daily_target_pct ?? 2,
-    cooldown_minutes: c?.cooldown_minutes ?? 120,
-    trailing_stop: c?.trailing_stop ?? true,
-    trailing_trigger_pct: c?.trailing_trigger_pct ?? 3,
-    trailing_distance_pct: c?.trailing_distance_pct ?? 1.5,
-    allow_shorts: c?.allow_shorts ?? true,
-    trading_style: c?.trading_style || 'mild',
-    timeframe: c?.timeframe || '1h',
-    market_cap_scope: c?.market_cap_scope || 'all',
-    sentiment_watch: c?.sentiment_watch ?? true,
-    confluence_v2: c?.confluence_v2 !== false,
-    engine_v2: c?.engine_v2 !== false,
-    champion_engine: c?.champion_engine !== false,
-    btc_gate: c?.btc_gate !== false,
-    max_trade_loss_pct: c?.max_trade_loss_pct ?? 20,
-    pyramid: c?.pyramid === true,
-    pyramid_trigger_pct: c?.pyramid_trigger_pct ?? 1.5,
-    v3_algo: c?.v3_algo === true,
-    always_take_top: c?.always_take_top === true,
-    always_take_count: c?.always_take_count ?? 5,
-    analyst_on: c?.analyst_on === true,
-    btc_markets: c?.btc_markets === true,
-    v3_exit: c?.v3_exit === true,
-  });
+  const fromConfig = (c) => {
+    const view = bookRuleSet(c, 'paper', book);
+    return {
+      starting_balance: isBtc ? c?.btc_starting_balance ?? 10000 : c?.starting_balance ?? 10000,
+      profit_mode: view.profit_mode || 'compound',
+      score_bar: view.score_bar ?? 70,
+      risk_per_trade_pct: view.risk_per_trade_pct ?? 4,
+      max_open_positions: view.max_open_positions ?? 8,
+      daily_target_pct: view.daily_target_pct ?? 2,
+      cooldown_minutes: view.cooldown_minutes ?? 120,
+      trailing_stop: view.trailing_stop ?? true,
+      trailing_trigger_pct: view.trailing_trigger_pct ?? 3,
+      trailing_distance_pct: view.trailing_distance_pct ?? 1.5,
+      allow_shorts: view.allow_shorts ?? true,
+      trading_style: view.trading_style || 'mild',
+      timeframe: view.timeframe || '1h',
+      market_cap_scope: view.market_cap_scope || 'all',
+      sentiment_watch: view.sentiment_watch ?? true,
+      confluence_v2: view.confluence_v2 !== false,
+      engine_v2: view.engine_v2 !== false,
+      champion_engine: view.champion_engine !== false,
+      btc_gate: view.btc_gate !== false,
+      max_trade_loss_pct: view.max_trade_loss_pct ?? 20,
+      pyramid: view.pyramid === true,
+      pyramid_trigger_pct: view.pyramid_trigger_pct ?? 1.5,
+      v3_algo: view.v3_algo === true,
+      always_take_top: view.always_take_top === true,
+      always_take_count: view.always_take_count ?? 5,
+      analyst_on: view.analyst_on === true,
+      btc_markets: view.btc_markets === true,
+      v3_exit: view.v3_exit === true,
+    };
+  };
   const [paper, setPaper] = useState(() => fromConfig(config));
 
-  // re-sync the form whenever a fresh config lands (after a save or a cycle)
+  // re-sync the form whenever a fresh config lands or the book changes
   useEffect(() => {
     if (config) setPaper(fromConfig(config));
-  }, [config?.id, config?.updated_date]);
+  }, [config, isBtc]);
 
   const setPaperV = (key) => (value) => setPaper((prev) => ({ ...prev, [key]: value }));
   const setPaperNum = (key) => (event) => setPaper((prev) => ({ ...prev, [key]: event.target.value }));
 
+  // the values shared by both books, normalised exactly as the panel shows them
+  const values = () => ({
+    profit_mode: paper.profit_mode,
+    score_bar: Math.max(0, roundTo(Number(paper.score_bar), 1)),
+    risk_per_trade_pct: roundTo(paper.risk_per_trade_pct, 2),
+    max_open_positions: Math.max(1, Math.round(Number(paper.max_open_positions) || 1)),
+    daily_target_pct: roundTo(paper.daily_target_pct, 2),
+    cooldown_minutes: Math.max(0, Math.round(Number(paper.cooldown_minutes) || 0)),
+    trailing_trigger_pct: roundTo(paper.trailing_trigger_pct, 2),
+    trailing_distance_pct: roundTo(paper.trailing_distance_pct, 2),
+    trailing_stop: paper.trailing_stop,
+    allow_shorts: paper.allow_shorts,
+    trading_style: paper.trading_style,
+    timeframe: paper.timeframe,
+    market_cap_scope: paper.market_cap_scope,
+    sentiment_watch: paper.sentiment_watch,
+    confluence_v2: paper.confluence_v2,
+    engine_v2: paper.engine_v2,
+    champion_engine: paper.champion_engine,
+    btc_gate: paper.btc_gate,
+    max_trade_loss_pct: roundTo(paper.max_trade_loss_pct, 1),
+    pyramid: paper.pyramid === true,
+    pyramid_trigger_pct: roundTo(Number(paper.pyramid_trigger_pct) || 1.5, 2),
+    v3_algo: paper.v3_algo === true,
+    always_take_top: paper.always_take_top === true,
+    always_take_count: Math.max(1, Math.min(10, Math.round(Number(paper.always_take_count) || 5))),
+    analyst_on: paper.analyst_on === true,
+    btc_markets: paper.btc_markets === true,
+    v3_exit: paper.v3_exit === true,
+  });
+
+  // only this book's keys are written; the other book's set is never touched.
+  // The switches that belong to the whole desk (the BTC markets switch and the
+  // desk analyst) stay at the desk level, so both book panels see the same one.
+  const DESK_KEYS = ['btc_markets', 'analyst_on'];
+  const pick = (keys, source) =>
+    Object.fromEntries(
+      keys.filter((key) => !DESK_KEYS.includes(key) && source[key] != null).map((key) => [key, source[key]]),
+    );
+
   const savePaper = async () => {
     setSaving('paper');
     try {
-      await base44.entities.BotConfig.update(config.id, {
-        starting_balance: roundTo(paper.starting_balance, 2),
-        profit_mode: paper.profit_mode,
-        score_bar: Math.max(0, roundTo(Number(paper.score_bar), 1)),
-        risk_per_trade_pct: roundTo(paper.risk_per_trade_pct, 2),
-        max_open_positions: Math.max(1, Math.round(Number(paper.max_open_positions) || 1)),
-        daily_target_pct: roundTo(paper.daily_target_pct, 2),
-        target_pct: roundTo(paper.daily_target_pct, 2),
-        cooldown_minutes: Math.max(0, Math.round(Number(paper.cooldown_minutes) || 0)),
-        trailing_trigger_pct: roundTo(paper.trailing_trigger_pct, 2),
-        trailing_distance_pct: roundTo(paper.trailing_distance_pct, 2),
-        trailing_stop: paper.trailing_stop,
-        allow_shorts: paper.allow_shorts,
-        trading_style: paper.trading_style,
-        timeframe: paper.timeframe,
-        market_cap_scope: paper.market_cap_scope,
-        sentiment_watch: paper.sentiment_watch,
-        confluence_v2: paper.confluence_v2,
-        engine_v2: paper.engine_v2,
-        champion_engine: paper.champion_engine,
-        btc_gate: paper.btc_gate,
-        max_trade_loss_pct: roundTo(paper.max_trade_loss_pct, 1),
-        pyramid: paper.pyramid === true,
-        pyramid_trigger_pct: roundTo(Number(paper.pyramid_trigger_pct) || 1.5, 2),
-        v3_algo: paper.v3_algo === true,
-        always_take_top: paper.always_take_top === true,
-        always_take_count: Math.max(1, Math.min(10, Math.round(Number(paper.always_take_count) || 5))),
-        analyst_on: paper.analyst_on === true,
-        btc_markets: paper.btc_markets === true,
-        v3_exit: paper.v3_exit === true,
-      });
-      toast({ title: 'Paper rules saved', description: 'The paper desk picks them up on its next cycle. Live rules are untouched.' });
+      const all = values();
+      if (isBtc) {
+        const saved = pick(bookRuleKeys('paper', 'BTC'), all);
+        saved.starting_balance = roundTo(paper.starting_balance, 2);
+        saved.profit_mode = paper.profit_mode;
+        await base44.entities.BotConfig.update(config.id, {
+          btc_rules: { ...(config.btc_rules || {}), ...saved },
+          // the book's bankroll and the desk-level switches both live on the config
+          btc_starting_balance: roundTo(paper.starting_balance, 2),
+          btc_markets: paper.btc_markets === true,
+          analyst_on: paper.analyst_on === true,
+        });
+      } else {
+        const saved = pick(bookRuleKeys('paper', 'USD'), all);
+        await base44.entities.BotConfig.update(config.id, {
+          ...saved,
+          starting_balance: roundTo(paper.starting_balance, 2),
+          target_pct: roundTo(paper.daily_target_pct, 2),
+          btc_markets: paper.btc_markets === true,
+          analyst_on: paper.analyst_on === true,
+        });
+      }
+      toast({ title: `${isBtc ? 'Bitcoin' : 'Dollar'} paper rules saved`, description: 'The other book’s rules are untouched.' });
       if (onSaved) onSaved();
     } catch (error) {
       toast({ title: 'Could not save', description: error.message, variant: 'destructive' });
@@ -123,9 +161,11 @@ export default function PaperRules({ config, onSaved }) {
   return (
     <div className="surface space-y-4 p-4">
       <div>
-        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Paper bot rules</p>
+        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          Paper bot rules · {isBtc ? 'Bitcoin book' : 'Dollar book'}
+        </p>
         <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-          These rules govern the paper desk only — the live desk keeps its own rules, saved separately.
+          These rules govern this paper book only — the other book and the live desk keep their own saved values. Both books run the same trade logic.
         </p>
       </div>
 
@@ -172,7 +212,7 @@ export default function PaperRules({ config, onSaved }) {
 
       <Button className="w-full" onClick={savePaper} disabled={saving === 'paper'}>
         {saving === 'paper' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-        Save paper rules
+        Save {isBtc ? 'Bitcoin' : 'dollar'} paper rules
       </Button>
       <Button variant="outline" className="w-full border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={resetBalance} disabled={saving === 'paper'}>
         <RotateCcw className="mr-2 h-4 w-4" />

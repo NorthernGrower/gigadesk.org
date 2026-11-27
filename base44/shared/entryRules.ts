@@ -16,12 +16,11 @@ export function entryRulesFor(config = {}, desk = "paper", btcChange24h = null) 
   const engineV2 = config.engine_v2 !== false;
   const champion = config.champion_engine !== false;
   const style = config.trading_style || "mild";
-  // each desk's own score bar: the paper pool reads the config's bar, the
-  // live desk reads live_rules.bar — falling back to the tested optimum 70.
+  // each view carries its own score bar at the top level: the dollar live view
+  // is built from its live rules, and a Bitcoin book view from its own rules.
   // A lower bar takes more trades with weaker setups; the rules panel warns
   // whenever a desk runs away from 70.
-  const barVal = desk === "live" ? (config.live_rules || {}).score_bar : config.score_bar;
-  const userBar = Number(barVal);
+  const userBar = Number(config.score_bar);
   return {
     min_score:
       Number.isFinite(userBar)

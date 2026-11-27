@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { MODE_HINT, MODE_LABEL } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
+import BookSwitch from '@/components/desk/BookSwitch';
 
 const MODES = ['off', 'approve', 'auto'];
 
@@ -19,7 +20,7 @@ function Metric({ label, value, tone = 'neutral', hint }) {
   );
 }
 
-export default function BotControls({ config, stats, desk = 'live', onModeChange, onToggleAutoRun, onRunNow, running }) {
+export default function BotControls({ config, stats, desk = 'live', book = 'USD', onBookChange, onModeChange, onToggleAutoRun, onRunNow, running }) {
   const mode = config?.mode || 'approve';
   const cap = Number(stats?.cap) || 0;
   const exposure = Number(stats?.exposure) || 0;
@@ -38,7 +39,8 @@ export default function BotControls({ config, stats, desk = 'live', onModeChange
               : 'Stats below are exchange-reported and the rules govern real orders only. The paper desk trades separately with its own rules. A breached stop is closed within five minutes even while the app is closed.'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <BookSwitch value={book} onChange={onBookChange} />
           <div className="hidden items-center gap-1 rounded-xl border border-border/70 bg-secondary/40 p-0.5 sm:flex">
             {MODES.map((value) => (
               <button
@@ -66,7 +68,7 @@ export default function BotControls({ config, stats, desk = 'live', onModeChange
           <Button
             variant="outline"
             onClick={() => document.getElementById('risk-rules')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-            title={paper ? 'Paper bot rules' : 'Live bot rules'}
+            title={book === 'BTC' ? `${paper ? 'Paper' : 'Live'} Bitcoin bot rules` : paper ? 'Paper bot rules' : 'Live bot rules'}
           >
             <SlidersHorizontal className="mr-2 h-4 w-4" />
             Rules
@@ -164,6 +166,7 @@ export default function BotControls({ config, stats, desk = 'live', onModeChange
 
       <p className="text-[11px] text-muted-foreground">
         {stats?.openCount || 0} {paper ? 'paper' : 'live'} positions open · {stats?.scanned || 0} coins scanned on the last cycle
+        {book === 'BTC' ? ' · Bitcoin book' : ''}
         {stats?.v3?.evaluated
           ? ` · V3 ${stats.v3.entries || 0} setups from ${stats.v3.evaluated} daily checks${stats.v3.btc_above === false ? ' (BTC below its 200-day average)' : ''}`
           : ''}

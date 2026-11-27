@@ -26,6 +26,11 @@
       "additionalProperties": true,
       "description": "Rules that govern live trading only \u2014 sizing, slots, score bar, trailing, cooldown, pyramiding, engines and the live budget. Fully separate from the paper rules: a live rule never falls back to a paper value, only to its own live default"
     },
+    "btc_rules": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The paper Bitcoin book's own trade rules: score bar, risk, slots, cooldowns, trailing, engines and scan settings. Seeded once from the dollar paper rules, then kept apart. Same trade logic as the dollar book, its own values"
+    },
     "profit_mode": {
       "type": "string",
       "enum": [

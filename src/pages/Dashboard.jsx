@@ -9,6 +9,7 @@ import SmartMoneyPanel from '@/components/dashboard/SmartMoneyPanel';
 import TodayProgress from '@/components/dashboard/TodayProgress';
 import LiveDesk from '@/components/desk/LiveDesk';
 import BookSwitch from '@/components/desk/BookSwitch';
+import { bookRuleSet } from '@/lib/bookRules';
 import DayMovers from '@/components/desk/DayMovers';
 import RecentCloses from '@/components/desk/RecentCloses';
 import StatCard from '@/components/common/StatCard';
@@ -276,7 +277,9 @@ export default function Dashboard() {
     btcMode ? p.quote_asset === 'BTC' : (p.quote_asset || 'USD') !== 'BTC',
   );
   const dailyTargetPct = Number(config?.daily_target_pct) || 2;
-  const btcDailyGoal = ((Number(btcBook.starting_balance) || 0) * dailyTargetPct) / 100;
+  // the Bitcoin book has its own daily target, so its goal is measured by its own rule
+  const btcTargetPct = Number(bookRuleSet(config, 'paper', 'BTC')?.daily_target_pct) || 2;
+  const btcDailyGoal = ((Number(btcBook.starting_balance) || 0) * btcTargetPct) / 100;
   const view = btcMode
     ? {
         equity: btcBook.equity || 0,

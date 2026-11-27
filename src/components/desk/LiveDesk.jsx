@@ -18,6 +18,7 @@ import TodayProgress from '@/components/dashboard/TodayProgress';
 import TopPicks from '@/components/desk/TopPicks';
 import DayMovers from '@/components/desk/DayMovers';
 import RecentCloses from '@/components/desk/RecentCloses';
+import { bookRuleSet } from '@/lib/bookRules';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -88,6 +89,8 @@ export default function LiveDesk({
   const balanceAsOf =
     live.balance_as_of || savedBalance?.asOf || connection?.balance_updated_at || connection?.last_checked_at || null;
   const liveDayPct = Number(bot?.config?.live_rules?.daily_target_pct ?? bot?.config?.daily_target_pct) || 2;
+  // the Bitcoin book keeps its own daily target, separate from the dollar book's
+  const btcDayPct = Number(bookRuleSet(bot?.config, 'live', 'BTC')?.daily_target_pct) || 2;
 
   // one book on the page at a time: a position belongs to the book its own
   // quote names, so nothing here mixes the dollar book with the Bitcoin one
@@ -98,7 +101,7 @@ export default function LiveDesk({
   const btcBalanceUsd =
     btcBook.balance_usd != null ? Number(btcBook.balance_usd) : Number(live.btc_balance_usd) || 0;
   const btcRate = Number(btc.btc_usd) || Number(live.btc_rate) || 0;
-  const btcDailyGoal = btcBalanceUsd > 0 ? (btcBalanceUsd * liveDayPct) / 100 : 0;
+  const btcDailyGoal = btcBalanceUsd > 0 ? (btcBalanceUsd * btcDayPct) / 100 : 0;
   const usdEquity = balanceUsd != null ? (balanceUsd || 0) + (live.unrealized || 0) : null;
 
   const view = btcMode

@@ -14,7 +14,8 @@ import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan, V3 } from "../../shared/v3al
 import { usdInQuote, quoteOf, patternFor } from "../../shared/quotes.ts";
 import { capPositionSize, losingStreak, riskState, profitLock } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
-import { toUsd } from "../../shared/quotes.ts";
+import { toUsd, toQuote } from "../../shared/quotes.ts";
+import { btcBookView, seedBookRules } from "../../shared/bookRules.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -122,6 +123,25 @@ export default async function (req) {
     };
     const paperEngine = deskEngine(paperView);
     const liveEngine = deskEngine(liveView);
+
+    // ---- the Bitcoin books' own rules. Each Bitcoin book keeps a rule set of its
+    // own (btc_rules on paper, live_btc_rules live), seeded once from the dollar
+    // desk's current values so nothing changes on upgrade. Every Bitcoin leg reads
+    // its own view; the trade logic and the engines stay shared.
+    if (!dryRun) {
+      const seedPatch = {};
+      if (!config.btc_rules) seedPatch.btc_rules = seedBookRules(paperView);
+      if (!LR.live_btc_rules) seedPatch.live_rules = { ...LR, live_btc_rules: seedBookRules(liveView) };
+      if (Object.keys(seedPatch).length) {
+        await base44.entities.BotConfig.update(config.id, seedPatch);
+        Object.assign(config, seedPatch);
+      }
+    }
+    const paperBtcView = btcBookView(paperView, (config.btc_rules || {}));
+    // the seeded live set is read off the config, not the pre-seed snapshot
+    const liveBtcView = btcBookView(liveView, (config.live_rules || {}).live_btc_rules);
+    const paperBtcEngine = deskEngine(paperBtcView);
+    const liveBtcEngine = deskEngine(liveBtcView);
 
     // single-flight: a cycle that started moments ago is still scanning, and
     // two overlapping cycles read the same empty state and opened the same
@@ -464,8 +484,12 @@ export default async function (req) {
         closed_at: new Date().toISOString(),
         exit_reason: reason,
       });
-      if ((t.mode || "paper") === "paper")
-        cash += (config.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : size + pnl;
+      if ((t.mode || "paper") === "paper") {
+        // a Bitcoin paper close books into the Bitcoin book's cash, never the dollar cash
+        if (closedQuote === "BTC")
+          btcCash += (paperBtcView.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : size + pnl;
+        else cash += (config.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : size + pnl;
+      }
       closed.push({
         id: t.id,
         symbol: t.symbol,
@@ -559,8 +583,11 @@ export default async function (req) {
         signal_id: t.signal_id,
         rationale: "Scale-out: half booked at +3R, the runner's stop sits at break-even",
       });
-      if ((t.mode || "paper") === "paper")
-        cash += (config.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : legSize + pnl;
+      if ((t.mode || "paper") === "paper") {
+        if (legQuote === "BTC")
+          btcCash += (paperBtcView.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : legSize + pnl;
+        else cash += (config.profit_mode || "compound") === "stack" ? Math.min(pnl, 0) : legSize + pnl;
+      }
       await base44.entities.Trade.update(t.id, {
         quantity: legQty,
         size_usd: legSize,
@@ -605,8 +632,10 @@ export default async function (req) {
       // each position follows its own desk's rules: real positions are live-
       // desk trades, everything else is paper
       const isRealPos = (t.mode || "paper") === "real";
-      const deskCfg = isRealPos ? liveView : paperView;
-      const deskEng = isRealPos ? liveEngine : paperEngine;
+      // a Bitcoin-market position follows its own book's rules, a dollar one its desk's
+      const isBtcPos = posQuote === "BTC";
+      const deskCfg = isBtcPos ? (isRealPos ? liveBtcView : paperBtcView) : isRealPos ? liveView : paperView;
+      const deskEng = isBtcPos ? (isRealPos ? liveBtcEngine : paperBtcEngine) : isRealPos ? liveEngine : paperEngine;
 
       // ---- V3 positions exit on the algorithm's own rules, which are the ones
       // that were measured: a 2xATR daily stop and a 30-bar horizon, with no
@@ -692,16 +721,16 @@ export default async function (req) {
       // The paper desk keeps the tested stacks' behavior (no trailing on
       // combo/margin targets)
       const trailingOn = isRealPos
-        ? lrVal("trailing_stop", true) !== false
+        ? deskCfg.trailing_stop !== false
         : (Number(t.target_r) || 0) >= 3
           ? false
-          : config.trailing_stop !== false;
+          : deskCfg.trailing_stop !== false;
       if (trailingOn) {
         if (side === "long" && price > peak) peak = price;
         if (side === "short" && price < peak) peak = price;
-        if (gainPct >= Number(isRealPos ? lrVal("trailing_trigger_pct", 3) : (config.trailing_trigger_pct ?? 3))) {
+        if (gainPct >= Number(deskCfg.trailing_trigger_pct ?? 3)) {
           const dist =
-            Number(isRealPos ? lrVal("trailing_distance_pct", 1.5) : (config.trailing_distance_pct ?? 1.5)) / 100;
+            Number(deskCfg.trailing_distance_pct ?? 1.5) / 100;
           const trail = side === "long" ? peak * (1 - dist) : peak * (1 + dist);
           if (side === "long" && trail > stop) stop = trail;
           if (side === "short" && trail < stop) stop = trail;
@@ -715,15 +744,15 @@ export default async function (req) {
       // deskGuard), and both only ever raise a stop — the higher one wins, so
       // the two can never fight. A V3 or measured-exit position returns above
       // and takes it from the guard instead.
-      if (isRealPos && lrVal("profit_lock", true) !== false) {
+      if (isRealPos && deskCfg.profit_lock !== false) {
         const lock = profitLock({
           side,
           entry,
           stop,
           peak,
           price,
-          armPct: Number(lrVal("lock_arm_pct", 2)) || 0,
-          givebackPct: Number(lrVal("giveback_pct", 50)) || 0,
+          armPct: Number(deskCfg.lock_arm_pct ?? 2) || 0,
+          givebackPct: Number(deskCfg.giveback_pct ?? 50) || 0,
         });
         if (lock) {
           if (lock.peak !== prevPeak) updates.peak_price = round(lock.peak, 8);
@@ -742,9 +771,7 @@ export default async function (req) {
       // per-trade max loss guard: a trade down more than max_trade_loss_pct
       // of its own deployed size is force-closed at market — the backstop
       // when a stop sits too wide or the tape moved past the desk's checks
-      const maxLossPct = isRealPos
-        ? Number(lrVal("max_trade_loss_pct", 20)) || 0
-        : Number(config.max_trade_loss_pct) || 0;
+      const maxLossPct = Number(deskCfg.max_trade_loss_pct) || 0;
       const hitMaxLoss = maxLossPct > 0 && gainPct <= -maxLossPct;
       // 3R scale-out: fires once, at +3R, on the stacks tested at scale-out
       // targets (6R combo). A 3R margin target coincides with its own target
@@ -798,7 +825,7 @@ export default async function (req) {
         // trailing against it on the next cycle, so the added size
         // manages exactly like the opening leg.
         const addsSoFar = Number(t.adds) || 0;
-        const pyramidOn = isRealPos ? lrVal("pyramid", false) === true : config.pyramid === true;
+        const pyramidOn = deskCfg.pyramid === true;
         // a BTC-quoted position is never added to: the leg is sized and paid
         // from the desk's dollar quote, which this position never spends, so
         // an add would size against money it cannot use
@@ -951,14 +978,19 @@ export default async function (req) {
     };
     stage = "sentiment";
     if (!light) {
-      await sentimentPass("paper", paperView, sentinel.filter((t) => (t.mode || "paper") !== "real"));
-      await sentimentPass("live", liveView, sentinel.filter((t) => (t.mode || "paper") === "real"));
+      // each book re-reads its own positions with its own sentiment settings
+      const onReal = (t) => (t.mode || "paper") === "real";
+      const onBtc = (t) => quoteOf(t.quote_asset) === "BTC";
+      await sentimentPass("paper", paperView, sentinel.filter((t) => !onReal(t) && !onBtc(t)));
+      await sentimentPass("paperbtc", paperBtcView, sentinel.filter((t) => !onReal(t) && onBtc(t)));
+      await sentimentPass("live", liveView, sentinel.filter((t) => onReal(t) && !onBtc(t)));
+      await sentimentPass("livebtc", liveBtcView, sentinel.filter((t) => onReal(t) && onBtc(t)));
     }
     for (const t of sentinel) {
       // manual buys trade the sell logic only: stops, targets and trailing —
       // never a sentiment flip or a thesis-decay close
       if (t.manual === true) continue;
-      const row = sentimentReads.get(`${(t.mode || "paper") === "real" ? "live" : "paper"}:${t.symbol}`);
+      const row = sentimentReads.get(`${(t.mode || "paper") === "real" ? "live" : "paper"}${quoteOf(t.quote_asset) === "BTC" ? "btc" : ""}:${t.symbol}`);
       if (!row) continue;
       const side = t.side === "short" ? "short" : "long";
       const flipped =
@@ -969,10 +1001,12 @@ export default async function (req) {
       // supports its own side is closed instead of drifting down to the stop
       const ownScore = side === "long" ? row.long_score : row.short_score;
       const livePrice = Number(priceMap.get(t.symbol)?.price) || 0;
+      // the thesis check compares like with like: a Bitcoin position's price is in bitcoin
+      const livePriceQuote = toQuote(livePrice, t.quote_asset, btcUsdNow);
       const entryPrice = Number(t.entry_price) || 0;
       const weakened =
-        entryPrice && livePrice
-          ? (side === "long" ? livePrice < entryPrice : livePrice > entryPrice) &&
+        entryPrice && livePriceQuote
+          ? (side === "long" ? livePriceQuote < entryPrice : livePriceQuote > entryPrice) &&
             ownScore != null &&
             ownScore < 45
           : false;
@@ -1015,6 +1049,9 @@ export default async function (req) {
     const openCount = stillOpen.length;
     const paperMaxOpen = Math.max(1, Number(config.max_open_positions) || 8);
     const liveMaxOpen = Math.max(1, Number(lrVal("max_open_positions", 8)) || 8);
+    // each Bitcoin book's own slots
+    const paperBtcMaxOpen = Math.max(1, Number(paperBtcView.max_open_positions) || 8);
+    const liveBtcMaxOpen = Math.max(1, Number(liveBtcView.max_open_positions) || 8);
     const opened = [];
     const proposed = [];
     let eligibleCount = null;
@@ -1025,6 +1062,8 @@ export default async function (req) {
     // the Bitcoin market's own board and V3 read, declared at the cycle's own
     // scope so the response can report them whether or not the scan ran
     let btcBoard = null;
+    // the live Bitcoin book's own board, when its scan settings differ
+    let liveBtcBoard = null;
     let btcV3Summary = null;
     // portfolio risk state for the paper desk: filled in when this cycle
     // actually looks for entries, surfaced in the response for the bot page
@@ -1041,9 +1080,9 @@ export default async function (req) {
 
     const scanGateOpen =
       paperOpenCount < paperMaxOpen ||
-      (btcMarketsOn(paperView) && paperBtcOpen < paperMaxOpen) ||
+      (btcMarketsOn(paperView) && paperBtcOpen < paperBtcMaxOpen) ||
       (live.conn != null && liveVerified &&
-        (liveOpenCount < liveMaxOpen || (btcMarketsOn(liveView) && liveBtcOpen < liveMaxOpen)));
+        (liveOpenCount < liveMaxOpen || (btcMarketsOn(liveView) && liveBtcOpen < liveBtcMaxOpen)));
 
     stage = "scan";
     if (!light && config.mode !== "off" && scanGateOpen && !cycleInFlight && (dryRun || claimConfirmed)) {
@@ -1113,15 +1152,15 @@ export default async function (req) {
             ? await fetchListedSymbols(live.conn, ["BTC"])
             : null;
           btcBoard = await scanBoard({
-            timeframe: config.timeframe || "1h",
-            scope: config.market_cap_scope || "all",
+            timeframe: paperBtcView.timeframe || "1h",
+            scope: paperBtcView.market_cap_scope || "all",
             count: 60,
-            dailyTargetPct: Number(config.daily_target_pct) || 2,
+            dailyTargetPct: Number(paperBtcView.daily_target_pct) || 2,
             extraSymbols: watch.map((w) => w.symbol),
             // an empty set means the listing read found nothing, not that
             // nothing is listed: honouring it would blank the whole book
             ...(btcListed && btcListed.size ? { onlySymbols: btcListed } : {}),
-            confluenceV2: config.confluence_v2 !== false,
+            confluenceV2: paperBtcView.confluence_v2 !== false,
             feed: btcFeed,
             quote: "BTC",
             btcUsd: btcUsdNow,
@@ -1133,13 +1172,44 @@ export default async function (req) {
         }
       }
 
+      // the live Bitcoin book scans its own board when its scan settings differ
+      // from the paper Bitcoin book's; matching settings share one board
+      const btcSameScan = (a, b) =>
+        String(a.timeframe || "1h") === String(b.timeframe || "1h") &&
+        String(a.market_cap_scope || "all") === String(b.market_cap_scope || "all") &&
+        (a.confluence_v2 !== false) === (b.confluence_v2 !== false) &&
+        (Number(a.daily_target_pct) || 2) === (Number(b.daily_target_pct) || 2);
+      liveBtcBoard = btcBoard;
+      if (btcBoard && live.conn != null && liveVerified && btcMarketsOn(liveView) && !btcSameScan(paperBtcView, liveBtcView)) {
+        try {
+          const liveBtcListed = await fetchListedSymbols(live.conn, ["BTC"]);
+          liveBtcBoard = await scanBoard({
+            timeframe: liveBtcView.timeframe || "1h",
+            scope: liveBtcView.market_cap_scope || "all",
+            count: 60,
+            dailyTargetPct: Number(liveBtcView.daily_target_pct) || 2,
+            extraSymbols: watch.map((w) => w.symbol),
+            ...(liveBtcListed && liveBtcListed.size ? { onlySymbols: liveBtcListed } : {}),
+            confluenceV2: liveBtcView.confluence_v2 !== false,
+            feed: btcFeed,
+            quote: "BTC",
+            btcUsd: btcUsdNow,
+          });
+        } catch (err) {
+          liveBtcBoard = null;
+          console.log(`BTC live board failed: ${String((err && err.message) || err)}`);
+        }
+      }
+
       // cooldowns are per desk: each desk leaves its own closed trades alone
       // for its own cooldown, both with the 30-minute churn floor that keeps
       // a trade the stagnant rule just cut from being re-entered at once
       const reentryMs = 30 * 60000;
       const paperCooldownMs = (Number(config.cooldown_minutes) || 120) * 60000;
       const liveCooldownMs = (Number(lrVal("cooldown_minutes", 120)) || 120) * 60000;
-      const since = new Date(Date.now() - Math.max(paperCooldownMs, liveCooldownMs, reentryMs)).toISOString();
+      const paperBtcCooldownMs = (Number(paperBtcView.cooldown_minutes) || 120) * 60000;
+      const liveBtcCooldownMs = (Number(liveBtcView.cooldown_minutes) || 120) * 60000;
+      const since = new Date(Date.now() - Math.max(paperCooldownMs, liveCooldownMs, paperBtcCooldownMs, liveBtcCooldownMs, reentryMs)).toISOString();
       const recent = await readAll({ closed_at: { $gte: since } });
       // proposals block their symbol while pending — but only fresh ones:
       // proposals left over from an approve-mode era (never acted on) blocked
@@ -1191,7 +1261,7 @@ export default async function (req) {
           .filter((t) => {
             if ((t.mode || "paper") !== "real" || quoteOf(t.quote_asset) !== "BTC") return false;
             const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
-            const window = t.exit_reason === "time" ? reentryMs : liveCooldownMs;
+            const window = t.exit_reason === "time" ? reentryMs : liveBtcCooldownMs;
             return Date.now() - closedMs < window;
           })
           .map((t) => t.symbol),
@@ -1208,7 +1278,7 @@ export default async function (req) {
           .filter((t) => {
             if ((t.mode || "paper") === "real" || quoteOf(t.quote_asset) !== "BTC") return false;
             const closedMs = t.closed_at ? Date.parse(t.closed_at) : 0;
-            const window = t.exit_reason === "time" ? reentryMs : paperCooldownMs;
+            const window = t.exit_reason === "time" ? reentryMs : paperBtcCooldownMs;
             return Date.now() - closedMs < window;
           })
           .map((t) => t.symbol),
@@ -1229,6 +1299,11 @@ export default async function (req) {
       const rulesByDesk = {
         live: entryRulesFor(liveView, "live", btcChange),
         paper: entryRulesFor(paperView, "paper", btcChange),
+      };
+      // the Bitcoin books' own entry rules, read from their own views
+      const btcRulesByDesk = {
+        live: entryRulesFor(liveBtcView, "live", btcChange),
+        paper: entryRulesFor(paperBtcView, "paper", btcChange),
       };
       const entryGate = (r, desk) => gateReasonShared(r, desk, rulesByDesk[desk]);
       const liveSlots = Math.max(1, liveMaxOpen - liveOpenCount);
@@ -1292,6 +1367,13 @@ export default async function (req) {
         (Number(paperView.risk_per_trade_pct) || 4) * styleRiskFor(paperView.trading_style || "mild"),
       ) * (paperRisk.block_entries ? 0 : paperRisk.size_multiplier);
 
+      // the paper Bitcoin book sizes from its own risk and its own brakes, so a
+      // dollar drawdown never shrinks a Bitcoin entry, or the other way round
+      const btcRiskPct = Math.min(
+        25,
+        (Number(paperBtcView.risk_per_trade_pct) || 4) * styleRiskFor(paperBtcView.trading_style || "mild"),
+      ) * (btcRisk.block_entries ? 0 : btcRisk.size_multiplier);
+
       // self-teaching: past results per pattern (side x cap tier) nudge scores
       const lessons = await loadLessons(base44);
       const lessonMap = new Map(lessons.map((l) => [l.pattern, l]));
@@ -1328,6 +1410,8 @@ export default async function (req) {
       // own book: decisive candles and the market-cap tiers follow the pair's
       // rank on the BTC market, and its lessons are its own
       const btcTradable = btcBoard ? applyEdges(btcBoard.rows, "BTC") : [];
+      // the live Bitcoin book's rows: its own board when it scans differently
+      const btcTradableLive = liveBtcBoard && liveBtcBoard !== btcBoard ? applyEdges(liveBtcBoard.rows, "BTC") : btcTradable;
 
       // engine targets: 6R from entry with the combo stack on (the pooled
       // flat-tape winner), 3R under the margin engine, 2.5R under the old
@@ -1342,6 +1426,10 @@ export default async function (req) {
       const liveEngineTarget = engineTargetFor(liveEngine);
       const paperUseEngine = useEngineTargetFor(paperEngine);
       const liveUseEngine = useEngineTargetFor(liveEngine);
+      const paperBtcEngineTarget = engineTargetFor(paperBtcEngine);
+      const liveBtcEngineTarget = engineTargetFor(liveBtcEngine);
+      const paperBtcUseEngine = useEngineTargetFor(paperBtcEngine);
+      const liveBtcUseEngine = useEngineTargetFor(liveBtcEngine);
       // ---- V3 algorithm: one board, a third rule set. The daily gates are
       // read once per candidate per cycle (capped, in batches) and answer both
       // desks, because none of them depends on the desk. The candidate list is
@@ -1408,14 +1496,14 @@ export default async function (req) {
       // turnover is the same rule as $5m on the dollar book, not a different
       // one. A failure here costs BTC V3 entries, never the cycle.
       const btcV3DeskOn = {
-        live: v3DeskOn.live && btcMarketsOn(liveView),
-        paper: v3DeskOn.paper && btcMarketsOn(paperView),
+        live: v3On(liveBtcView) && btcMarketsOn(liveView),
+        paper: v3On(paperBtcView) && btcMarketsOn(paperView),
       };
       const btcV3Evals = new Map();
       btcV3Summary = null;
-      if (btcBoard && btcTradable.length && (btcV3DeskOn.live || btcV3DeskOn.paper)) {
+      if ((btcTradable.length || btcTradableLive.length) && (btcV3DeskOn.live || btcV3DeskOn.paper)) {
         try {
-          const btcWanted = btcTradable.map((r) => r.symbol).filter(Boolean).slice(0, 40);
+          const btcWanted = [...new Set([...btcTradable, ...btcTradableLive].map((r) => r.symbol).filter(Boolean))].slice(0, 40);
           const btcFloorBtc = usdInQuote(V3.min_adv_usd, "BTC", btcUsdNow);
           const btcAbove = btcTrendUp(
             await fetchCandles("BTC", "1d", 260, btcFeed).catch(() => null),
@@ -1523,7 +1611,7 @@ export default async function (req) {
           if (!ev || ev.state !== "entry") return false;
           return v3Plan({ entryPx: r.entry, atr: ev.atr }) != null;
         }
-        return entryGate(r, desk) === null;
+        return gateReasonShared(r, desk, btcRulesByDesk[desk]) === null;
       };
       const btcWithV3 = (row, desk) => {
         if (!btcV3DeskOn[desk]) return row;
@@ -1556,16 +1644,25 @@ export default async function (req) {
       // exchange listing filter, approve mode and paper risk brakes all still
       // apply. A desk running V3 does not mix in top picks.
       const topCount = (view) => Math.max(1, Math.min(10, Number(view.always_take_count) || 5));
-      const topPicksFor = (rows, desk, count, exclude) => {
-        const blocked = desk === "live" ? blockedLive : blockedPaper;
-        const openSymbols = new Set(stillOpen.map((t) => t.symbol));
+      // a Bitcoin book's picks use its own blocked set, its own open positions
+      // and its own shorts setting; the dollar book's picks are unchanged
+      const topPicksFor = (rows, desk, count, exclude, btc = false) => {
+        const blocked = btc
+          ? (desk === "live" ? blockedLiveBtc : blockedPaperBtc)
+          : (desk === "live" ? blockedLive : blockedPaper);
+        const view = btc
+          ? (desk === "live" ? liveBtcView : paperBtcView)
+          : (desk === "live" ? liveView : paperView);
+        const openSymbols = new Set(
+          stillOpen.filter((t) => !btc || quoteOf(t.quote_asset) === "BTC").map((t) => t.symbol),
+        );
         if (exclude) for (const symbol of exclude) openSymbols.add(symbol);
         return pickTopPicks(rows, {
           blocked,
           openSymbols,
           allowShorts: desk === "live"
-            ? liveShorts && liveView.allow_shorts !== false
-            : paperView.allow_shorts !== false,
+            ? liveShorts && view.allow_shorts !== false
+            : view.allow_shorts !== false,
           count,
           // wait for a good entry into the pick rather than chasing it
           requireEntry: true,
@@ -1618,6 +1715,11 @@ export default async function (req) {
         const px = Number(livePx.get(r.symbol)) || 0;
         return px > 0 ? { ...r, entry: px } : r;
       };
+      // the live Bitcoin book's own risk per trade and style
+      const btcLiveRiskPct = Math.min(
+        25,
+        (Number(liveBtcView.risk_per_trade_pct) || 4) * styleRiskFor(liveBtcView.trading_style || "mild"),
+      );
       const minimumFor = (r) => entryMinimum(constraints, r.symbol, funding?.asset || QUOTE_ASSET[live.conn?.exchange] || "USDT", r.entry);
       const liveRiskPct = Math.min(
         25,
@@ -1917,7 +2019,7 @@ export default async function (req) {
       // A failure here costs BTC entries, never the cycle.
       try {
         const paperBtcOn =
-          btcMarketsOn(paperView) && btcUsdNow > 0 && paperBtcOpen < paperMaxOpen && !dryRun;
+          btcMarketsOn(paperView) && btcUsdNow > 0 && paperBtcOpen < paperBtcMaxOpen && !dryRun;
         // only the Bitcoin book's own positions and its own openings keep a coin
         // out: the same coin may be held in dollars and in bitcoin, because they
         // are two markets on two bankrolls
@@ -1932,8 +2034,8 @@ export default async function (req) {
         const btcGatedPaper = btcTradable
           .filter((r) => !already.has(r.symbol) && btcQualifies(r, "paper"))
           .map((r) => btcWithV3(r, "paper"));
-        const btcTopPaper = paperView.always_take_top === true && !btcV3DeskOn.paper
-          ? topPicksFor(btcTradable, "paper", topCount(paperView))
+        const btcTopPaper = paperBtcView.always_take_top === true && !btcV3DeskOn.paper
+          ? topPicksFor(btcTradable, "paper", topCount(paperBtcView), undefined, true)
           : [];
         const btcCandidates = [...btcGatedPaper, ...btcTopPaper]
           .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
@@ -1941,17 +2043,17 @@ export default async function (req) {
           .slice(0, 5);
         for (const btcRow of paperBtcOn ? btcCandidates : []) {
           const btcTaken = opened.filter((o) => o.mode === "paper" && o.quote === "BTC").length;
-          if (btcTaken >= Math.max(0, paperMaxOpen - paperBtcOpen)) break;
+          if (btcTaken >= Math.max(0, paperBtcMaxOpen - paperBtcOpen)) break;
           if (!(Number(btcRow.entry) > 0)) continue;
           // the measured exit, if this desk runs it (see measuredExitFields):
           // its stop is in this market's own quote, which is bitcoin here, and
           // the size must follow it exactly as the dollar book's does
-          const btcMeasured = measuredExitFields(btcRow, paperView, btcRow.entry);
+          const btcMeasured = measuredExitFields(btcRow, paperBtcView, btcRow.entry);
           const btcTradeStop = btcMeasured ? btcMeasured.v3_stop : btcRow.stop;
           const stopUsd = Math.abs(btcRow.entry - btcTradeStop) * btcUsdNow;
           if (!(stopUsd > 0)) continue;
-          const freeBtcSlots = Math.max(1, paperMaxOpen - paperBtcOpen - btcTaken);
-          const btcRiskUsd = (btcCash * riskPct) / 100;
+          const freeBtcSlots = Math.max(1, paperBtcMaxOpen - paperBtcOpen - btcTaken);
+          const btcRiskUsd = (btcCash * btcRiskPct) / 100;
           let btcQty = btcRiskUsd / stopUsd;
           let btcSizeUsd = btcQty * btcRow.entry * btcUsdNow;
           const btcCap = btcCash / freeBtcSlots;
@@ -1965,7 +2067,7 @@ export default async function (req) {
             btcQty = btcSizeUsd / (btcRow.entry * btcUsdNow);
           }
           if (!(btcSizeUsd >= 10) || !(btcQty > 0)) continue;
-          const btcTarget = btcRow.v3 ? null : paperUseEngine ? paperEngineTarget(btcRow) : btcRow.target;
+          const btcTarget = btcRow.v3 ? null : paperBtcUseEngine ? paperBtcEngineTarget(btcRow) : btcRow.target;
           const btcCreated = await base44.entities.Trade.create({
             symbol: btcRow.symbol,
             name: btcRow.name,
@@ -1978,7 +2080,7 @@ export default async function (req) {
             size_usd: round(btcSizeUsd),
             stop_price: btcMeasured ? btcMeasured.v3_stop : round(btcRow.stop, 8),
             target_price: btcMeasured || btcTarget == null ? null : round(btcTarget, 8),
-            target_r: btcMeasured || btcRow.v3 ? 0 : paperEngine.targetR,
+            target_r: btcMeasured || btcRow.v3 ? 0 : paperBtcEngine.targetR,
             ...(btcRow.v3
               ? {
                   v3_algo: true,
@@ -2064,12 +2166,12 @@ export default async function (req) {
           // top-pick option, its V3 plan — read on the Bitcoin board. Longs
           // only: a Bitcoin short is a margin position on a market this book
           // has not been measured on.
-          const btcGatedLive = btcTradable
+          const btcGatedLive = btcTradableLive
             .filter((r) => !takenBtc.has(r.symbol) && btcQualifies(r, "live"))
             .map((r) => btcWithV3(r, "live"))
             .filter((r) => r.side === "long");
-          const btcTopLive = liveView.always_take_top === true && !btcV3DeskOn.live
-            ? topPicksFor(btcTradable, "live", topCount(liveView)).filter((r) => r.side === "long")
+          const btcTopLive = liveBtcView.always_take_top === true && !btcV3DeskOn.live
+            ? topPicksFor(btcTradableLive, "live", topCount(liveBtcView), undefined, true).filter((r) => r.side === "long")
             : [];
           const btcSeeds = [...btcGatedLive, ...btcTopLive]
             .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
@@ -2077,7 +2179,7 @@ export default async function (req) {
             .slice(0, 5);
           // this book's slots are its own: the dollar plans were sized against
           // the dollar book, and neither can take the other's room
-          const btcSlots = liveMaxOpen - liveBtcOpen;
+          const btcSlots = liveBtcMaxOpen - liveBtcOpen;
           let btcLeft = btcSpendableNow;
           // the budget is the Bitcoin the account actually holds — this book
           // has no dollar cap, and the dollar cap never limits it
@@ -2106,14 +2208,14 @@ export default async function (req) {
             if (!(floorBtc > 0)) continue;
             // the measured exit, if this desk runs it (see measuredExitFields):
             // its wider stop is what the order is risked against
-            const btcLiveMeasured = measuredExitFields(btcLiveRow, liveView, btcLiveRow.entry);
+            const btcLiveMeasured = measuredExitFields(btcLiveRow, liveBtcView, btcLiveRow.entry);
             const minBtc = entryMinimum(constraints, btcLiveRow.symbol, "BTC", btcLiveRow.entry, floorBtc);
             const sizeBtc = liveEntrySize({
               row: btcLiveMeasured ? { ...btcLiveRow, stop: btcLiveMeasured.v3_stop } : btcLiveRow,
               balance: btcLeft,
               budget: round(btcBudgetUsd / btcUsdNow, 8),
               slots: btcSlots,
-              riskPct: liveRiskPct,
+              riskPct: btcLiveRiskPct,
               minimum: minBtc,
               floor: floorBtc,
               decimals: 8,
@@ -2123,7 +2225,7 @@ export default async function (req) {
             if (!(sizeBtcUsd >= 10)) continue;
             const baseQty = round(sizeBtc / btcLiveRow.entry, 8);
             if (!(baseQty > 0)) continue;
-            const btcTargetLive = btcLiveRow.v3 ? null : liveUseEngine ? liveEngineTarget(btcLiveRow) : btcLiveRow.target;
+            const btcTargetLive = btcLiveRow.v3 ? null : liveBtcUseEngine ? liveBtcEngineTarget(btcLiveRow) : btcLiveRow.target;
             const btcRationale = [
               ...(btcLiveRow.reasons || []),
               `BTC-quoted market ${btcLiveRow.symbol}/XBT on ${live.conn.label} — ${round(sizeBtcUsd, 2)} USD at BTC ${round(btcUsdNow, 2)}`,
@@ -2579,7 +2681,10 @@ export default async function (req) {
     const equity = startBalance + realizedTotal + unrealized;
     // the Bitcoin book anchors its own cash the same way: its starting bankroll
     // plus what it booked minus what it holds — never the dollar figures
-    const btcAnchoredCash = btcStart + btcRealizedTotal - btcDeployedTotal;
+    // the Bitcoin book's cash follows its own profit handling, as the dollar book's does
+    const btcAnchoredCash = (paperBtcView.profit_mode || "compound") === "stack"
+      ? btcStart + (btcRealizedTotal - Math.max(btcRealizedTotal, 0)) - btcDeployedTotal
+      : btcStart + btcRealizedTotal - btcDeployedTotal;
     const btcUnrealized = positions
       .filter((p) => quoteOf(p.quote_asset) === "BTC")
       .reduce((a, p) => a + (Number(p.pnl_usd) || 0), 0);
@@ -2657,10 +2762,11 @@ export default async function (req) {
 
     // the Bitcoin board's own top rows, in the shape the dollar board's are:
     // a desk showing the Bitcoin book shows these and never a dollar pick
-    const btcTopRows = ((btcBoard && btcBoard.rows) || []).slice(0, 12).map((r) => {
-      const dist = (paperEngine.marginOn ? 3 : 6) * Math.abs(r.entry - r.stop);
+    // a Bitcoin board's top rows, with the targets its own book trades by
+    const btcTopOf = (board, engine) => ((board && board.rows) || []).slice(0, 12).map((r) => {
+      const dist = (engine.marginOn ? 3 : 6) * Math.abs(r.entry - r.stop);
       const target =
-        (paperEngine.marginOn || paperEngine.comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
+        (engine.marginOn || engine.comboOn) && r.entry > 0 && r.stop > 0 && r.entry !== r.stop
           ? round(r.side === "long" ? r.entry + dist : r.entry - dist, 8)
           : r.target;
       return {
@@ -2670,6 +2776,7 @@ export default async function (req) {
         exchange: managed.conn ? managed.conn.exchange : null,
       };
     });
+    const btcTopRows = btcTopOf(btcBoard, paperBtcEngine);
     // the same day movers, from the Bitcoin book's own trades
     const btcDayRow = (t) => ({
       symbol: t.symbol,
@@ -2713,6 +2820,17 @@ export default async function (req) {
       btc_markets: {
         on: btcMarketsOn(paperView),
         live_on: btcMarketsOn(liveView),
+        // the live Bitcoin book's own board, only when it scans differently
+        live_board: liveBtcBoard && liveBtcBoard !== btcBoard
+          ? {
+              scanned: liveBtcBoard.scannedCount,
+              universe: liveBtcBoard.universeCount,
+              summary: liveBtcBoard.summary,
+              median_change_24h: liveBtcBoard.medianChange24h,
+              source: liveBtcBoard.source,
+              top: btcTopOf(liveBtcBoard, liveBtcEngine),
+            }
+          : null,
         btc_usd: round(btcUsdNow, 2),
         scanned: btcBoard ? btcBoard.scannedCount : 0,
         universe: btcBoard ? btcBoard.universeCount : 0,

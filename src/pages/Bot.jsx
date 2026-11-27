@@ -6,7 +6,7 @@ import ProposedTrades from '@/components/bot/ProposedTrades';
 import RiskSettings from '@/components/bot/RiskSettings';
 import LearnedPanel from '@/components/bot/LearnedPanel';
 import AnalystPanel from '@/components/bot/AnalystPanel';
-import { ErrorNotice, LoadingBlock } from '@/components/common/States';
+import { bookRuleSet } from '@/lib/bookRules';
 import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
 import useSavedBalance from '@/hooks/useSavedBalance';
@@ -24,6 +24,7 @@ export default function Bot() {
   const [closingId, setClosingId] = useState(null);
   const [closingAll, setClosingAll] = useState(false);
   const [error, setError] = useState(null);
+  const [bookMode, setBookMode] = useState(null);
 
   // live-desk balance mechanism: the saved connection balance, re-read from
   // the exchange every minute — light bot cycles never refresh it themselves
@@ -170,6 +171,20 @@ export default function Bot() {
   // the page follows the desk: the paper desk shows paper stats and paper
   // positions, the live desk keeps its exchange-reported view
   const desk = config?.active_desk === 'live' ? 'live' : 'paper';
+  // the bot page follows the desk's book: the rules panel shows only that book's
+  // rules. The desk's own switch saves active_book, so a reload keeps the choice.
+  const currentBook = config?.active_book === 'BTC' ? 'BTC' : 'USD';
+  const book = bookMode || currentBook;
+  const isBtc = book === 'BTC';
+
+  const changeBook = async (next) => {
+    setBookMode(next);
+    try {
+      if (config?.id) await base44.entities.BotConfig.update(config.id, { active_book: next });
+    } catch {
+      // the page still shows the chosen book for this session
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -182,31 +197,42 @@ export default function Bot() {
         onToggleAutoRun={toggleAutoRun}
         onRunNow={() => cycle(false)}
         desk={desk}
+        book={book}
+        onBookChange={changeBook}
         stats={
           desk === 'paper'
             ? {
-                balance: bot?.cash,
-                exposure: bot?.exposure,
-                unrealized: bot?.unrealized,
-                realizedToday: bot?.realized_today,
-                dailyGoal: bot?.daily_goal,
-                openCount: bot?.open_count,
-                scanned: bot?.scanned,
-                v3: bot?.v3,
+                balance: isBtc ? bot?.btc_markets?.book?.cash : bot?.cash,
+                exposure: isBtc
+                  ? (bot?.positions || [])
+                      .filter((p) => p.quote_asset === 'BTC')
+                      .reduce((a, p) => a + (Number(p.size_usd) || 0), 0)
+                  : bot?.exposure,
+                unrealized: isBtc ? bot?.btc_markets?.book?.unrealized : bot?.unrealized,
+                realizedToday: isBtc ? bot?.btc_markets?.book?.realized_today : bot?.realized_today,
+                dailyGoal: isBtc
+                  ? (Number(bot?.btc_markets?.book?.starting_balance) || 0) *
+                    (Number(bookRuleSet(config, 'paper', 'BTC')?.daily_target_pct) || 2) / 100
+                  : bot?.daily_goal,
+                openCount: isBtc ? bot?.btc_markets?.book?.open_paper : bot?.open_count,
+                scanned: isBtc ? bot?.btc_markets?.scanned : bot?.scanned,
+                v3: isBtc ? bot?.btc_markets?.v3 : bot?.v3,
               }
             : {
-                balance: savedBalance?.usd != null ? savedBalance.usd : bot?.live?.balance_usd,
-                balanceStale: bot?.live?.balance_stale && savedBalance?.usd == null,
-                balanceError: bot?.live?.balance_error,
-                exposure: bot?.live?.exposure,
-                cap: bot?.live?.cap_usd,
-                budget: bot?.live?.budget_left,
-                unrealized: bot?.live?.unrealized,
-                realizedToday: bot?.live?.realized_today,
-                openCount: bot?.live?.open_count,
-                scanned: bot?.scanned,
+                balance: isBtc ? bot?.btc_markets?.book?.balance_usd : savedBalance?.usd != null ? savedBalance.usd : bot?.live?.balance_usd,
+                balanceStale: !isBtc && bot?.live?.balance_stale && savedBalance?.usd == null,
+                balanceError: isBtc ? null : bot?.live?.balance_error,
+                exposure: isBtc ? bot?.btc_markets?.book?.live_exposure : bot?.live?.exposure,
+                cap: isBtc ? 0 : bot?.live?.cap_usd,
+                budget: isBtc ? null : bot?.live?.budget_left,
+                unrealized: isBtc ? bot?.btc_markets?.book?.live_unrealized : bot?.live?.unrealized,
+                realizedToday: isBtc ? bot?.btc_markets?.book?.live_realized_today : bot?.live?.realized_today,
+                openCount: isBtc ? bot?.btc_markets?.book?.open_live : bot?.live?.open_count,
+                scanned: isBtc
+                  ? bot?.btc_markets?.live_board?.scanned ?? bot?.btc_markets?.scanned
+                  : bot?.scanned,
                 enabled: bot?.live?.enabled,
-                v3: bot?.v3,
+                v3: isBtc ? bot?.btc_markets?.v3 : bot?.v3,
               }
         }
       />
@@ -215,16 +241,20 @@ export default function Bot() {
         <div className="space-y-4">
           <ProposedTrades trades={proposed} onAction={handleProposal} busyId={busyId} />
           <PositionsPanel
-            title={desk === 'paper' ? 'Paper positions' : 'Live positions'}
-            positions={desk === 'paper' ? bot?.positions || [] : bot?.live?.positions || []}
+            title={isBtc ? 'Bitcoin book positions' : desk === 'paper' ? 'Paper positions' : 'Live positions'}
+            positions={isBtc
+              ? (desk === 'paper' ? bot?.positions || [] : bot?.live?.positions || [])
+                  .filter((p) => p.quote_asset === 'BTC')
+              : (desk === 'paper' ? bot?.positions || [] : bot?.live?.positions || [])
+                  .filter((p) => p.quote_asset !== 'BTC')}
             onClose={closePosition}
             onCloseAll={closeAll}
             closingId={closingId}
             closingAll={closingAll}
             hint={
               desk === 'paper'
-                ? 'Open paper positions, marked to market every cycle.'
-                : 'Exchange-reported live positions, marked to market every cycle.'
+                ? isBtc ? 'Open Bitcoin-book paper positions, marked to market every cycle.' : 'Open paper positions, marked to market every cycle.'
+                : isBtc ? 'Exchange-reported Bitcoin-book positions, marked to market every cycle.' : 'Exchange-reported live positions, marked to market every cycle.'
             }
           />
         </div>
@@ -232,7 +262,7 @@ export default function Bot() {
           <LearnedPanel />
           <AnalystPanel desk={desk} config={config} />
           <div id="risk-rules">
-            <RiskSettings config={config} onSaved={() => cycle(true)} desk={desk} />
+            <RiskSettings config={config} onSaved={() => cycle(true)} desk={desk} book={book} />
           </div>
         </div>
       </div>

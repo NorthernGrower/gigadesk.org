@@ -2,7 +2,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { asArray, round, fetchLivePrices } from '../../shared/market.ts';
 import { placeMarketOrder, resolveLiveConnection } from '../../shared/orders.ts';
 import { isBackedOff } from '../../shared/exchanges.ts';
-import { liveRule } from '../../shared/deskRules.ts';
+import { liveRule, liveRulesView } from '../../shared/deskRules.ts';
+import { btcBookView } from '../../shared/bookRules.ts';
 import { toUsd } from '../../shared/quotes.ts';
 import { safetyExit, profitLock } from '../../shared/risk.ts';
 import { recordLesson } from '../../shared/learn.ts';
@@ -87,13 +88,26 @@ export default async function (req) {
       const symbols = [...new Set(open.map((t) => String(t.symbol || "").toUpperCase()))];
       const prices = await fetchLivePrices([...symbols, "BTC"]);
       const btcUsd = Number(prices.get("BTC")) || 0;
-      const maxLossPct = Number(liveRule(LR, "max_trade_loss_pct", 20)) || 0;
       const leverage = Number(liveRule(LR, "margin_leverage", 2)) || 2;
-      // the profit lock's own settings: a trade must be up by the arm
-      // threshold, and from then on it may give back no more than the share
-      const lockOn = liveRule(LR, "profit_lock", true) !== false;
-      const lockArmPct = Number(liveRule(LR, "lock_arm_pct", 2)) || 0;
-      const lockGivebackPct = Number(liveRule(LR, "giveback_pct", 50)) || 0;
+      // each book's own guard: the dollar book reads the live rules, the
+      // Bitcoin book its own live rules, so one book's loss cap or profit lock
+      // never acts on the other's positions. The profit lock must be up by its
+      // arm threshold, and from then on it may give back no more than its share
+      const btcView = btcBookView(liveRulesView(config), LR.live_btc_rules);
+      const rulesFor = (quote) =>
+        quote === "BTC"
+          ? {
+              maxLossPct: Number(btcView.max_trade_loss_pct) || 0,
+              lockOn: btcView.profit_lock !== false,
+              lockArmPct: Number(btcView.lock_arm_pct ?? 2) || 0,
+              lockGivebackPct: Number(btcView.giveback_pct ?? 50) || 0,
+            }
+          : {
+              maxLossPct: Number(liveRule(LR, "max_trade_loss_pct", 20)) || 0,
+              lockOn: liveRule(LR, "profit_lock", true) !== false,
+              lockArmPct: Number(liveRule(LR, "lock_arm_pct", 2)) || 0,
+              lockGivebackPct: Number(liveRule(LR, "giveback_pct", 50)) || 0,
+            };
       const closed = [];
       // stops this pass raised to lock in profit, for the summary
       let trailed = 0;
@@ -117,15 +131,16 @@ export default async function (req) {
         // while the app is closed, and it can only ever raise a stop.
         let stop = Number(t.stop_price) || (side === "long" ? entry * 0.975 : entry * 1.025);
         const update: Record<string, any> = {};
-        if (lockOn) {
+        const rules = rulesFor(quote);
+        if (rules.lockOn) {
           const lock = profitLock({
             side,
             entry,
             stop,
             peak: t.peak_price,
             price,
-            armPct: lockArmPct,
-            givebackPct: lockGivebackPct,
+            armPct: rules.lockArmPct,
+            givebackPct: rules.lockGivebackPct,
           });
           if (lock) {
             if (round(lock.peak, 8) !== round(Number(t.peak_price) || 0, 8))
@@ -146,7 +161,7 @@ export default async function (req) {
                   title: `${t.symbol} stop raised to lock in profit`,
                   message: `${side === "long" ? "Long" : "Short"} up ${round(((side === "long" ? price - entry : entry - price) / entry) * 100, 2)}% — the stop moved to ${round(lock.stop, 8)}${
                     quote === "BTC" ? " BTC" : ""
-                  }, keeping ${round(100 - lockGivebackPct)}% of the peak. It can only ever move up, never down.`,
+                  }, keeping ${round(100 - rules.lockGivebackPct)}% of the peak. It can only ever move up, never down.`,
                   mode: "live",
                   kind: "bot_open",
                   severity: "info",
@@ -158,7 +173,7 @@ export default async function (req) {
         }
         // the same rule the cycle decides from, so the two can never disagree
         // about whether a stop was hit or where it fills
-        const decision = safetyExit({ side, entry, stop, price, maxLossPct });
+        const decision = safetyExit({ side, entry, stop, price, maxLossPct: rules.maxLossPct });
         if (!decision) {
           // nothing closed: persist the raised stop and the new peak, or the
           // next pass would forget it and the lock would never ratchet

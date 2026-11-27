@@ -4,7 +4,8 @@ import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts"
 import { readAccount, pickFundingQuote, pickBtcBalance, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
 import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
 import { recordLesson } from "../../shared/learn.ts";
-import { liveRule } from "../../shared/deskRules.ts";
+import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
+import { btcBookView } from "../../shared/bookRules.ts";
 import { toUsd } from "../../shared/quotes.ts";
 
 /**
@@ -112,6 +113,7 @@ export default async function (req) {
       // closing positions is management: it must work even with new entries paused
       const live = await resolveLiveConnection(base44, config, { manage: true });
       let cashDelta = 0;
+      let btcCashDelta = 0;
       let pnlTotal = 0;
       for (const openTrade of closeable) {
         let closePrice = inQuote(openTrade, priceOf(openTrade.symbol));
@@ -169,12 +171,18 @@ export default async function (req) {
           closed.alert.severity = "warning";
         }
         await base44.entities.Trade.update(openTrade.id, closed.update);
-        if ((openTrade.mode || "paper") === "paper") cashDelta += closed.size + closed.pnl;
+        if ((openTrade.mode || "paper") === "paper") {
+          if (openTrade.quote_asset === "BTC") btcCashDelta += closed.size + closed.pnl;
+          else cashDelta += closed.size + closed.pnl;
+        }
         pnlTotal += closed.pnl;
         await base44.entities.Alert.create(closed.alert);
         await recordLesson(base44, openTrade, closed.pnlPct, closed.pnl, closed.update.exit_reason);
       }
 
+      if (config && btcCashDelta) {
+        await base44.entities.BotConfig.update(config.id, { btc_cash_balance: round((Number(config.btc_cash_balance) || 0) + btcCashDelta) });
+      }
       if (config && cashDelta) {
         await base44.entities.BotConfig.update(config.id, { cash_balance: round(cash + cashDelta) });
       }
@@ -201,8 +209,11 @@ export default async function (req) {
       }
       let size = Number(trade.size_usd) || 0;
       let qty = Number(trade.quantity) || 0;
-      if (isPaper && size > cash) {
-        size = cash;
+      // a Bitcoin paper proposal is paid from the Bitcoin book's own cash, never the dollar cash
+      const isBtcPaper = isPaper && trade.quote_asset === "BTC";
+      const paperCash = isBtcPaper ? Number(config?.btc_cash_balance) || 0 : cash;
+      if (isPaper && size > paperCash) {
+        size = paperCash;
         qty = Number(trade.entry_price) ? size / Number(trade.entry_price) : 0;
       }
       if (size <= 0) {
@@ -249,13 +260,15 @@ export default async function (req) {
           );
         }
         const LR = config.live_rules || {};
-        const liveRiskPct = Math.min(25, Number(liveRule(LR, "risk_per_trade_pct", 4)) || 4);
+        // a Bitcoin proposal is sized by the Bitcoin book's own live risk, and has no dollar cap
+        const bookRules = isBtcQuote ? btcBookView(liveRulesView(config), LR.live_btc_rules) : null;
+        const liveRiskPct = Math.min(25, Number(bookRules ? bookRules.risk_per_trade_pct : liveRule(LR, "risk_per_trade_pct", 4)) || 4);
         // the same sizing the bot entries use: risked between entry and stop,
         // a fee buffer under the spendable balance, and at or above the
         // pair's exchange minimum so Kraken accepts the volume
         const constraints = await fetchMarketConstraints(live.conn);
         const stop = Number(trade.stop_price) || entry * (1 - (Number(liveRule(LR, "default_stop_pct", 2.5)) || 2.5) / 100);
-        const capUsd = Number(liveRule(LR, "live_cap_usd", 0)) || 0;
+        const capUsd = isBtcQuote ? 0 : Number(liveRule(LR, "live_cap_usd", 0)) || 0;
         const openReal = asArray(
           await base44.entities.Trade.filter({ status: "open", mode: "real" }, { limit: 200 }),
         )
@@ -313,7 +326,9 @@ export default async function (req) {
         opened_at: new Date().toISOString(),
       });
       if (!real && isPaper && config) {
-        await base44.entities.BotConfig.update(config.id, { cash_balance: round(cash - size) });
+        await base44.entities.BotConfig.update(config.id, isBtcPaper
+          ? { btc_cash_balance: round((Number(config.btc_cash_balance) || 0) - size) }
+          : { cash_balance: round(cash - size) });
       }
       return Response.json({ ok: true, status: "open", cash: round(!real && isPaper ? cash - size : cash) });
     }
@@ -392,7 +407,10 @@ export default async function (req) {
         closed.alert.severity = "warning";
       }
       await base44.entities.Trade.update(tradeId, closed.update);
-      if (isPaper && config) {
+      if (isPaper && config && isBtcQuote) {
+        await base44.entities.BotConfig.update(config.id, { btc_cash_balance: round((Number(config.btc_cash_balance) || 0) + closed.size + closed.pnl) });
+      }
+      if (isPaper && config && !isBtcQuote) {
         await base44.entities.BotConfig.update(config.id, {
           cash_balance: round(cash + closed.size + closed.pnl),
         });
