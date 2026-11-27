@@ -3,7 +3,8 @@ import { fetchLivePrices, asArray, round } from "../../shared/market.ts";
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, pickFundingQuote, fetchMarketConstraints, fetchListedSymbols, isBackedOff } from "../../shared/exchanges.ts";
 import { entryMinimum } from "../../shared/entryRules.ts";
-import { liveRule } from "../../shared/deskRules.ts";
+import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
+import { riskPctAt, rulesSnapshot } from "../../shared/learn.ts";
 
 /**
  * A manual buy from the scanner: a real market order on the connected
@@ -128,6 +129,12 @@ export default async function (req) {
       target_price: target,
       target_r: targetR,
       peak_price: round(avg, 8),
+      // the live desk's rules at the moment of the buy: the trade is the
+      // user's hand, but its stop and target came from those rules, so the
+      // copy says which ones the desk was running
+      rules_snapshot: rulesSnapshot({ desk: "live", book: "USD", view: liveRulesView(config) }),
+      // the risk the buy carries, from the fill to the stop set above
+      risk_pct: round(riskPctAt(avg, stop), 2),
       exchange: live.conn.exchange,
       exchange_order_id: buy.order_id,
       rationale: "Manual buy from the scanner",

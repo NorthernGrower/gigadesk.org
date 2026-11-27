@@ -4,7 +4,7 @@ import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard, resolveDeskVenue, resolveBtcVenue } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, keepBalances, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
-import { loadLessons, recordLesson } from "../../shared/learn.ts";
+import { excursionOf, loadLessons, outcomeFields, recordLesson, riskPctAt, rulesSnapshot } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
@@ -499,12 +499,28 @@ export default async function (req) {
       const pnlInQuote = side === "long" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
       const pnl = toUsd(pnlInQuote, closedQuote, closedFx);
       const pnlPct = size ? (pnl / size) * 100 : 0;
+      // the trade's excursion closes out with it: the exit is the last print
+      // the position saw, so the run it made and the drawdown it took are whole
+      // on the row the moment it closes. The cycle's own marks are folded in
+      // first, so a high it made before the stop is never lost. The R multiple
+      // and the hold time go with it — the two numbers a longer study reads.
+      const ride = excursionOf(
+        {
+          ...t,
+          mfe_price: extraUpdates.mfe_price ?? t.mfe_price,
+          mae_price: extraUpdates.mae_price ?? t.mae_price,
+        },
+        side,
+        exitPrice,
+      );
       await base44.entities.Trade.update(t.id, {
         ...extraUpdates,
         status: "closed",
         exit_price: round(exitPrice, 8),
         pnl_usd: round(pnl),
         pnl_pct: round(pnlPct),
+        ...(ride ? { mfe_price: round(ride.mfe, 8), mae_price: round(ride.mae, 8) } : {}),
+        ...outcomeFields(t, pnlPct),
         closed_at: new Date().toISOString(),
         exit_reason: reason,
       });
@@ -582,6 +598,10 @@ export default async function (req) {
       const legInQuote = side === "long" ? (scalePrice - entry) * legQty : (entry - scalePrice) * legQty;
       const pnl = toUsd(legInQuote, legQuote, legFx);
       const pnlPct = legSize ? (pnl / legSize) * 100 : 0;
+      // the booked leg is planted on the parent's own risk and its own run, so
+      // its R and its excursion read the way the parent's would at this price
+      const legRisk = Number(t.risk_pct) || riskPctAt(entry, t.stop_price);
+      const legRide = excursionOf(t, side, scalePrice);
       await base44.entities.Trade.create({
         symbol: t.symbol,
         name: t.name,
@@ -596,11 +616,14 @@ export default async function (req) {
         stop_price: t.stop_price,
         target_price: t.target_price,
         target_r: t.target_r,
+        risk_pct: round(legRisk, 2),
+        ...(legRide ? { mfe_price: round(legRide.mfe, 8), mae_price: round(legRide.mae, 8) } : {}),
         score: t.score,
         pattern: t.pattern,
         exchange: t.exchange,
         pnl_usd: round(pnl),
         pnl_pct: round(pnlPct),
+        ...outcomeFields({ ...t, risk_pct: legRisk }, pnlPct),
         exit_reason: "scale",
         opened_at: t.opened_at,
         closed_at: new Date().toISOString(),
@@ -685,7 +708,21 @@ export default async function (req) {
           if (!ok) continue;
           continue;
         }
-        // still running: mark to market, and nothing else touches it
+        // still running: mark to market, and nothing else touches it. Its
+        // excursion is marked with it: V3 exits on the algorithm's own rules,
+        // but the run it made is still what a longer study reads, and this
+        // branch leaves the loop before the batched mark below
+        const v3Ride = excursionOf(t, side, price);
+        if (
+          v3Ride &&
+          (round(v3Ride.mfe, 8) !== round(Number(t.mfe_price) || 0, 8) ||
+            round(v3Ride.mae, 8) !== round(Number(t.mae_price) || 0, 8))
+        )
+          pendingMarks.push({
+            id: t.id,
+            mfe_price: round(v3Ride.mfe, 8),
+            mae_price: round(v3Ride.mae, 8),
+          });
         const v3Qty = Number(t.quantity) || 0;
         const v3Size = Number(t.size_usd) || 0;
         const v3InQuote = side === "long" ? (price - entry) * v3Qty : (entry - price) * v3Qty;
@@ -726,6 +763,18 @@ export default async function (req) {
       const prevPeak = Number(t.peak_price) || entry;
       let peak = prevPeak;
       const updates = {};
+      // the excursion the position has covered: its best and worst price since
+      // it opened, carried on from the row. Written only when it moves, so a
+      // position that has not made a new extreme costs no write.
+      const ride = excursionOf(t, side, price);
+      if (
+        ride &&
+        (round(ride.mfe, 8) !== round(Number(t.mfe_price) || 0, 8) ||
+          round(ride.mae, 8) !== round(Number(t.mae_price) || 0, 8))
+      ) {
+        updates.mfe_price = round(ride.mfe, 8);
+        updates.mae_price = round(ride.mae, 8);
+      }
 
       // engine_v2: break-even once the trade is +1.2R in — the optimizer
       // winner's protective stop move, applied before any trailing
@@ -1093,6 +1142,10 @@ export default async function (req) {
     // the live Bitcoin book's own board, when its scan settings differ
     let liveBtcBoard = null;
     let btcV3Summary = null;
+    // BTC's own daily trend as the V3 gate read it this cycle: copied onto
+    // every trade opened under it, so a closed setup can be read in the market
+    // it actually lived in rather than in today's
+    let btcAbove200d = null;
     // why the live Bitcoin book could not open an entry this pass — the desk
     // shows this line instead of leaving a book that never trades unexplained
     let btcBlocked = null;
@@ -1488,6 +1541,7 @@ export default async function (req) {
           const wanted = [...candidates].slice(0, 40);
           const btcDaily = await fetchCandles("BTC", "1d", 260, scanVenue).catch(() => null);
           const btcAbove = btcTrendUp(btcDaily);
+          btcAbove200d = btcAbove;
           for (const group of chunk(wanted, 6)) {
             const settled = await Promise.allSettled(
               group.map((s) => fetchCandles(s, "1d", 260, scanVenue)),
@@ -1556,6 +1610,7 @@ export default async function (req) {
           const btcAbove = btcTrendUp(
             await fetchCandles("BTC", "1d", 260, btcFeed).catch(() => null),
           );
+          btcAbove200d = btcAbove;
           for (const group of chunk(btcWanted, 6)) {
             const settled = await Promise.allSettled(
               group.map((s) => fetchCandles(s, "1d", 260, btcFeed, "BTC")),
@@ -1988,9 +2043,15 @@ export default async function (req) {
                 }
               : measured || {}),
             peak_price: real.avg_price || rl.entry,
+            // the risk it is opened with, fixed now so its R divides by what
+            // it risked rather than by a stop that later trailed to break-even
+            risk_pct: round(riskPctAt(real.avg_price || rl.entry, measured ? measured.v3_stop : r.stop), 2),
             score: r.score,
             pattern: `${r.side}/${r.market_cap_bucket}`,
             entry_source: r.v3 ? "v3" : r.top_pick ? "top_pick" : "gated",
+            // the live desk's rules as they stood at the entry, copied onto
+            // the trade: a closed row is then read against what opened it
+            rules_snapshot: rulesSnapshot({ desk: "live", book: "USD", view: liveView, btcAbove200d }),
             exchange: live.conn.exchange,
             exchange_order_id: real.order_id,
             rationale: (r.reasons || []).join(" • "),
@@ -2055,9 +2116,13 @@ export default async function (req) {
               }
             : measured || {}),
           peak_price: r.entry,
+          // the risk it is opened with, fixed at the entry (see above)
+          risk_pct: round(riskPctAt(r.entry, measured ? measured.v3_stop : r.stop), 2),
           score: r.score,
           pattern: `${r.side}/${r.market_cap_bucket}`,
           entry_source: r.v3 ? "v3" : r.top_pick ? "top_pick" : "gated",
+          // the paper desk's rules as they stood at the entry
+          rules_snapshot: rulesSnapshot({ desk: "paper", book: "USD", view: paperView, btcAbove200d }),
           rationale: (r.reasons || []).join(" • "),
           opened_at: new Date().toISOString(),
         });
@@ -2176,9 +2241,13 @@ export default async function (req) {
                 }
               : btcMeasured || {}),
             peak_price: round(btcRow.entry, 8),
+            // the risk in the pair's own quote: a percent reads the same
+            risk_pct: round(riskPctAt(btcRow.entry, btcMeasured ? btcMeasured.v3_stop : btcRow.stop), 2),
             score: btcRow.score,
             pattern: patternFor(btcRow.side, btcRow.market_cap_bucket, "BTC"),
             entry_source: btcRow.v3 ? "v3" : btcRow.top_pick ? "top_pick" : "gated",
+            // the paper Bitcoin book's own rules, never the dollar desk's
+            rules_snapshot: rulesSnapshot({ desk: "paper", book: "BTC", view: paperBtcView, btcAbove200d }),
             quote_asset: "BTC",
             fx_usd: round(btcUsdNow, 2),
             rationale: [
@@ -2369,9 +2438,13 @@ export default async function (req) {
                     }
                   : btcLiveMeasured || {}),
                 peak_price: round(btcLiveRow.entry, 8),
+                // the risk it is opened with, fixed at the entry (see above)
+                risk_pct: round(riskPctAt(btcLiveRow.entry, btcLiveMeasured ? btcLiveMeasured.v3_stop : btcLiveRow.stop), 2),
                 score: btcLiveRow.score,
                 pattern: patternFor(btcLiveRow.side, btcLiveRow.market_cap_bucket, "BTC"),
                 entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
+                // the live Bitcoin book's own rules, copied at the proposal
+                rules_snapshot: rulesSnapshot({ desk: "live", book: "BTC", view: liveBtcView, btcAbove200d }),
                 quote_asset: "BTC",
                 fx_usd: round(btcUsdNow, 2),
                 rationale: btcRationale,
@@ -2438,9 +2511,13 @@ export default async function (req) {
                   }
                 : btcLiveMeasured || {}),
               peak_price: fillPx,
+              // measured from the fill it actually got, to the stop it carries
+              risk_pct: round(riskPctAt(fillPx, btcLiveMeasured ? btcLiveMeasured.v3_stop : btcLiveRow.stop), 2),
               score: btcLiveRow.score,
               pattern: patternFor(btcLiveRow.side, btcLiveRow.market_cap_bucket, "BTC"),
               entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
+              // the live Bitcoin book's own rules, copied at the fill
+              rules_snapshot: rulesSnapshot({ desk: "live", book: "BTC", view: liveBtcView, btcAbove200d }),
               quote_asset: "BTC",
               fx_usd: round(btcUsdNow, 2),
               exchange: live.conn.exchange,

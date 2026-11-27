@@ -52,6 +52,10 @@
     "stop_price": {
       "type": "number"
     },
+    "risk_pct": {
+      "type": "number",
+      "description": "The risk the position was opened with, in percent of its entry: the distance from the fill to its first stop. Fixed at open, because the stop later trails up to break-even and the R multiple must divide by what was risked, not by what is left"
+    },
     "target_price": {
       "type": "number"
     },
@@ -72,6 +76,14 @@
     "peak_price": {
       "type": "number"
     },
+    "mfe_price": {
+      "type": "number",
+      "description": "The best price the position reached while it was open — its highest on a long, its lowest on a short. With mae_price it separates a trade that ran straight to its target from one that was deep underwater before it turned: two results the close alone reads the same"
+    },
+    "mae_price": {
+      "type": "number",
+      "description": "The worst price the position reached while it was open — its lowest on a long, its highest on a short. Seeded from the entry, so a position that never went against its side keeps its entry here"
+    },
     "pnl_usd": {
       "type": "number"
     },
@@ -80,6 +92,14 @@
     },
     "fees_usd": {
       "type": "number"
+    },
+    "r_multiple": {
+      "type": "number",
+      "description": "The result in units of the risk the trade actually took: pnl_pct over the entry-to-stop distance. Written when it closed, so a target and a stop-out compare across coins and position sizes"
+    },
+    "hold_hours": {
+      "type": "number",
+      "description": "How long the position was open, in hours from opened_at to the close. A stop-out after two hours and one after two weeks are different problems, and only this number tells them apart"
     },
     "score": {
       "type": "number"
@@ -96,6 +116,11 @@
       ],
       "default": "gated",
       "description": "Which rule opened the trade: the scored entry gates, the V3 algorithm, or the always-take top-picks option. Kept so the journal can measure each source separately"
+    },
+    "rules_snapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The settings the trade was opened under, copied at the moment of entry: its desk and book, the score bar, the engines, the style, the timeframe and the BTC trend at the time. The rules move on, so without this copy a closed trade can only be read against today's rules rather than the ones that produced it"
     },
     "manual": {
       "type": "boolean",

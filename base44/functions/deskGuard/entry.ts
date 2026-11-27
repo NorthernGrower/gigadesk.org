@@ -6,7 +6,7 @@ import { liveRule, liveRulesView } from '../../shared/deskRules.ts';
 import { btcBookView } from '../../shared/bookRules.ts';
 import { toUsd } from '../../shared/quotes.ts';
 import { safetyExit, profitLock } from '../../shared/risk.ts';
-import { recordLesson } from '../../shared/learn.ts';
+import { excursionOf, outcomeFields, recordLesson } from '../../shared/learn.ts';
 
 // The desk's safety net, on a schedule. Until now a live position's stop was
 // only checked inside a bot cycle, and a bot cycle only runs while the app is
@@ -132,6 +132,19 @@ export default async function (req) {
         // while the app is closed, and it can only ever raise a stop.
         let stop = Number(t.stop_price) || (side === "long" ? entry * 0.975 : entry * 1.025);
         const update: Record<string, any> = {};
+        // the position's excursion, kept here as well as in the cycle: this
+        // pass is the only writer while the app is closed, so a run that never
+        // reaches the cycle would otherwise leave the best and worst prices
+        // behind — and the two are what a longer study reads
+        const ride = excursionOf(t, side, price);
+        if (
+          ride &&
+          (round(ride.mfe, 8) !== round(Number(t.mfe_price) || 0, 8) ||
+            round(ride.mae, 8) !== round(Number(t.mae_price) || 0, 8))
+        ) {
+          update.mfe_price = round(ride.mfe, 8);
+          update.mae_price = round(ride.mae, 8);
+        }
         const rules = rulesFor(quote);
         if (rules.lockOn) {
           const lock = profitLock({
@@ -217,14 +230,31 @@ export default async function (req) {
           side === "long" ? (filled - entry) * qty : (entry - filled) * qty;
         const pnl = toUsd(pnlInQuote, quote, fx);
         const pnlPct = size ? (pnl / size) * 100 : 0;
+        // the fill is the last print the position saw, so the excursion is
+        // completed with it rather than with the level the decision was made
+        // on — and with this pass's own marks folded in, never instead of them
+        const closingRide = excursionOf(
+          {
+            ...t,
+            mfe_price: update.mfe_price ?? t.mfe_price,
+            mae_price: update.mae_price ?? t.mae_price,
+          },
+          side,
+          filled,
+        );
         const dustNote = order.dust
           ? `The exchange holds ${order.held_qty} ${t.symbol}, below its minimum sellable amount — closed on the desk without an order. `
           : "";
         await base44.asServiceRole.entities.Trade.update(t.id, {
+          ...update,
           status: "closed",
           exit_price: round(filled, 8),
           pnl_usd: round(pnl),
           pnl_pct: round(pnlPct),
+          ...(closingRide
+            ? { mfe_price: round(closingRide.mfe, 8), mae_price: round(closingRide.mae, 8) }
+            : {}),
+          ...outcomeFields(t, pnlPct),
           closed_at: new Date().toISOString(),
           exit_reason: reason,
         });

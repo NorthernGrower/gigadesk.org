@@ -3,7 +3,7 @@ import { fetchMarkets, fetchLivePrices, asArray, round } from "../../shared/mark
 import { placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, pickFundingQuote, pickBtcBalance, fetchMarketConstraints, fetchListedSymbols } from "../../shared/exchanges.ts";
 import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
-import { recordLesson } from "../../shared/learn.ts";
+import { excursionOf, outcomeFields, recordLesson, riskPctAt, rulesSnapshot } from "../../shared/learn.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { btcBookView, btcSpendLimit } from "../../shared/bookRules.ts";
 import { toUsd } from "../../shared/quotes.ts";
@@ -23,12 +23,18 @@ function closingValues(trade, price, fx = 1) {
   const pnlInQuote = trade.side === "short" ? (entry - price) * qty : (price - entry) * qty;
   const pnl = toUsd(pnlInQuote, quote, fx);
   const pnlPct = size ? (pnl / size) * 100 : 0;
+  // the close completes the trade's excursion too: the exit is the last print
+  // the position saw, so the run it made and the drawdown it took are whole on
+  // the row, and the R multiple and hold time go with them
+  const ride = excursionOf(trade, trade.side === "short" ? "short" : "long", price);
   return {
     update: {
       status: "closed",
       exit_price: round(price, 8),
       pnl_usd: round(pnl),
       pnl_pct: round(pnlPct),
+      ...(ride ? { mfe_price: round(ride.mfe, 8), mae_price: round(ride.mae, 8) } : {}),
+      ...outcomeFields(trade, pnlPct),
       closed_at: new Date().toISOString(),
       exit_reason: "manual",
     },
@@ -317,8 +323,23 @@ export default async function (req) {
         }
       }
 
+      // the rules this position is opened under, copied onto it: the live
+      // desk's own set for a dollar book, the Bitcoin book's own set on a BTC
+      // market — each book keeps its rules apart, so the copy must too
+      const snapshotBook = trade.quote_asset === "BTC" ? "BTC" : "USD";
+      const snapshotView =
+        snapshotBook === "BTC"
+          ? btcBookView(liveRulesView(config), (config && config.live_rules ? config.live_rules : {}).live_btc_rules)
+          : liveRulesView(config);
       await base44.entities.Trade.update(tradeId, {
         status: "open",
+        rules_snapshot: rulesSnapshot({ desk: "live", book: snapshotBook, view: snapshotView }),
+        // the risk the position is opened with, measured from the fill to the
+        // stop it carries: fixed here so its R divides by what it risked
+        risk_pct: round(
+          riskPctAt(real ? real.avg_price || trade.entry_price : trade.entry_price, trade.stop_price),
+          2,
+        ),
         ...(real
           ? {
               mode: "real",

@@ -7,7 +7,7 @@
 // for long. Server-side only: this module must never be imported from the
 // frontend.
 import { asArray, round, fetchLivePrices } from "./market.ts";
-import { recordLesson } from "./learn.ts";
+import { outcomeFields, recordLesson } from "./learn.ts";
 import {
   callJson,
   hmacHex,
@@ -382,6 +382,9 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           exit_price: round(exitQuote, 8),
           pnl_usd: round(pnl),
           pnl_pct: size ? round((pnl / size) * 100) : 0,
+          // the same two numbers every other close writes: the result in units
+          // of the risk taken, and how long the position was held
+          ...outcomeFields(t, size ? (pnl / size) * 100 : 0),
           closed_at: new Date().toISOString(),
           // the wallet closed this one, not the user: "manual" here read as a
           // hand close in the journal and on the desk's recent-closes list
@@ -443,6 +446,8 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
         stop_price: round(entry - dist, 8),
         target_price: round(entry + targetR * dist, 8),
         target_r: targetR,
+        // the risk the import carries, from the stop the sync gave it
+        risk_pct: round(stopPct, 2),
         peak_price: round(entry, 8),
         pattern: "long/imported",
         exchange: conn.exchange,
@@ -450,6 +455,16 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
         // it: without the marker the bot treated it as a hand-logged fill and
         // never enforced its stop
         imported: true,
+        // an import has no desk view of its own: the desk and the book it was
+        // brought into, and the stop and target the sync used, are the whole
+        // of what opened it — recorded rather than filled in from today's rules
+        rules_snapshot: {
+          desk: "live",
+          book: "USD",
+          imported: true,
+          stop_pct: stopPct,
+          target_r: targetR,
+        },
         rationale: `Imported from the ${conn.label} wallet: the account holds ${round(diff, 8)} ${h.asset} the desk was not tracking. The bot now manages it like any other position.`,
         opened_at: openedAt,
         created_by_id: ownerId,
@@ -484,6 +499,8 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           exit_price: round(h.price, 8),
           pnl_usd: round(pnl),
           pnl_pct: size ? round((pnl / size) * 100) : 0,
+          // see the note on the branch above: the same two numbers
+          ...outcomeFields(t, size ? (pnl / size) * 100 : 0),
           closed_at: new Date().toISOString(),
           // closed by the sync, never by hand — see the note on the branch above
           exit_reason: "synced",
