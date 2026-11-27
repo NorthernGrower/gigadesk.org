@@ -29,6 +29,14 @@
     "pnl_usd": {
       "type": "number"
     },
+    "r_multiple": {
+      "type": "number",
+      "description": "The result in units of the risk actually taken: the trade's pnl percent divided by the percent between its entry and stop. 1 is a stop-out, 3 is the scale-out level, negative means it lost more than the plan allowed"
+    },
+    "hold_hours": {
+      "type": "number",
+      "description": "How long the position was held, in hours, from the open to the close"
+    },
     "exit_reason": {
       "type": "string"
     }

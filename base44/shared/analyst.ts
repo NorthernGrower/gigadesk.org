@@ -207,24 +207,38 @@ export function learningReport(rows: any[], options: any = {}) {
   const patterns = new Map<string, any>();
   const exits = new Map<string, any>();
   const tally = (bucket: Map<string, any>, key: string) => {
-    const row = bucket.get(key) || { key, trades: 0, wins: 0, pct: 0 };
+    const row = bucket.get(key) || { key, trades: 0, wins: 0, pct: 0, r: 0, rCount: 0, hours: 0, hoursCount: 0 };
     bucket.set(key, row);
     return row;
   };
+  const add = (row: any, lesson: any) => {
+    row.trades += 1;
+    row.wins += Number(lesson.win) === 1 ? 1 : 0;
+    row.pct += Number(lesson.pnl_pct) || 0;
+    // the R multiple and the hold time are only there once a stop was known
+    const r = Number(lesson.r_multiple);
+    if (lesson.r_multiple != null && Number.isFinite(r)) {
+      row.r += r;
+      row.rCount += 1;
+    }
+    const hours = Number(lesson.hold_hours);
+    if (lesson.hold_hours != null && Number.isFinite(hours)) {
+      row.hours += hours;
+      row.hoursCount += 1;
+    }
+  };
   for (const lesson of lessons) {
-    const pattern = tally(patterns, String(lesson.pattern));
-    pattern.trades += 1;
-    pattern.wins += Number(lesson.win) === 1 ? 1 : 0;
-    pattern.pct += Number(lesson.pnl_pct) || 0;
-    const exit = tally(exits, String(lesson.exit_reason || "unknown"));
-    exit.trades += 1;
-    exit.wins += Number(lesson.win) === 1 ? 1 : 0;
-    exit.pct += Number(lesson.pnl_pct) || 0;
+    add(tally(patterns, String(lesson.pattern)), lesson);
+    add(tally(exits, String(lesson.exit_reason || "unknown")), lesson);
   }
   const shape = (row: any) => ({
     trades: row.trades,
     win_rate: Math.round((row.wins / row.trades) * 100),
     avg_pct: round(row.pct / row.trades),
+    // the result in units of the risk taken: 1 is a stop-out, 3 the scale-out
+    avg_r: row.rCount ? round(row.r / row.rCount) : null,
+    // a stop-out after two hours is a different problem from one after two weeks
+    avg_hours: row.hoursCount ? round(row.hours / row.hoursCount, 1) : null,
     adj: scoreAdjustment(row.trades, row.wins / row.trades),
   });
   const ranked = [...patterns.values()].sort((a, b) => b.trades - a.trades);
@@ -247,6 +261,7 @@ export function learningReport(rows: any[], options: any = {}) {
     exits: byExit,
   };
 }
+
 
 /**
  * BTC's tape from its daily candles: above its 200-day average, and its last
@@ -390,7 +405,7 @@ export function briefingPrompt(digest: any, decay: any, context: any = null, lea
     "- closes: one note of at most 30 words for each recent close listed, saying why it worked or failed, in terms of the recorded exit, side and numbers.",
     "- watch: up to 4 short things worth watching on this desk's own terms. You may name scanner setups or the BTC tape from the context.",
     "- risks: the main risk to this desk over the next few days, at most 45 words.",
-    "- lesson: at most 45 words on what the closed calls have taught, from the pattern and exit records below — name the pattern that is doing well or badly, and the exit that keeps taking the money or giving it back. Say plainly when a pattern has too few trades to judge, and never call a pattern proven.",
+    "- lesson: at most 45 words on what the closed calls have taught, from the pattern and exit records below — name the pattern that is doing well or badly, the exit that keeps taking the money or giving it back, and the R multiple or hold time that explains why. Say plainly when a pattern has too few trades to judge, and never call a pattern proven.",
     "- stance: stand_aside, selective, normal or caution.",
     "",
     "Desk data:",
