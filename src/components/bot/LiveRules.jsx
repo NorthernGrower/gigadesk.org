@@ -65,6 +65,7 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
       analyst_on: lr.analyst_on === true,
       btc_markets: lr.btc_markets === true,
       v3_exit: lr.v3_exit === true,
+      harmonics: lr.harmonics === true,
     };
   };
   const [live, setLive] = useState(() => fromConfig(config));
@@ -128,6 +129,7 @@ export default function LiveRules({ config, onSaved, book = 'USD', btcBook = nul
         analyst_on: live.analyst_on === true,
         btc_markets: live.btc_markets === true,
         v3_exit: live.v3_exit === true,
+        harmonics: live.harmonics === true,
       };
       const pick = Object.fromEntries(bookRuleKeys('live', book)
         // the BTC markets switch and the desk analyst belong to the whole desk,

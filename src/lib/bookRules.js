@@ -6,7 +6,7 @@ const USD_KEYS = [
   'cooldown_minutes', 'trailing_stop', 'trailing_trigger_pct', 'trailing_distance_pct',
   'allow_shorts', 'trading_style', 'timeframe', 'market_cap_scope', 'sentiment_watch',
   'confluence_v2', 'engine_v2', 'champion_engine', 'btc_gate', 'max_trade_loss_pct',
-  'pyramid', 'pyramid_trigger_pct', 'v3_algo', 'v3_exit', 'always_take_top',
+  'pyramid', 'pyramid_trigger_pct', 'v3_algo', 'v3_exit', 'harmonics', 'always_take_top',
   'always_take_count', 'analyst_on',
 ];
 

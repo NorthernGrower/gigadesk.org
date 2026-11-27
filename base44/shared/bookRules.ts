@@ -32,6 +32,8 @@ export const BOOK_RULE_KEYS = [
   "pyramid_trigger_pct",
   "v3_algo",
   "v3_exit",
+  // V3 only: a harmonic pattern at the price moves the setup's score by 5
+  "harmonics",
   "always_take_top",
   "always_take_count",
   "profit_lock",
@@ -69,6 +71,8 @@ export const BOOK_RULE_DEFAULTS: Record<string, any> = {
   pyramid_trigger_pct: 1.5,
   v3_algo: false,
   v3_exit: false,
+  // harmonic patterns as a score nudge for V3, off until the desk asks for it
+  harmonics: false,
   always_take_top: false,
   always_take_count: 5,
   profit_lock: true,

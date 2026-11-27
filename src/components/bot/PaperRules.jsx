@@ -49,6 +49,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
       analyst_on: view.analyst_on === true,
       btc_markets: view.btc_markets === true,
       v3_exit: view.v3_exit === true,
+      harmonics: view.harmonics === true,
     };
   };
   const [paper, setPaper] = useState(() => fromConfig(config));
@@ -90,6 +91,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
     analyst_on: paper.analyst_on === true,
     btc_markets: paper.btc_markets === true,
     v3_exit: paper.v3_exit === true,
+    harmonics: paper.harmonics === true,
   });
 
   // only this book's keys are written; the other book's set is never touched.

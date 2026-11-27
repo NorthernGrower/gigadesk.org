@@ -281,6 +281,12 @@ export function scanEngineFields(form, setNum, setV) {
           onChange={setV('v3_algo')}
         />
         <Toggle
+          label="Harmonic patterns"
+          hint="V3 only, and a weight at most: a harmonic pattern (Gartley, Bat, Butterfly, Crab, Cypher, Shark, 5-0, Three Drives) whose reversal zone the price is sitting in adds 5 points to that V3 setup's score — one pointing the other way takes 5 away. It never opens a trade on its own and never blocks one; the score only decides the order V3 setups are taken in."
+          checked={form.harmonics === true}
+          onChange={setV('harmonics')}
+        />
+        <Toggle
           label="Measured exit"
           hint="Runs the researched exit on this desk's own entries instead of its fixed target: a 2×ATR stop from the entry bar, no target, and a 30-bar horizon. The exit study replayed V3's entries under 21 exit rules and this held to the horizon best — +7.18%, +7.76% and +1.62% per trade out of sample against the fixed target's +1.35%, +2.40% and −0.48%. It holds through a normal pullback instead of stopping out of a move still going, but it is a longer hold: the target, break-even, scale-out, trailing and mood exits are then skipped, exactly as V3's own are. Leave it off while you compare: the entry rules are unchanged either way."
           checked={form.v3_exit === true}

@@ -11,6 +11,7 @@ import { loadSmartBias } from "../../shared/smartmoney.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
 import { syncExchangePositions } from "../../shared/reconcile.ts";
 import { btcTrendUp, evaluateV3, v3ExitDue, v3Plan, V3 } from "../../shared/v3algo.ts";
+import { detectHarmonic, HARMONIC } from "../../shared/harmonics.ts";
 import { usdInQuote, quoteOf, patternFor } from "../../shared/quotes.ts";
 import { capPositionSize, losingStreak, riskState, profitLock } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
@@ -1474,6 +1475,9 @@ export default async function (req) {
       // daily trend cannot be read, the regime gate fails closed: no entries.
       const v3DeskOn = { live: v3On(liveView), paper: v3On(paperView) };
       const v3Evals = new Map();
+      // harmonic patterns found at the price, per symbol: read from the same
+      // daily bars, and only ever used to nudge a V3 setup's score
+      const harmonicHits = new Map();
       v3Error = null;
       if (v3DeskOn.live || v3DeskOn.paper) {
         try {
@@ -1490,11 +1494,16 @@ export default async function (req) {
             );
             settled.forEach((res, i) => {
               if (res.status !== "fulfilled" || !res.value) return;
-              v3Evals.set(group[i], evaluateV3({
+              const ev = evaluateV3({
                 candles: res.value,
                 btcAboveSma200: btcAbove,
                 profile: config.v3_profile || "loose",
-              }));
+              });
+              v3Evals.set(group[i], ev);
+              // a harmonic pattern at the price, on the same bars: no extra
+              // request, and it can only move this setup's score
+              const hit = detectHarmonic({ candles: res.value, atr: ev.atr });
+              if (hit) harmonicHits.set(group[i], hit);
             });
           }
           const gates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
@@ -1536,6 +1545,9 @@ export default async function (req) {
         paper: v3On(paperBtcView) && btcMarketsOn(paperView),
       };
       const btcV3Evals = new Map();
+      // harmonic patterns on the Bitcoin markets' own daily bars, kept apart
+      // from the dollar book's: a BTC-quoted chart is a different chart
+      const btcHarmonicHits = new Map();
       btcV3Summary = null;
       if ((btcTradable.length || btcTradableLive.length) && (btcV3DeskOn.live || btcV3DeskOn.paper)) {
         try {
@@ -1550,12 +1562,15 @@ export default async function (req) {
             );
             settled.forEach((res, i) => {
               if (res.status !== "fulfilled" || !res.value) return;
-              btcV3Evals.set(group[i], evaluateV3({
+              const ev = evaluateV3({
                 candles: res.value,
                 btcAboveSma200: btcAbove,
                 minAdvUsd: btcFloorBtc,
                 profile: config.v3_profile || "loose",
-              }));
+              });
+              btcV3Evals.set(group[i], ev);
+              const hit = detectHarmonic({ candles: res.value, atr: ev.atr });
+              if (hit) btcHarmonicHits.set(group[i], hit);
             });
           }
           const btcGates = { history: 0, entry_signal: 0, liquidity: 0, regime: 0, confluence: 0 };
@@ -1592,6 +1607,28 @@ export default async function (req) {
           console.log(`BTC v3 evaluation failed: ${String((err && err.message) || err)}`);
         }
       }
+      // ---- harmonic patterns, as a weight only. A pattern found at the price
+      // moves a V3 row's score by the same fixed amount either way: it agrees
+      // with the long and the setup gains points, it points the other way and
+      // the setup loses them. It never adds a candidate, never removes one and
+      // never places an order — on a V3 desk the score only orders the setups
+      // that V3 already accepted, so this decides who is bought first when more
+      // qualify than the book has room for.
+      const withHarmonic = (row, hit, on) => {
+        if (!on || !hit) return row;
+        const points = hit.direction === "bullish" ? HARMONIC.points : -HARMONIC.points;
+        return {
+          ...row,
+          score: Math.max(0, Math.min(100, (Number(row.score) || 0) + points)),
+          harmonic: hit,
+          reasons: [
+            ...(row.reasons || []),
+            `${hit.direction === "bullish" ? "Bullish" : "Bearish"} ${hit.name} at ${round(hit.d, 8)} (reversal zone ${round(hit.prz[0], 8)}–${round(hit.prz[1], 8)}, ${round(hit.atr_distance, 2)} ATR from price): ${
+              points > 0 ? "+" : ""
+            }${points} to the score — a pattern never opens a trade on its own`,
+          ],
+        };
+      };
       // a V3 row trades the algorithm's own plan: its stop, no target, and it
       // is a long whatever the intraday scan said
       // V3 only rewrites a row on a desk that runs V3. The evaluations are
@@ -1605,7 +1642,7 @@ export default async function (req) {
         const plan = v3Plan({ entryPx: row.entry, atr: ev.atr });
         if (!plan) return row;
         const formation = ev.formations.length ? ` with ${ev.formations.join(", ")}` : "";
-        return {
+        const next = {
           ...row,
           side: "long",
           stop: round(plan.stop, 8),
@@ -1617,6 +1654,8 @@ export default async function (req) {
             `V3: ${ev.entry_signal.join(" + ")}${formation} on the daily close, stop 2xATR, no target, ${ev.horizon_bars}-bar horizon`,
           ],
         };
+        // the pattern is that book's own switch
+        return withHarmonic(next, harmonicHits.get(row.symbol), (desk === "live" ? liveView : paperView).harmonics === true);
       };
       const qualifies = (r, desk) => {
         const blocked = desk === "live" ? blockedLive : blockedPaper;
@@ -1656,7 +1695,7 @@ export default async function (req) {
         const plan = v3Plan({ entryPx: row.entry, atr: ev.atr });
         if (!plan) return row;
         const formation = ev.formations.length ? ` with ${ev.formations.join(", ")}` : "";
-        return {
+        const next = {
           ...row,
           side: "long",
           stop: round(plan.stop, 8),
@@ -1668,6 +1707,12 @@ export default async function (req) {
             `V3 on the BTC market: ${ev.entry_signal.join(" + ")}${formation}, 2xATR stop, no target, ${ev.horizon_bars}-bar horizon`,
           ],
         };
+        // the pattern is that book's own switch, read on the pair's own chart
+        return withHarmonic(
+          next,
+          btcHarmonicHits.get(row.symbol),
+          (desk === "live" ? liveBtcView : paperBtcView).harmonics === true,
+        );
       };
       // a live short is a margin order: only a venue whose margin API the desk
       // can place through may take one, so a spot-only account is never handed
@@ -1715,6 +1760,9 @@ export default async function (req) {
         : [];
       const liveWanted = [...liveGated, ...liveTop]
         .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+        // best score first, so a harmonic pattern's weight decides which setups
+        // are taken when more qualify than the book has room for
+        .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
         .slice(0, Math.max(0, liveMaxOpen - liveOpenCount));
       // a desk with qualifying setups but nothing to pay with should say so
       // once (throttled), instead of firing order attempts into a wall of
@@ -1802,6 +1850,7 @@ export default async function (req) {
         : [];
       const paperWanted = [...paperGated, ...paperTop]
         .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
+        .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
         .slice(0, Math.max(0, paperMaxOpen - paperOpenCount));
       if (dryRun) {
         const plans = [];
@@ -2076,6 +2125,7 @@ export default async function (req) {
         const btcCandidates = [...btcGatedPaper, ...btcTopPaper]
           .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
           .filter((r) => !already.has(r.symbol))
+          .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
           .slice(0, 5);
         for (const btcRow of paperBtcOn ? btcCandidates : []) {
           const btcTaken = opened.filter((o) => o.mode === "paper" && o.quote === "BTC").length;
@@ -2238,6 +2288,7 @@ export default async function (req) {
           const btcSeeds = [...btcGatedLive, ...btcTopLive]
             .filter((r, index, all) => all.findIndex((x) => x.symbol === r.symbol) === index)
             .filter((r) => !takenBtc.has(r.symbol))
+            .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
             .slice(0, 5);
           // this book's slots are its own: the dollar plans were sized against
           // the dollar book, and neither can take the other's room
