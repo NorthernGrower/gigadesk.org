@@ -38,26 +38,35 @@ export default function RecentCloses({ mode = 'paper', limit = 6, quote = 'USD' 
         Recent closed {mode === 'real' ? 'live' : 'paper'} {book === 'BTC' ? 'Bitcoin' : 'dollar'} trades
       </p>
       <div className="mt-2 space-y-1.5">
-        {rows.map((t) => (
-          <div key={t.id} className="flex items-center justify-between gap-3 text-[12px]">
-            <span className="flex items-center gap-2">
-              <span className="font-semibold">{t.symbol}</span>
-              <span className="num text-[11px] text-muted-foreground">
-                {t.exchange ? `${t.exchange} · ` : ''}
-                {mode === 'real'
-                  ? t.exchange_order_id
-                    ? `order ${String(t.exchange_order_id).slice(0, 10)}…`
-                    : 'logged by hand'
-                  : t.exit_reason
-                    ? String(t.exit_reason).replace('_', ' ')
-                    : 'closed'}
+        {rows.map((t) => {
+          // where the position came from, and how it left. An import carries no
+          // exchange order id, and calling that "logged by hand" was wrong: the
+          // wallet sync found the holding, and the bot or the sync closed it.
+          const imported = t.imported === true || String(t.pattern || '') === 'long/imported';
+          const origin = t.exchange_order_id
+            ? `order ${String(t.exchange_order_id).slice(0, 10)}…`
+            : imported
+              ? 'imported from the wallet'
+              : t.manual === true
+                ? 'manual buy'
+                : mode === 'real'
+                  ? 'logged by hand'
+                  : null;
+          const close = t.exit_reason ? String(t.exit_reason).replace('_', ' ') : null;
+          return (
+            <div key={t.id} className="flex items-center justify-between gap-3 text-[12px]">
+              <span className="flex items-center gap-2">
+                <span className="font-semibold">{t.symbol}</span>
+                <span className="num text-[11px] text-muted-foreground">
+                  {[t.exchange, origin, close || 'closed'].filter(Boolean).join(' · ')}
+                </span>
               </span>
-            </span>
-            <span className={`num ${Number(t.pnl_usd) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {fmtUsd(t.pnl_usd)} ({t.pnl_pct ?? 0}%)
-            </span>
-          </div>
-        ))}
+              <span className={`num ${Number(t.pnl_usd) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {fmtUsd(t.pnl_usd)} ({t.pnl_pct ?? 0}%)
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -155,8 +155,10 @@
         "time",
         "weakened",
         "max_loss",
-        "scale"
-      ]
+        "scale",
+        "synced"
+      ],
+      "description": "How the trade closed. manual is a close you made (from the desk or the call card); synced is the wallet sync closing a position the exchange no longer holds — sold or moved outside the app, which is never your hand on the desk"
     },
     "quote_asset": {
       "type": "string",

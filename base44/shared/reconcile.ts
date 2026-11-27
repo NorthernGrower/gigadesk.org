@@ -382,7 +382,9 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           pnl_usd: round(pnl),
           pnl_pct: size ? round((pnl / size) * 100) : 0,
           closed_at: new Date().toISOString(),
-          exit_reason: "manual",
+          // the wallet closed this one, not the user: "manual" here read as a
+          // hand close in the journal and on the desk's recent-closes list
+          exit_reason: "synced",
         });
         out.closed.push({ symbol: sym, pnl_usd: round(pnl) });
         await base44.entities.Alert.create({
@@ -479,7 +481,8 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           pnl_usd: round(pnl),
           pnl_pct: size ? round((pnl / size) * 100) : 0,
           closed_at: new Date().toISOString(),
-          exit_reason: "manual",
+          // closed by the sync, never by hand — see the note on the branch above
+          exit_reason: "synced",
         });
         out.closed.push({ symbol: h.asset, pnl_usd: round(pnl) });
         await base44.entities.Alert.create({
