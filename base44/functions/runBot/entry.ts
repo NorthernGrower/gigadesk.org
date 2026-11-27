@@ -15,7 +15,7 @@ import { usdInQuote, quoteOf, patternFor } from "../../shared/quotes.ts";
 import { capPositionSize, losingStreak, riskState, profitLock } from "../../shared/risk.ts";
 import { pickTopPicks } from "../../shared/topPicks.ts";
 import { toUsd, toQuote } from "../../shared/quotes.ts";
-import { btcBookView, seedBookRules } from "../../shared/bookRules.ts";
+import { btcBookView, seedBookRules, btcSpendLimit } from "../../shared/bookRules.ts";
 
 const DEFAULT_CONFIG = {
   mode: "approve",
@@ -142,6 +142,13 @@ export default async function (req) {
     const liveBtcView = btcBookView(liveView, (config.live_rules || {}).live_btc_rules);
     const paperBtcEngine = deskEngine(paperBtcView);
     const liveBtcEngine = deskEngine(liveBtcView);
+    // the share of the account's spot Bitcoin the live Bitcoin book may put to
+    // work, and the hard ceiling it must stay under: its own rules, 1 to 100 and
+    // 0 for no cap, with 100 and no cap keeping today's behaviour. The two
+    // combine, so the smaller wins (see btcSpendLimit). Neither resizes a
+    // position already open — together they cap what new entries may spend.
+    const btcUsePct = Math.max(1, Math.min(100, Number(liveBtcView.btc_use_pct) || 100));
+    const btcCapBtc = Math.max(0, Number(liveBtcView.btc_cap_btc) || 0);
 
     // single-flight: a cycle that started moments ago is still scanning, and
     // two overlapping cycles read the same empty state and opened the same
@@ -2175,7 +2182,10 @@ export default async function (req) {
       // book has not been measured on. A failure here costs BTC entries,
       // never the cycle.
       try {
-        const btcSpendableNow = pickBtcBalance(btcBalances);
+        // what this book may deploy: its share of the account's Bitcoin, held
+        // under its hard cap. The rest stays on the exchange untouched, so a 50%
+        // setting or a small cap never spends the whole holding
+        const btcSpendableNow = btcSpendLimit(pickBtcBalance(btcBalances), btcUsePct, btcCapBtc);
         // the live connection must be the venue that lists these pairs, so a
         // Bitcoin entry is never sent to an account without the market: the book
         // then keeps scanning for its paper side only
@@ -2901,6 +2911,11 @@ export default async function (req) {
           // and what it is worth at the live rate
           balance_btc: round(btcHeld, 8),
           balance_usd: round(btcHeld * btcUsdNow, 2),
+          // the share of that holding this book may put to work, the hard cap it
+          // must stay under, and the amount those two allow
+          use_pct: btcUsePct,
+          cap_btc: round(btcCapBtc, 8),
+          usable_btc: round(btcSpendLimit(btcHeld, btcUsePct, btcCapBtc), 8),
           equity_usd: round(btcHeld * btcUsdNow + liveBtcUnrealized, 2),
           day_best: btcPaperDay.length ? btcDayRow(btcPaperDay[0]) : null,
           day_worst: btcPaperDay.length > 1 ? btcDayRow(btcPaperDay[btcPaperDay.length - 1]) : null,

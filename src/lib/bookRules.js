@@ -12,6 +12,9 @@ const USD_KEYS = [
 
 const LIVE_KEYS = [
   ...USD_KEYS.filter((key) => key !== 'allow_shorts'),
+  // the share of the account's Bitcoin the live Bitcoin book may deploy, and
+  // the hard ceiling it must stay under
+  'btc_use_pct', 'btc_cap_btc',
   'profit_lock', 'lock_arm_pct', 'giveback_pct', 'margin_engine', 'margin_leverage', 'btc_markets',
 ];
 

@@ -177,6 +177,10 @@ export default function Bot() {
   const currentBook = config?.active_book === 'BTC' ? 'BTC' : 'USD';
   const book = bookMode || currentBook;
   const isBtc = book === 'BTC';
+  // the Bitcoin book's hard cap is set in BTC, and the stats row reads in
+  // dollars: it is shown at the live rate, so "no cap" only ever means none
+  const btcCapUsd =
+    (Number(bot?.btc_markets?.book?.cap_btc) || 0) * (Number(bot?.btc_markets?.btc_usd) || 0);
 
   const changeBook = async (next) => {
     setBookMode(next);
@@ -224,8 +228,12 @@ export default function Bot() {
                 balanceStale: !isBtc && bot?.live?.balance_stale && savedBalance?.usd == null,
                 balanceError: isBtc ? null : bot?.live?.balance_error,
                 exposure: isBtc ? bot?.btc_markets?.book?.live_exposure : bot?.live?.exposure,
-                cap: isBtc ? 0 : bot?.live?.cap_usd,
-                budget: isBtc ? null : bot?.live?.budget_left,
+                cap: isBtc ? btcCapUsd : bot?.live?.cap_usd,
+                budget: isBtc
+                  ? btcCapUsd > 0
+                    ? Math.max(0, btcCapUsd - (Number(bot?.btc_markets?.book?.live_exposure) || 0))
+                    : null
+                  : bot?.live?.budget_left,
                 unrealized: isBtc ? bot?.btc_markets?.book?.live_unrealized : bot?.live?.unrealized,
                 realizedToday: isBtc ? bot?.btc_markets?.book?.live_realized_today : bot?.live?.realized_today,
                 openCount: isBtc ? bot?.btc_markets?.book?.open_live : bot?.live?.open_count,

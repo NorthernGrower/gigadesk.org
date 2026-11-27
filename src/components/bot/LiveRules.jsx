@@ -36,6 +36,8 @@ export default function LiveRules({ config, onSaved, book = 'USD' }) {
       score_bar: lr.score_bar ?? 70,
       risk_per_trade_pct: lr.risk_per_trade_pct ?? 4,
       max_open_positions: lr.max_open_positions ?? 8,
+      btc_use_pct: lr.btc_use_pct ?? 100,
+      btc_cap_btc: lr.btc_cap_btc ?? 0,
       daily_target_pct: lr.daily_target_pct ?? 2,
       cooldown_minutes: lr.cooldown_minutes ?? 120,
       trailing_stop: lr.trailing_stop ?? true,
@@ -94,6 +96,11 @@ export default function LiveRules({ config, onSaved, book = 'USD' }) {
         score_bar: Math.max(0, roundTo(Number(live.score_bar), 1)),
         risk_per_trade_pct: roundTo(live.risk_per_trade_pct, 2),
         max_open_positions: Math.max(1, Math.round(Number(live.max_open_positions) || 1)),
+        // the Bitcoin book's own share of the account's Bitcoin: 1-100, and 100
+        // keeps today's behaviour of using all of it
+        btc_use_pct: Math.max(1, Math.min(100, roundTo(Number(live.btc_use_pct) || 100, 0))),
+        // the hard ceiling in BTC: 0 is no cap, and the share above still applies
+        btc_cap_btc: Math.max(0, roundTo(Number(live.btc_cap_btc) || 0, 8)),
         daily_target_pct: roundTo(live.daily_target_pct, 2),
         cooldown_minutes: Math.max(0, Math.round(Number(live.cooldown_minutes) || 0)),
         trailing_stop: live.trailing_stop,
@@ -123,8 +130,9 @@ export default function LiveRules({ config, onSaved, book = 'USD' }) {
         v3_exit: live.v3_exit === true,
       };
       const pick = Object.fromEntries(bookRuleKeys('live', book)
-        // the BTC markets switch and the desk analyst belong to the whole desk
-        .filter((key) => !['btc_markets', 'analyst_on'].includes(key) && all[key] != null)
+        // the BTC markets switch and the desk analyst belong to the whole desk,
+        // and the Bitcoin share and cap are the Bitcoin book's own rules
+        .filter((key) => !['btc_markets', 'analyst_on'].includes(key) && (isBtc || !['btc_use_pct', 'btc_cap_btc'].includes(key)) && all[key] != null)
         .map((key) => [key, all[key]]));
       // both books save into live_rules; the Bitcoin book under its own key, so
       // the dollar values it was seeded from stay exactly as they are. The
@@ -189,9 +197,38 @@ export default function LiveRules({ config, onSaved, book = 'USD' }) {
             Each real order is sized by Risk per trade % of the account's spendable balance, risked between entry and stop. Market orders only; real fills are tracked separately from the paper balance.
           </p>
           {isBtc ? (
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              BTC markets are sized from the account's own Bitcoin spot balance, and take longs only. The dollar quote's cash is never spent on one, so turning BTC markets on cannot starve the dollar desk.
-            </p>
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="Bitcoin balance to use %"
+                  hint="How much of the account's spot Bitcoin this book may put to work. 100 uses all of it, 50 keeps half in reserve."
+                >
+                  <Input
+                    className="num"
+                    inputMode="decimal"
+                    value={live.btc_use_pct}
+                    onChange={setLiveNum('btc_use_pct')}
+                  />
+                </Field>
+                <Field
+                  label="Hard cap (BTC)"
+                  hint="The most BTC the book may ever have deployed, whatever the share above allows. 0 means no cap."
+                >
+                  <Input
+                    className="num"
+                    inputMode="decimal"
+                    value={live.btc_cap_btc}
+                    onChange={setLiveNum('btc_cap_btc')}
+                  />
+                </Field>
+              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Both limits apply together and the smaller one wins: 100% of a 0.002 BTC holding under a 0.001 BTC cap
+                deploys at most 0.001 BTC, and 25% of it deploys 0.0005 BTC. Positions already open are never resized —
+                they change what new entries may spend. BTC markets are sized from that amount, take longs only, and never
+                touch the dollar quote's cash.
+              </p>
+            </>
           ) : (
             <>
               <p className="text-[11px] leading-snug text-muted-foreground">

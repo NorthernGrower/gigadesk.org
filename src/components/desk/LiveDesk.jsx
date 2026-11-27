@@ -383,6 +383,11 @@ export default function LiveDesk({
               <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
                 The Bitcoin book spends only the Bitcoin on the account, never the dollar cash. Its positions are
                 priced in BTC on their own pairs, so its dollar figures are each pair's own move at the rate.
+                {Number(btcBook.use_pct)
+                  ? ` It may put ${Number(btcBook.use_pct)}% of the holding to work (${btcBook.usable_btc} BTC)${
+                      Number(btcBook.cap_btc) > 0 ? `, under a hard cap of ${btcBook.cap_btc} BTC` : ''
+                    }; the rest stays untouched.`
+                  : ''}
                 {btc.live_on
                   ? ''
                   : ' BTC markets are off in this desk\'s Live rules, so no Bitcoin-market entry can fire — switch them on under Bot → Rules → Live rules.'}

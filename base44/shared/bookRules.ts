@@ -10,6 +10,8 @@ export const BOOK_RULE_KEYS = [
   "score_bar",
   "risk_per_trade_pct",
   "max_open_positions",
+  "btc_use_pct",
+  "btc_cap_btc",
   "daily_target_pct",
   "cooldown_minutes",
   "trailing_stop",
@@ -43,6 +45,10 @@ export const BOOK_RULE_DEFAULTS: Record<string, any> = {
   score_bar: 70,
   risk_per_trade_pct: 4,
   max_open_positions: 8,
+  // the share of the account's spot Bitcoin the live Bitcoin book may deploy
+  btc_use_pct: 100,
+  // ... and the hard ceiling it must stay under, in BTC. 0 turns it off
+  btc_cap_btc: 0,
   daily_target_pct: 2,
   cooldown_minutes: 120,
   trailing_stop: true,
@@ -93,4 +99,19 @@ export function btcBookView(base: any, saved: any): any {
     else rules[key] = BOOK_RULE_DEFAULTS[key];
   }
   return { ...base, ...rules, margin_engine: false };
+}
+
+/**
+ * How much of the account's spot Bitcoin a book may put to work: the share it
+ * allows, and the hard cap it must stay under. The two combine, so the smaller
+ * one wins — a 100% setting under a 0.001 BTC cap can never deploy more than
+ * 0.001 BTC, and a 25% share of a 0.002 BTC holding can never reach it. A cap
+ * of 0 is no cap, which keeps the share alone in charge.
+ */
+export function btcSpendLimit(heldBtc: any, usePct: any, capBtc: any) {
+  const held = Math.max(0, Number(heldBtc) || 0);
+  const pct = Math.max(1, Math.min(100, Number(usePct) || 100));
+  const cap = Math.max(0, Number(capBtc) || 0);
+  const share = (held * pct) / 100;
+  return cap > 0 ? Math.min(share, cap) : share;
 }

@@ -5,7 +5,7 @@ import { readAccount, pickFundingQuote, pickBtcBalance, fetchMarketConstraints, 
 import { entryMinimum, liveEntrySize } from "../../shared/entryRules.ts";
 import { recordLesson } from "../../shared/learn.ts";
 import { liveRule, liveRulesView } from "../../shared/deskRules.ts";
-import { btcBookView } from "../../shared/bookRules.ts";
+import { btcBookView, btcSpendLimit } from "../../shared/bookRules.ts";
 import { toUsd } from "../../shared/quotes.ts";
 
 /**
@@ -264,6 +264,11 @@ export default async function (req) {
         // a Bitcoin proposal is sized by the Bitcoin book's own live risk, and has no dollar cap
         const bookRules = isBtcQuote ? btcBookView(liveRulesView(config), LR.live_btc_rules) : null;
         const liveRiskPct = Math.min(25, Number(bookRules ? bookRules.risk_per_trade_pct : liveRule(LR, "risk_per_trade_pct", 4)) || 4);
+        // a Bitcoin proposal spends only what the Bitcoin book allows of the
+        // holding — its share and its hard cap — exactly as its entries do
+        const spendable = isBtcQuote
+          ? btcSpendLimit(balance, (bookRules || {}).btc_use_pct, (bookRules || {}).btc_cap_btc)
+          : balance;
         // the same sizing the bot entries use: risked between entry and stop,
         // a fee buffer under the spendable balance, and at or above the
         // pair's exchange minimum so Kraken accepts the volume
@@ -275,12 +280,12 @@ export default async function (req) {
         )
           .filter((t) => t.created_by_id === trade.created_by_id)
           .reduce((a, t) => a + (Number(t.size_usd) || 0), 0);
-        const budgetUsd = capUsd > 0 ? Math.max(0, capUsd - openReal) : balance * (isBtcQuote ? btcUsd : 1);
+        const budgetUsd = capUsd > 0 ? Math.max(0, capUsd - openReal) : spendable * (isBtcQuote ? btcUsd : 1);
         // the $10 floor in the quote this market settles in
         const floorQuote = isBtcQuote ? round(10 / btcUsd, 8) : 10;
         const sizeQuote = liveEntrySize({
           row: { entry, stop },
-          balance,
+          balance: spendable,
           budget: isBtcQuote ? budgetUsd / btcUsd : budgetUsd,
           slots: 1,
           riskPct: liveRiskPct,
@@ -303,7 +308,7 @@ export default async function (req) {
             : {
                 ok: false,
                 message:
-                  balance < floorQuote
+                  spendable < floorQuote
                     ? `No spendable ${quoteAsset} on ${live.conn.label} to fund the order`
                     : `After the risk rules the order sits below ${trade.symbol}'s exchange minimum — raise risk per trade or the budget cap`,
               };
