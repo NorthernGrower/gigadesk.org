@@ -29,8 +29,9 @@ export const HARMONIC = {
   // how far from the reversal zone the price may be and still count: the V3
   // stop distance, so "spotted" means "at the entry's own risk"
   atrReach: 2,
-  // widen every Fibonacci window by this fraction
-  tolerance: 0.08,
+  // widen every Fibonacci window by this fraction — 15% of the ratio, which is
+  // half the reference system's default Deviation of 30%
+  tolerance: 0.15,
   // the pattern's latest point must be this recent, in daily bars
   recentBars: 30,
   // how many of the newest pivots to test, so an old shape is never re-read
