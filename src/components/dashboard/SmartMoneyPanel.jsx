@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import BiasTable from '@/components/smartmoney/BiasTable';
@@ -16,21 +16,52 @@ const WINDOWS = [
 
 export default function SmartMoneyPanel() {
   const [windowKey, setWindowKey] = useState('week');
+  const [attempt, setAttempt] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // the board the app saved last, shown while a feed cannot be read
+  const [note, setNote] = useState(null);
+
+  // the refresh button and Try again both re-read: a new attempt is what the
+  // effect below watches, where setting the same window again changed nothing
+  const forceRef = useRef(false);
+  const reload = () => {
+    forceRef.current = true;
+    setAttempt((n) => n + 1);
+  };
 
   useEffect(() => {
     let alive = true;
+    // a plain load takes the board the desk saved when it is only minutes old;
+    // the button asks the feeds for a fresh one
+    const force = forceRef.current;
+    forceRef.current = false;
     setLoading(true);
     setError(null);
     base44.functions
-      .invoke('getSmartMoney', { window: windowKey })
+      .invoke('getSmartMoney', { window: windowKey, force })
       .then((res) => {
-        if (alive) setData(res.data);
+        if (!alive) return;
+        const payload = res?.data || {};
+        const traders = payload.traders || [];
+        // a refresh that failed says why: with a saved board the panel shows
+        // that board and the reason above it, without one it shows the reason
+        if (payload.error && !traders.length) {
+          setNote(null);
+          setData(null);
+          setError(payload.error);
+          return;
+        }
+        setError(null);
+        setNote(payload.error || null);
+        setData(payload);
       })
       .catch((err) => {
-        if (alive) setError(err.message);
+        if (!alive) return;
+        setNote(null);
+        setData(null);
+        setError(err.message);
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -38,10 +69,11 @@ export default function SmartMoneyPanel() {
     return () => {
       alive = false;
     };
-  }, [windowKey]);
+  }, [windowKey, attempt]);
 
+  const traders = data?.traders || [];
   const bias = data?.bias || [];
-  const totalOpen = bias.reduce((a, b) => a + b.total_usd, 0);
+  const totalOpen = bias.reduce((a, b) => a + (Number(b.total_usd) || 0), 0);
   const netLong = [...bias].sort((a, b) => b.long_share_pct - a.long_share_pct)[0];
   const netShort = [...bias].sort((a, b) => a.long_share_pct - b.long_share_pct)[0];
 
@@ -51,10 +83,11 @@ export default function SmartMoneyPanel() {
         <div>
           <p className="font-heading text-sm font-semibold">Smart money</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {(data?.traders?.length ?? 0)} top traders tracked · {fmtUsd(totalOpen)} open ·{' '}
-            {netLong ? `${netLong.symbol} most long` : ''}
-            {netShort && netShort.long_share_pct < 50 ? ` · ${netShort.symbol} most short` : ''} · feeds the bot's
-            scoring
+            {data
+              ? `${traders.length} top traders tracked · ${fmtUsd(totalOpen)} open${
+                  netLong ? ` · ${netLong.symbol} most long` : ''
+                }${netShort && netShort.long_share_pct < 50 ? ` · ${netShort.symbol} most short` : ''} · feeds the bot's scoring`
+              : 'The on-chain leaderboard and the top traders’ live books'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -77,7 +110,7 @@ export default function SmartMoneyPanel() {
           <button
             type="button"
             disabled={loading}
-            onClick={() => setWindowKey((k) => k)}
+            onClick={reload}
             className="rounded-lg border border-border/70 p-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
             aria-label="Refresh smart money"
           >
@@ -88,15 +121,20 @@ export default function SmartMoneyPanel() {
 
       {error ? (
         <div className="p-4">
-          <ErrorNotice message={error} onRetry={() => setWindowKey((k) => k)} />
+          <ErrorNotice message={error} onRetry={reload} />
         </div>
       ) : loading && !data ? (
         <LoadingBlock label="Pulling the on-chain leaderboard and top traders' live books" />
       ) : (
         <div className="max-h-[440px] space-y-3 overflow-y-auto p-3">
+          {note ? (
+            <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-300">
+              Showing the last board the desk saved. {note}
+            </div>
+          ) : null}
           <BiasTable bias={bias.slice(0, 10)} />
-          <TraderTable traders={data?.traders} />
-          <PositionsTable positions={(data?.positions || []).slice(0, 40)} traders={data?.traders} />
+          <TraderTable traders={traders} />
+          <PositionsTable positions={(data?.positions || []).slice(0, 40)} traders={traders} />
         </div>
       )}
     </div>

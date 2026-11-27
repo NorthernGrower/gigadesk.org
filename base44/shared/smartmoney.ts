@@ -9,11 +9,33 @@ const round = (n, d = 2) => {
   return Math.round((Number(n) || 0) * f) / f;
 };
 
+// the export is one host's static snapshot. It is over 5 MB, so the copy this
+// instance already read answers the next window rather than being fetched again
+let board = { rows: [], at: 0 };
+const BOARD_TTL_MS = 10 * 60000;
+
 export async function fetchLeaderboard() {
-  const res = await fetch(LEADERBOARD_URL, { signal: AbortSignal.timeout(20000) });
+  if (board.rows.length && Date.now() - board.at < BOARD_TTL_MS) return board.rows;
+  const res = await fetch(LEADERBOARD_URL, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(25000),
+  });
   if (!res.ok) throw new Error(`Leaderboard request failed (${res.status})`);
   const data = await res.json();
-  return data.leaderboardRows || [];
+  // the export is either the rows themselves or an object holding them
+  const rows = Array.isArray(data) ? data : data.leaderboardRows || [];
+  board = { rows, at: Date.now() };
+  return rows;
+}
+
+// one window's numbers from a row. The export lists them as pairs of
+// [window, performance]; an object keyed by window name reads the same way,
+// so a shape change on the export never blanks the board.
+function performanceOf(row, index) {
+  const list = row.windowPerformances;
+  if (Array.isArray(list)) return (list[index] || [])[1] || {};
+  if (list && typeof list === "object") return list[SMART_WINDOWS[index]] || {};
+  return {};
 }
 
 // Rank the board by PnL on the chosen window, among accounts large enough
@@ -28,7 +50,7 @@ export function rankTraders(
   return rows
     .filter((r) => Number(r.accountValue) >= minAccountValue)
     .map((r) => {
-      const perf = (r.windowPerformances || [])[wi]?.[1] || {};
+      const perf = performanceOf(r, wi);
       return {
         wallet: r.ethAddress,
         name: r.displayName || "",
@@ -45,7 +67,9 @@ export function rankTraders(
     .map((t, i) => ({ ...t, rank: i + 1 }));
 }
 
-// The trader's current open positions, normalized.
+// The trader's current open positions, normalized. A book that could not be
+// read throws rather than answering empty: an empty answer would look like a
+// trader who closed everything, and the stored snapshot would be pruned.
 export async function fetchTraderPositions(wallet) {
   const res = await fetch(INFO_URL, {
     method: "POST",
@@ -53,7 +77,7 @@ export async function fetchTraderPositions(wallet) {
     body: JSON.stringify({ type: "clearinghouseState", user: wallet }),
     signal: AbortSignal.timeout(15000),
   });
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Positions request failed (${res.status})`);
   const state = await res.json();
   return (state.assetPositions || [])
     .map((a) => a.position)
