@@ -122,6 +122,11 @@
       "additionalProperties": true,
       "description": "The settings the trade was opened under, copied at the moment of entry: its desk and book, the score bar, the engines, the style, the timeframe and the BTC trend at the time. The rules move on, so without this copy a closed trade can only be read against today's rules rather than the ones that produced it"
     },
+    "entry_context": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "What the algorithm was looking at when it took the setup: the score and how it was built, the risk-to-reward and the room the level left, and the indicators, structure and pattern read on that bar — with BTC's move and the board's median move at the time. Two trades on the same coin under the same rules can be very different setups, and only this copy says which one was taken"
+    },
     "manual": {
       "type": "boolean",
       "default": false,

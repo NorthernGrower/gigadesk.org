@@ -115,6 +115,59 @@ export function rulesSnapshot({ desk, book = "USD", view = null, btcAbove200d = 
 }
 
 /**
+ * What the algorithm was looking at when it took the setup, copied onto the
+ * trade: the score and how it was built, the risk-to-reward and the room the
+ * level left, and the indicators, structure and pattern read on that bar.
+ * Two trades open on the same coin under the same rules and can still be very
+ * different setups, and only this copy says which one was taken.
+ *
+ * Only numbers the scan actually produced are kept; what it did not read is
+ * left out rather than filled in.
+ */
+export function entryContext({ row, btcChange24h = null, medianChange24h = null }) {
+  const r = row || {};
+  const ind = r.indicators || {};
+  const num = (x) => (x == null || !Number.isFinite(Number(x)) ? null : Number(x));
+  const txt = (x) => (x == null || x === "" || x === "none" ? null : String(x));
+  return {
+    score: num(r.score),
+    long_score: num(r.long_score),
+    short_score: num(r.short_score),
+    side: txt(r.side),
+    grade: txt(r.grade),
+    confidence: num(r.confidence),
+    confluence: num(r.confluence),
+    risk_reward: num(r.risk_reward),
+    required_move_pct: num(r.required_move_pct),
+    stop_pct: num(r.stop_pct),
+    room_pct: num(r.room_pct),
+    change_24h: num(r.change24h),
+    change_7d: num(r.change7d),
+    volume_24h: num(r.volume24h),
+    market_cap_bucket: txt(r.market_cap_bucket),
+    atr_pct: num(ind.atr_pct),
+    rsi: num(ind.rsi),
+    adx: num(ind.adx),
+    stoch_k: num(ind.stoch_k),
+    bb_width_percentile: num(ind.bb_width_percentile),
+    vol_ratio: num(ind.vol_ratio),
+    vwap_dist_pct: num(ind.vwap_dist_pct),
+    obv_change_pct: num(ind.obv_change_pct),
+    ema50_slope: num(ind.ema50_slope),
+    structure: txt(ind.structure),
+    htf_trend: txt(ind.htf_trend),
+    trend: txt(ind.trend),
+    pattern: txt(ind.pattern),
+    rsi_divergence: txt(ind.rsi_divergence),
+    fib_phase: txt(r.fib_phase),
+    chart_pattern: txt(r.chart_pattern),
+    // the tape the setup was born in: BTC's own move, and the board's median
+    btc_change_24h: num(btcChange24h),
+    median_change_24h: num(medianChange24h),
+  };
+}
+
+/**
  * The two numbers a closed trade keeps for a longer study: the result in units
  * of the risk it actually took (an R multiple, so a target and a stop-out
  * compare across coins and position sizes), and how long it was held — a

@@ -4,7 +4,7 @@ import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard, resolveDeskVenue, resolveBtcVenue } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, keepBalances, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
-import { excursionOf, loadLessons, outcomeFields, recordLesson, riskPctAt, rulesSnapshot } from "../../shared/learn.ts";
+import { entryContext, excursionOf, loadLessons, outcomeFields, recordLesson, riskPctAt, rulesSnapshot } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
 import { loadSmartBias } from "../../shared/smartmoney.ts";
@@ -2052,6 +2052,12 @@ export default async function (req) {
             // the live desk's rules as they stood at the entry, copied onto
             // the trade: a closed row is then read against what opened it
             rules_snapshot: rulesSnapshot({ desk: "live", book: "USD", view: liveView, btcAbove200d }),
+            // what the scan saw on this setup, copied with it
+            entry_context: entryContext({
+              row: r,
+              btcChange24h: btcChange,
+              medianChange24h: board.medianChange24h,
+            }),
             exchange: live.conn.exchange,
             exchange_order_id: real.order_id,
             rationale: (r.reasons || []).join(" • "),
@@ -2123,6 +2129,11 @@ export default async function (req) {
           entry_source: r.v3 ? "v3" : r.top_pick ? "top_pick" : "gated",
           // the paper desk's rules as they stood at the entry
           rules_snapshot: rulesSnapshot({ desk: "paper", book: "USD", view: paperView, btcAbove200d }),
+          entry_context: entryContext({
+            row: r,
+            btcChange24h: btcChange,
+            medianChange24h: board.medianChange24h,
+          }),
           rationale: (r.reasons || []).join(" • "),
           opened_at: new Date().toISOString(),
         });
@@ -2248,6 +2259,11 @@ export default async function (req) {
             entry_source: btcRow.v3 ? "v3" : btcRow.top_pick ? "top_pick" : "gated",
             // the paper Bitcoin book's own rules, never the dollar desk's
             rules_snapshot: rulesSnapshot({ desk: "paper", book: "BTC", view: paperBtcView, btcAbove200d }),
+            entry_context: entryContext({
+              row: btcRow,
+              btcChange24h: btcChange,
+              medianChange24h: board.medianChange24h,
+            }),
             quote_asset: "BTC",
             fx_usd: round(btcUsdNow, 2),
             rationale: [
@@ -2445,6 +2461,11 @@ export default async function (req) {
                 entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
                 // the live Bitcoin book's own rules, copied at the proposal
                 rules_snapshot: rulesSnapshot({ desk: "live", book: "BTC", view: liveBtcView, btcAbove200d }),
+                entry_context: entryContext({
+                  row: btcLiveRow,
+                  btcChange24h: btcChange,
+                  medianChange24h: board.medianChange24h,
+                }),
                 quote_asset: "BTC",
                 fx_usd: round(btcUsdNow, 2),
                 rationale: btcRationale,
@@ -2518,6 +2539,11 @@ export default async function (req) {
               entry_source: btcLiveRow.v3 ? "v3" : btcLiveRow.top_pick ? "top_pick" : "gated",
               // the live Bitcoin book's own rules, copied at the fill
               rules_snapshot: rulesSnapshot({ desk: "live", book: "BTC", view: liveBtcView, btcAbove200d }),
+              entry_context: entryContext({
+                row: btcLiveRow,
+                btcChange24h: btcChange,
+                medianChange24h: board.medianChange24h,
+              }),
               quote_asset: "BTC",
               fx_usd: round(btcUsdNow, 2),
               exchange: live.conn.exchange,
