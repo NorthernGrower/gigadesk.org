@@ -328,6 +328,7 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
           quantity: round(qty, 8),
           size_usd: round(size),
           entry_price: round(size / qty, 8),
+          imported: true,
         };
         await base44.entities.Trade.update(newest.id, merged);
         Object.assign(newest, merged);
@@ -439,6 +440,10 @@ export async function syncExchangePositions(base44, conn, balances, opts = {}) {
         peak_price: round(entry, 8),
         pattern: "long/imported",
         exchange: conn.exchange,
+        // the desk's own position, even though no order id was ever returned for
+        // it: without the marker the bot treated it as a hand-logged fill and
+        // never enforced its stop
+        imported: true,
         rationale: `Imported from the ${conn.label} wallet: the account holds ${round(diff, 8)} ${h.asset} the desk was not tracking. The bot now manages it like any other position.`,
         opened_at: openedAt,
         created_by_id: ownerId,

@@ -139,6 +139,11 @@
       "type": "string",
       "description": "The exchange's order id; marks a real position the bot placed and manages"
     },
+    "imported": {
+      "type": "boolean",
+      "default": false,
+      "description": "A real position the wallet sync imported from the exchange rather than one the bot bought. It carries no exchange order id but is the desk's own: the bot enforces its stop, target, trailing and loss cap and closes it with a real sell, exactly as it does a position it opened"
+    },
     "exit_reason": {
       "type": "string",
       "enum": [

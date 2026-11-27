@@ -389,7 +389,7 @@ export default async function (req) {
       // built for every close — paper ones included. Declared out here so a
       // paper close reads null instead of throwing "sell is not defined".
       let sell = null;
-      if (t.mode === "real" && t.exchange_order_id) {
+      if (t.mode === "real") {
         // the scheduled desk guard can close this position between the cycle's
         // read and this close: the live row is re-read so exactly one writer
         // sends a sell — two would sell the position twice
@@ -546,7 +546,7 @@ export default async function (req) {
       const size = Number(t.size_usd) || 0;
       const halfQty = qty / 2;
       if (!(entry > 0) || !(halfQty > 0)) return false;
-      if (t.mode === "real" && t.exchange_order_id) {
+      if (t.mode === "real") {
         if (!managed.conn || isBackedOff(connRow)) return false;
         // the same double-writer guard a close takes: a second scale-out would
         // halve a position the guard already closed
@@ -626,11 +626,11 @@ export default async function (req) {
     // ---- manage the positions already open
     stage = "positions";
     for (const t of dryRun ? [] : openTrades) {
-      // a real fill the user logged by hand is theirs to manage — the bot only
-      // touches its own real positions (those carry an exchange order id)
-      if ((t.mode || "paper") === "real" && !t.exchange_order_id) continue;
-      // manual mode: a buy the user placed by hand with bot handling off is
-      // theirs alone — no stops, exits or sentiment until handling is turned on
+      // every open trade is managed: paper or real, dollar or Bitcoin book, the
+      // bot's own entry or one imported from the wallet or logged by hand. The
+      // one way out is the trade's own Bot handling switch, which the user turns
+      // off on its card — then it is theirs alone, and no stop, exit or
+      // sentiment touches it until it is turned back on
       if (t.bot_handling === false) continue;
       const priceUsd = priceMap.get(t.symbol)?.price ?? null;
       if (!priceUsd) continue;
@@ -845,7 +845,11 @@ export default async function (req) {
         // a BTC-quoted position is never added to: the leg is sized and paid
         // from the desk's dollar quote, which this position never spends, so
         // an add would size against money it cannot use
-        if (pyramidOn && t.quote_asset !== "BTC" && t.manual !== true && !t.scaled && addsSoFar < 2) {
+        if (
+          pyramidOn && t.quote_asset !== "BTC" && t.manual !== true && !t.scaled && addsSoFar < 2 &&
+          // an imported holding is not the bot's entry: it adds to its own trade only
+          !(t.imported === true || t.pattern === "long/imported")
+        ) {
           const trigger =
             Number(isRealPos ? lrVal("pyramid_trigger_pct", 1.5) : (config.pyramid_trigger_pct ?? 1.5)) || 1.5;
           const origSize = (Number(t.size_usd) || 0) / (1 + 0.5 * addsSoFar);

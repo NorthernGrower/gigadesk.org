@@ -118,9 +118,10 @@ export default async function (req) {
       for (const openTrade of closeable) {
         let closePrice = inQuote(openTrade, priceOf(openTrade.symbol));
         let dustNote = "";
-        // a bot-placed real position is closed with a real sell order; a
-        // refused order leaves it open and raises an alert
-        if (openTrade.mode === "real" && openTrade.exchange_order_id) {
+        // a real position is closed with a real sell order, whichever way it
+        // was opened or imported; a refused order leaves it open and raises an
+        // alert
+        if (openTrade.mode === "real") {
           if (!live.conn) {
             await base44.entities.Alert.create({
               symbol: openTrade.symbol,
@@ -374,8 +375,9 @@ export default async function (req) {
       }
       let closePrice = Number(priceUsd) / fx;
       let dustNote = "";
-      // closing a bot-placed real position sends a real sell order first
-      if (trade.mode === "real" && trade.exchange_order_id) {
+      // closing a real position sends a real sell order first, whichever way it
+      // was opened or imported
+      if (trade.mode === "real") {
         const live = await resolveLiveConnection(base44, config, { manage: true });
         if (!live.conn) return Response.json({ error: live.reason }, { status: 409 });
         const shortClose = trade.side === "short";

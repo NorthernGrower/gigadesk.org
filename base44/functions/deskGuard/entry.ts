@@ -60,14 +60,15 @@ export default async function (req) {
       if (!config.created_by_id || seen.has(config.created_by_id)) continue;
       seen.add(config.created_by_id);
       const LR = config.live_rules || {};
-      // only the bot's own real positions: a fill the user logged by hand, or
-      // one with bot handling off, is theirs to manage and never touched here
+      // every open real position is guarded, however it was opened or imported:
+      // a breached stop or the per-trade loss cap closes it. Only a trade whose
+      // Bot handling switch is off is the user's own and never touched here
       const open = asArray(
         await base44.asServiceRole.entities.Trade.filter(
           { created_by_id: config.created_by_id, mode: "real", status: "open" },
           { limit: 200 },
         ),
-      ).filter((t) => t.exchange_order_id && t.bot_handling !== false);
+      ).filter((t) => t.bot_handling !== false);
       if (!open.length) continue;
       // managing a position must keep working while new live entries are paused
       const live = await resolveLiveConnection(base44, config, { manage: true });
