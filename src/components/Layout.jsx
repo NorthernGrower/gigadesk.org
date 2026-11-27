@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import BotRunner from '@/components/BotRunner';
+import ErrorBoundary from '@/components/common/ErrorBoundary';
 import Sidebar from '@/components/layout/Sidebar';
 import AlertsBell from '@/components/layout/AlertsBell';
 import BotStatusPill from '@/components/layout/BotStatusPill';
 import { ensureBotConfig } from '@/lib/market';
 
 export default function Layout() {
+  const location = useLocation();
   const [config, setConfig] = useState(null);
   const [running, setRunning] = useState(false);
   const [clock, setClock] = useState(() => new Date());
@@ -60,7 +62,12 @@ export default function Layout() {
         </header>
 
         <main className="mx-auto max-w-[1500px] space-y-4 px-4 pb-24 pt-4 md:px-6 md:pb-10">
-          <Outlet />
+          {/* a page that throws render keeps the shell and says why, instead of
+              blanking the whole app to a black screen. Keyed by the route, so
+              opening another page clears it */}
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
 
         <footer className="mx-auto max-w-[1500px] px-4 pb-24 text-[11px] leading-relaxed text-muted-foreground md:px-6 md:pb-8">

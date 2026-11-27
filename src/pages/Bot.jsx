@@ -6,6 +6,7 @@ import ProposedTrades from '@/components/bot/ProposedTrades';
 import RiskSettings from '@/components/bot/RiskSettings';
 import LearnedPanel from '@/components/bot/LearnedPanel';
 import AnalystPanel from '@/components/bot/AnalystPanel';
+import { ErrorNotice, LoadingBlock } from '@/components/common/States';
 import { bookRuleSet } from '@/lib/bookRules';
 import { useToast } from '@/components/ui/use-toast';
 import { fmtUsd } from '@/lib/format';
