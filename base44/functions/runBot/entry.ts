@@ -3,7 +3,7 @@ import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } fr
 import { analyzeCoin } from "../../shared/strategy.ts";
 import { scanBoard, resolveDeskVenue } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
-import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
+import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, keepBalances, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
 import { loadLessons, recordLesson } from "../../shared/learn.ts";
 import { collectGateLocks, raiseGateLockAlerts } from "../../shared/rulelock.ts";
 import { entryMinimum, entryRulesFor, gateReason as gateReasonShared, liveEntrySize } from "../../shared/entryRules.ts";
@@ -198,8 +198,14 @@ export default async function (req) {
 
     // live prices for every symbol with an open position: one batched public
     // call keeps exits (stop/target/trailing) on the real tape instead of the
-    // up-to-a-minute-old market snapshot, without per-symbol API calls
-    const livePrices = await fetchLivePrices(openTrades.map((t) => t.symbol));
+    // up-to-a-minute-old market snapshot, without per-symbol API calls.
+    // BTC always rides along: it is the rate every Bitcoin-book figure is
+    // translated at, and a light cycle carries no market snapshot to read it
+    // from — which left a Bitcoin holding valued at zero and skipped the
+    // Bitcoin book's positions on the desk's fast pass.
+    const livePrices = await fetchLivePrices([
+      ...new Set([...openTrades.map((t) => String(t.symbol || "").toUpperCase()), "BTC"]),
+    ]);
     for (const [sym, px] of livePrices) {
       const coin = priceMap.get(sym);
       if (coin && px > 0) coin.price = px;
@@ -220,14 +226,13 @@ export default async function (req) {
     // connection, so flagged keys never fire fresh buys
     const liveVerified =
       !!managed.info && managed.info.status === "connected" && managed.info.allow_trading === true;
-    // real orders settle in the exchange's native quote currency (USD on
-    // Kraken), so fiat held in another currency — however it converts for
-    // display — can never fund an order. Real sizing reads the native quote
-    // balance, not the converted figure, so a CAD-only Kraken account stops
-    // firing orders the exchange refuses with EOrder:Insufficient funds.
-    const connRow = managed.conn
+    // the connection row is read even while new live entries are paused: the
+    // desk still shows the account's own Bitcoin, and a paused desk must never
+    // read as an account that holds none
+    const connId = managed.conn ? managed.conn.id : managed.info ? managed.info.id : null;
+    const connRow = connId
       ? await base44.asServiceRole.entities.ExchangeConnection
-          .get(managed.conn.id)
+          .get(connId)
           .catch(() => null)
       : null;
     // the funding asset is what orders actually settle in: USD, or USDT
@@ -250,6 +255,43 @@ export default async function (req) {
     // the venue the BTC leg reads its charts from: Kraken's own market, which
     // is public, so a paper desk with no exchange attached can still read it
     const btcFeed = { exchange: "kraken" };
+
+    // ---- the account's Bitcoin, as it is now. The live Bitcoin book spends
+    // it, but its only source is the balance list stored on the connection —
+    // and that list is written by the account read further down this cycle, so
+    // a Bitcoin bought a moment ago is not in it yet: the book then read a zero
+    // balance, skipped every entry and showed none, and the desk said the
+    // account held nothing. One signed read closes that gap, bounded on every
+    // side: only when a desk trades the Bitcoin book, only when the stored list
+    // holds no Bitcoin, only on a list older than ten minutes, and never into a
+    // key in backoff. The cycle's own read refreshes the timestamp below, so
+    // this can run at most once per ten minutes.
+    let btcBalances = connRow && Array.isArray(connRow.balances) ? connRow.balances : [];
+    const storedBalanceAgeMs =
+      connRow && connRow.balance_updated_at ? Date.now() - Date.parse(connRow.balance_updated_at) : Infinity;
+    if (
+      managed.conn && !light && !dryRun && btcMarketsOn(liveView) &&
+      pickBtcBalance(btcBalances) <= 0 && storedBalanceAgeMs > 10 * 60000 && !isBackedOff(connRow)
+    ) {
+      try {
+        const acct = await readAccount({
+          exchange: managed.conn.exchange,
+          testnet: managed.conn.testnet,
+          api_key: managed.conn.api_key,
+          api_secret: managed.conn.api_secret,
+          passphrase: managed.conn.passphrase || "",
+        });
+        if (acct.ok) {
+          btcBalances = acct.balances || [];
+          await base44.asServiceRole.entities.ExchangeConnection.update(managed.conn.id, {
+            balances: keepBalances(acct.balances),
+          });
+        }
+      } catch (err) {
+        // a failed read costs the Bitcoin book this cycle, never the cycle
+        console.log(`BTC balance read failed: ${String((err && err.message) || err)}`);
+      }
+    }
 
     // ---- the measured exit, opt-in per desk. The exit study replayed V3's own
     // entries under 21 exit rules: the fixed target was the single largest drag
@@ -605,7 +647,9 @@ export default async function (req) {
           side,
           mode: t.mode || "paper",
           entry_price: entry,
-          current_price: round(priceUsd, 8),
+          // the position's own quote: a Bitcoin-market position's entry, stop
+          // and target are in BTC, so its current price is too
+          current_price: round(price, 8),
           stop_price: v3Stop ? round(v3Stop, 8) : null,
           target_price: null,
           size_usd: v3Size,
@@ -841,7 +885,9 @@ export default async function (req) {
           side,
           mode: t.mode || "paper",
           entry_price: entry,
-          current_price: round(priceUsd, 8),
+          // the position's own quote, as above: a BTC-market position reads in
+          // bitcoin, a dollar one in dollars
+          current_price: round(price, 8),
           stop_price: round(stop, 8),
           target_price: target,
           size_usd: size,
@@ -1072,7 +1118,9 @@ export default async function (req) {
             count: 60,
             dailyTargetPct: Number(config.daily_target_pct) || 2,
             extraSymbols: watch.map((w) => w.symbol),
-            ...(btcListed ? { onlySymbols: btcListed } : {}),
+            // an empty set means the listing read found nothing, not that
+            // nothing is listed: honouring it would blank the whole book
+            ...(btcListed && btcListed.size ? { onlySymbols: btcListed } : {}),
             confluenceV2: config.confluence_v2 !== false,
             feed: btcFeed,
             quote: "BTC",
@@ -1999,7 +2047,7 @@ export default async function (req) {
       // book has not been measured on. A failure here costs BTC entries,
       // never the cycle.
       try {
-        const btcSpendableNow = connRow ? pickBtcBalance(connRow.balances) : 0;
+        const btcSpendableNow = pickBtcBalance(btcBalances);
         if (
           btcMarketsOn(liveView) && liveReady && btcUsdNow > 0 &&
           btcSpendableNow > 0 && !dryRun
@@ -2296,10 +2344,21 @@ export default async function (req) {
       .map((t) => {
       const side = t.side === "short" ? "short" : "long";
       const entry = Number(t.entry_price) || 0;
-      const price = priceMap.get(t.symbol)?.price ?? entry;
+      // a BTC-quoted position's own levels are in bitcoin: its price is the
+      // pair's price in BTC, taken from the dollar quote at the rate — or the
+      // entry would be compared with a dollar price and the position would
+      // report a P&L of a hundred times its size. The rate is the live one,
+      // else the rate recorded when the trade opened.
+      const posQuote = quoteOf(t.quote_asset);
+      const posFx = posQuote === "BTC" ? btcUsdNow || Number(t.fx_usd) || 0 : 1;
+      if (!(posFx > 0)) return null;
+      const priceUsd = Number(priceMap.get(t.symbol)?.price) || 0;
+      const price = posQuote === "BTC" ? (priceUsd > 0 ? priceUsd / posFx : entry) : priceUsd || entry;
       const qty = Number(t.quantity) || 0;
       const size = Number(t.size_usd) || 0;
-      const unreal = entry && price ? (side === "long" ? (price - entry) * qty : (entry - price) * qty) : 0;
+      const unreal = entry && price
+        ? toUsd(side === "long" ? (price - entry) * qty : (entry - price) * qty, posQuote, posFx)
+        : 0;
       const goal = Number(t.target_price) ? Math.abs(Number(t.target_price) - entry) : 0;
       const travelled = side === "long" ? price - entry : entry - price;
       return {
@@ -2309,9 +2368,15 @@ export default async function (req) {
         image: t.image,
         side,
         mode: "real",
-        quote_asset: quoteOf(t.quote_asset),
+        quote_asset: posQuote,
         exchange: t.exchange || null,
-        pair: `${t.symbol}/${(funding && funding.asset) || QUOTE_ASSET[t.exchange] || "USDT"}`,
+        // the pair this position actually lives on: a Bitcoin-market position
+        // is a XBT pair, never the dollar one of the same coin
+        pair: `${t.symbol}/${
+          posQuote === "BTC"
+            ? "XBT"
+            : (funding && funding.asset) || QUOTE_ASSET[t.exchange] || "USDT"
+        }`,
         entry_price: entry,
         current_price: round(price, 8),
         stop_price: t.stop_price,
@@ -2321,7 +2386,8 @@ export default async function (req) {
         pnl_pct: size ? round((unreal / size) * 100) : 0,
         progress_pct: goal ? round(Math.max(0, Math.min(100, (travelled / goal) * 100))) : 0,
       };
-    });
+    })
+      .filter(Boolean);
     // the live cap is the dollar book's, so only dollar positions count against
     // it. The Bitcoin book's limit is the Bitcoin the account holds.
     const liveExposure = livePositions
@@ -2381,7 +2447,11 @@ export default async function (req) {
         await base44.asServiceRole.entities.ExchangeConnection.update(managed.conn.id, {
           balance_usd: exchangeBalance,
           balance_updated_at: new Date().toISOString(),
-          balances: (acct.balances || []).slice(0, 10),
+          // the Bitcoin row always survives the cap (see keepBalances): a
+          // holding of a few thousand satoshis has the smallest unit count on
+          // the account and a plain cut would delete the one row the Bitcoin
+          // book spends
+          balances: keepBalances(acct.balances),
         });
         balanceAsOf = new Date().toISOString();
       } else {
@@ -2472,9 +2542,11 @@ export default async function (req) {
 
     const exposure = positions.reduce((a, p) => a + p.size_usd, 0);
     const unrealized = positions.reduce((a, p) => a + p.pnl_usd, 0);
-    // the Bitcoin the account holds, read from the connection's own balance
-    // list: the funding the BTC markets spend
-    const btcHeld = connRow ? pickBtcBalance(connRow.balances) : 0;
+    // the Bitcoin the account holds, read from the freshest balance list this
+    // cycle has: the account read just above when it succeeded, else the list
+    // the Bitcoin legs already sized from — never a stored figure that predates
+    // the buy, which is what showed a held Bitcoin as zero
+    const btcHeld = pickBtcBalance(freshBalances && freshBalances.length ? freshBalances : btcBalances);
 
     // anchor the paper cash to the trades themselves: the original balance
     // plus everything booked minus what is deployed. Trusting the running

@@ -27,7 +27,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
 import { onTradesChange } from '@/lib/live';
-import { emitBotTick, getLastBot, getLastPulse, lastBotAgeMs, rememberPulse, requestBotRun, runBot, scanMarket, tradeAction } from '@/lib/market';
+import { emitBotTick, getLastBot, getLastPulse, lastBotAgeMs, rememberPulse, requestBotRun, runBot, scanMarket, tradeAction, withPreviousBoard } from '@/lib/market';
 import { fmtUsd, fmtPct } from '@/lib/format';
 
 export default function Dashboard() {
@@ -71,7 +71,7 @@ export default function Dashboard() {
         if (!alive) return;
         setBot((prev) =>
           full || !prev
-            ? data
+            ? { ...data, btc_markets: withPreviousBoard(data.btc_markets, prev?.btc_markets) }
             : {
                 ...data,
                 top: data.top?.length ? data.top : prev?.top || [],
@@ -79,6 +79,9 @@ export default function Dashboard() {
                 universe: data.universe || prev?.universe || 0,
                 median_change_24h: data.summary ? data.median_change_24h : prev?.median_change_24h ?? 0,
                 scanned: data.scanned || prev?.scanned || 0,
+                // a light pass carries no Bitcoin board: the book keeps the
+                // last scan's picks instead of going blank on every refresh
+                btc_markets: withPreviousBoard(data.btc_markets, prev?.btc_markets),
               },
         );
         const desk = data?.config?.active_desk;
@@ -118,6 +121,7 @@ export default function Dashboard() {
         universe: data.universe || prev?.universe || 0,
         median_change_24h: data.summary ? data.median_change_24h : prev?.median_change_24h ?? 0,
         scanned: data.scanned || prev?.scanned || 0,
+        btc_markets: withPreviousBoard(data.btc_markets, prev?.btc_markets),
       }));
       // hold the loading state until a full scan reports, so the desk never flashes
       // "no setup" while the first market scan is still running

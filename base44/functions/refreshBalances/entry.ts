@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, accountValueUsd, isBackedOff, backoffUntil, balanceJustRead } from '../../shared/exchanges.ts';
+import { readAccount, accountValueUsd, isBackedOff, backoffUntil, balanceJustRead, keepBalances } from '../../shared/exchanges.ts';
 import { decryptSecret } from '../../shared/crypto.ts';
 import { syncExchangePositions } from '../../shared/reconcile.ts';
 import { asArray } from '../../shared/market.ts';
@@ -113,7 +113,10 @@ export default async function (req) {
             status_message: account.message,
             balance_usd: balance,
             balance_updated_at: new Date().toISOString(),
-            balances: account.balances.slice(0, 10),
+            // the Bitcoin row always survives the cap: it is the funding the
+            // BTC market book spends, and a holding with a tiny unit count
+            // must never be dropped for being small
+            balances: keepBalances(account.balances),
             last_checked_at: new Date().toISOString(),
             backoff_until: null,
           });

@@ -152,7 +152,14 @@ export async function fetchListedSymbols(cfg, quotes = null) {
     } else if (cfg.exchange === "kraken") {
       const res = await callJson("https://api.kraken.com/0/public/AssetPairs");
       const pairs = Object.values(((res.data || {}).result) || {});
-      const rawQuotes = new Set((wanted || ["USDT"]).map((q) => ({ USD: "ZUSD", EUR: "ZEUR", GBP: "ZGBP", BTC: "XXBT" }[q] || q)));
+      // Kraken spells Bitcoin's quote both ways across its pair list, and a
+      // wrong spelling here becomes an EMPTY symbol set — which the scan then
+      // honours as "nothing is listed", silently closing a whole book
+      const rawQuotes = new Set(
+        (wanted || ["USDT"]).flatMap((q) =>
+          q === "BTC" ? ["XXBT", "XBT"] : [{ USD: "ZUSD", EUR: "ZEUR", GBP: "ZGBP" }[q] || q],
+        ),
+      );
       set = new Set(
         pairs
           .filter((p) => p && rawQuotes.has(p.quote))
@@ -673,6 +680,25 @@ export function pickFundingQuote(balances = [], exchange) {
     if (row) return { asset, amount: Math.round(spendable(row) * 100) / 100 };
   }
   return null;
+}
+
+/**
+ * The balance rows worth keeping on a connection. Every balance read stores its
+ * list so a later cycle can size from it and the desk can still show a figure
+ * when a read fails, and that stored list is capped for size — but the cap must
+ * never drop the rows that fund a book. It did: the list is ordered by unit
+ * count, so a Bitcoin holding (0.0004 BTC carries one of the smallest counts of
+ * any asset) fell outside a plain "largest first" cut, and the desk then read a
+ * zero Bitcoin balance, showed 0 BTC, and refused every BTC-market entry. The
+ * Bitcoin row therefore always survives the cap, whatever its size.
+ */
+export function keepBalances(list = [], limit = 24) {
+  const rows = (list || []).filter((b) => b && (Number(b.total) > 0 || Number(b.spot) > 0));
+  const kept = rows.slice(0, Math.max(1, limit));
+  for (const row of rows) {
+    if (!kept.includes(row) && String(row.asset || "").toUpperCase() === "BTC") kept.push(row);
+  }
+  return kept;
 }
 
 /**

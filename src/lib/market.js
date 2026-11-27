@@ -240,10 +240,25 @@ function rememberBot(data) {
         universe: lastBot.data.universe,
         median_change_24h: lastBot.data.median_change_24h,
         scanned: lastBot.data.scanned,
+        // the Bitcoin board is a scan too: a light cycle carries none, and
+        // dropping it blanked the Bitcoin book's picks and its scanned count
+        // on every quiet refresh
+        btc_markets: withPreviousBoard(data.btc_markets, lastBot.data.btc_markets),
       },
     };
     persistLastBot();
   }
+}
+
+// A scan board is only replaced by a newer scan: a cycle that did not scan
+// (a light pass, an off cycle, a board that failed) must pass the last one
+// through, exactly as the dollar board's rows and summary are passed through.
+export function withPreviousBoard(next, prev) {
+  if (!next) return prev;
+  const board = next.board && ((next.board.scanned || 0) > 0 || (next.board.top || []).length)
+    ? next.board
+    : prev?.board || next.board;
+  return { ...next, board };
 }
 
 // A full cycle requested while one is already in flight shares its promise:

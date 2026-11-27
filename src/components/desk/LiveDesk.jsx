@@ -111,7 +111,9 @@ export default function LiveDesk({
           btcRate > 0
             ? `${fmtUsd(btcBalanceUsd)} at ${fmtUsd(btcRate)}`
             : btcBalance > 0
-              ? fmtUsd(btcBalanceUsd)
+              // the holding is real, its dollar value is what is missing: say
+              // that rather than print a confident $0.00
+              ? 'dollar value unavailable — the BTC rate is missing this cycle'
               : 'no Bitcoin on the account yet',
         equity: Number(btcBook.equity_usd) || btcBalanceUsd + (Number(btcBook.live_unrealized) || 0),
         realizedToday: Number(btcBook.live_realized_today) || 0,
@@ -355,7 +357,18 @@ export default function LiveDesk({
             // dollar one is a different book's line: its account is summarised
             // here instead
             <div className="surface p-4">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-amber-300">Bitcoin account</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-amber-300">Bitcoin account</p>
+                {/* the switch that decides whether this book can trade at all:
+                    showing it here means an idle Bitcoin book says why */}
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] uppercase ${
+                    btc.live_on ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'
+                  }`}
+                >
+                  {btc.live_on ? 'BTC markets on' : 'BTC markets off'}
+                </span>
+              </div>
               <div className="mt-2 grid grid-cols-2 gap-3">
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bitcoin held</p>
@@ -379,6 +392,9 @@ export default function LiveDesk({
               <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
                 The Bitcoin book spends only the Bitcoin on the account, never the dollar cash. Its positions are
                 priced in BTC on their own pairs, so its dollar figures are each pair's own move at the rate.
+                {btc.live_on
+                  ? ''
+                  : ' BTC markets are off in this desk\'s Live rules, so no Bitcoin-market entry can fire — switch them on under Bot → Rules → Live rules.'}
               </p>
             </div>
           ) : (
