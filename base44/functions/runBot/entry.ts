@@ -333,7 +333,7 @@ export default async function (req) {
     const storedBalanceAgeMs =
       connRow && connRow.balance_updated_at ? Date.now() - Date.parse(connRow.balance_updated_at) : Infinity;
     if (
-      managed.conn && !light && !dryRun && btcMarketsOn(liveView) &&
+      managed.conn && !dryRun && btcMarketsOn(liveView) &&
       pickBtcBalance(btcBalances) <= 0 && storedBalanceAgeMs > 10 * 60000 && !isBackedOff(connRow)
     ) {
       try {

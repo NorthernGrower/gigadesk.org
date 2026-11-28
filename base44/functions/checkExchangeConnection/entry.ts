@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { readAccount, accountValueUsd, backoffUntil, isBackedOff } from '../../shared/exchanges.ts';
+import { readAccount, accountValueUsd, backoffUntil, isBackedOff, keepBalances } from '../../shared/exchanges.ts';
 import { encryptSecret, decryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -75,7 +75,7 @@ export default async function(req) {
       status_message: account.message.slice(0, 300),
       can_trade: account.canTrade,
       last_checked_at: new Date().toISOString(),
-      balances: account.balances.slice(0, 10),
+      balances: keepBalances(account.balances),
       // save the fresh balance so the desk keeps a figure when a later
       // read fails; a failed read backs the key off so the saver and the
       // desk stop retrying it into a longer exchange-side lockout
@@ -98,7 +98,7 @@ export default async function(req) {
     for (const f of SAFE_FIELDS) safe[f] = merged[f];
     return Response.json({
       connection: safe,
-      account: { ok: account.ok, message: account.message, balances: account.balances.slice(0, 10) },
+      account: { ok: account.ok, message: account.message, balances: keepBalances(account.balances) },
     });
   } catch (error) {
     return Response.json({ error: (error && error.message) || 'Could not check the connection' }, { status: 500 });

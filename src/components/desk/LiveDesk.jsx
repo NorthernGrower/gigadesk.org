@@ -97,10 +97,18 @@ export default function LiveDesk({
   const bookPositions = (live.positions || []).filter((p) =>
     btcMode ? p.quote_asset === 'BTC' : (p.quote_asset || 'USD') !== 'BTC',
   );
-  const btcBalance = Number(btcBook.balance_btc) || Number(live.btc_balance) || 0;
-  const btcBalanceUsd =
-    btcBook.balance_usd != null ? Number(btcBook.balance_usd) : Number(live.btc_balance_usd) || 0;
   const btcRate = Number(btc.btc_usd) || Number(live.btc_rate) || 0;
+  const btcBalance =
+    Number(btcBook.balance_btc) ||
+    Number(live.btc_balance) ||
+    // the one-minute saved read is the last-resort copy: a light cycle that
+    // skipped its own account read must never blank the holding
+    Number(savedBalance?.btc) ||
+    0;
+  const btcBalanceUsd =
+    btcBook.balance_usd != null
+      ? Number(btcBook.balance_usd)
+      : btcBalance * btcRate || Number(live.btc_balance_usd) || 0;
   const btcDailyGoal = btcBalanceUsd > 0 ? (btcBalanceUsd * btcDayPct) / 100 : 0;
   const usdEquity = balanceUsd != null ? (balanceUsd || 0) + (live.unrealized || 0) : null;
 

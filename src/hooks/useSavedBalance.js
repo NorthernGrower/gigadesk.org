@@ -24,8 +24,15 @@ export default function useSavedBalance(connectionId, status) {
         const res = await base44.functions.invoke('checkExchangeConnection', { id: connectionId });
         const conn = res.data?.connection;
         if (conn?.backoff_until) backoffRef.current = Date.parse(conn.backoff_until);
-        if (alive && conn && conn.balance_usd != null) {
-          setSavedBalance({ usd: conn.balance_usd, asOf: conn.balance_updated_at });
+        if (alive && conn) {
+          const btcRow = (conn.balances || []).find((b) => String(b.asset || '').toUpperCase() === 'BTC');
+          setSavedBalance((prev) => ({
+            usd: conn.balance_usd ?? prev?.usd ?? null,
+            // the exchange's Bitcoin holding stays on screen even when a bot
+            // cycle skips its own read: without it the live BTC desk fell to 0
+            btc: btcRow ? Number(btcRow.total) || 0 : prev?.btc ?? null,
+            asOf: conn.balance_updated_at || prev?.asOf || null,
+          }));
         }
       } catch {
         // a failed check keeps the last saved figure

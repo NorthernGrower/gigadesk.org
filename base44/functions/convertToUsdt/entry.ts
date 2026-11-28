@@ -4,6 +4,7 @@ import {
   accountValueUsd,
   pickFundingQuote,
   isBackedOff,
+  keepBalances,
 } from "../../shared/exchanges.ts";
 import { decryptSecret } from "../../shared/crypto.ts";
 import { convertFiatToUsd } from "../../shared/orders.ts";
@@ -85,7 +86,7 @@ async function saveBalance(base44, conn, cfg, acct, balances) {
   await base44.asServiceRole.entities.ExchangeConnection.update(conn.id, {
     status: "connected",
     status_message: acct.message,
-    balances: balances.slice(0, 10),
+    balances: keepBalances(balances),
     balance_usd: usd,
     balance_updated_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),

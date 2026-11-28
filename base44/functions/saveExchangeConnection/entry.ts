@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { EXCHANGES, readAccount } from '../../shared/exchanges.ts';
+import { EXCHANGES, readAccount, keepBalances } from '../../shared/exchanges.ts';
 import { encryptSecret } from '../../shared/crypto.ts';
 
 const SAFE_FIELDS = [
@@ -54,7 +54,7 @@ export default async function(req) {
       can_trade: account.canTrade,
       key_hint: apiKey.length > 6 ? `••••${apiKey.slice(-4)}` : '••••',
       last_checked_at: new Date().toISOString(),
-      balances: account.balances.slice(0, 10),
+      balances: keepBalances(account.balances),
     };
 
     const existing = await base44.entities.ExchangeConnection.filter({ exchange }, { limit: 10 });
@@ -67,7 +67,7 @@ export default async function(req) {
     for (const f of SAFE_FIELDS) safe[f] = record[f];
     return Response.json({
       connection: safe,
-      account: { ok: account.ok, message: account.message, can_trade: account.canTrade, balances: account.balances.slice(0, 10) },
+      account: { ok: account.ok, message: account.message, can_trade: account.canTrade, balances: keepBalances(account.balances) },
     });
   } catch (error) {
     return Response.json({ error: (error && error.message) || 'Could not save the connection' }, { status: 500 });
