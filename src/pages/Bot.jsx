@@ -208,6 +208,9 @@ export default function Bot() {
           desk === 'paper'
             ? {
                 balance: isBtc ? bot?.btc_markets?.book?.cash : bot?.cash,
+                balanceBtc: isBtc && Number(bot?.btc_markets?.btc_usd) > 0
+                  ? (Number(bot?.btc_markets?.book?.cash) || 0) / Number(bot.btc_markets.btc_usd)
+                  : null,
                 exposure: isBtc
                   ? (bot?.positions || [])
                       .filter((p) => p.quote_asset === 'BTC')

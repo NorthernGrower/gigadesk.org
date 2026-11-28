@@ -114,10 +114,15 @@
       "type": "number",
       "default": 10000
     },
+    "btc_starting_btc": {
+      "type": "number",
+      "default": 0,
+      "description": "The paper Bitcoin book's bankroll, set in BTC. Every cycle translates it at the live BTC rate and uses the dollars as this book's own starting balance, separate from the dollar desk. 0 keeps the legacy dollar bankroll in btc_starting_balance"
+    },
     "btc_starting_balance": {
       "type": "number",
       "default": 10000,
-      "description": "The paper desk's Bitcoin book bankroll, separate from the dollar one. A BTC-quoted paper trade is sized, banked and reset against this balance only, so a dollar drawdown can never starve the Bitcoin book or the other way round"
+      "description": "The paper desk's Bitcoin book bankroll in USD, used only when btc_starting_btc is not set. A BTC-quoted paper trade is sized, banked and reset against this balance only, so a dollar drawdown can never starve the Bitcoin book or the other way round"
     },
     "btc_cash_balance": {
       "type": "number",

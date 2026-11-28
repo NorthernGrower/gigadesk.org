@@ -1,6 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { scanBoard, persistSignals, raiseSetupAlerts, resolveDeskVenue } from "../../shared/scan.ts";
-import { asArray } from "../../shared/market.ts";
+import { scanBoard, persistSignals, raiseSetupAlerts, resolveDeskVenue, resolveBtcVenue, resolveBtcSymbols } from "../../shared/scan.ts";
+import { asArray, fetchLivePrices } from "../../shared/market.ts";
 import { fetchListedSymbols, pickFundingQuote } from "../../shared/exchanges.ts";
 
 const TIMEFRAMES = ["15m", "1h", "4h", "12h", "1d", "1w", "1M"];
@@ -13,6 +13,7 @@ export default async function (req) {
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
+    const quote = body.quote === "BTC" ? "BTC" : "USD";
     const timeframe = TIMEFRAMES.includes(body.timeframe) ? body.timeframe : "1h";
     const scope = SCOPES.includes(body.scope) ? body.scope : "all";
     const count = Math.max(20, Math.min(Number(body.count) || 60, 90));
@@ -35,8 +36,29 @@ export default async function (req) {
       ),
     );
     const cfg = configs[0];
-    const venue = await resolveDeskVenue(base44, cfg || {});
-    if (venue) {
+    const btcVenue = quote === "BTC" ? await resolveBtcVenue(base44, cfg || {}) : null;
+    // in BTC mode the universe is the BTC-pairs list on every connected venue,
+    // and its candles come from one of those venues — never the dollar feed
+    const venue = quote === "BTC" ? btcVenue : await resolveDeskVenue(base44, cfg || {});
+    let btcUsd = 0;
+    if (quote === "BTC") {
+      const prices = await fetchLivePrices(["BTC"]).catch(() => new Map());
+      btcUsd = Number(prices.get("BTC")) || 0;
+      // without a rate a BTC pair's turnover has no dollar meaning and the
+      // liquidity gate would pass everything, so show why the board is empty
+      if (!(btcUsd > 0))
+        return Response.json({
+          rows: [], scannedCount: 0, universeCount: 0, summary: null,
+          medianChange24h: 0, source: { exchange: venue?.exchange || null, quote: "BTC" },
+          exchangeFilter: { quote: "BTC", label: venue?.label || "Bitcoin markets", listed: 0 },
+          error: "No live Bitcoin price right now — try the scan again in a moment.",
+        });
+      onlySymbols = await resolveBtcSymbols(base44, cfg || {});
+      if (onlySymbols && onlySymbols.size && venue)
+        exchangeFilter = { quote: "BTC", exchange: venue.exchange, label: venue.label, listed: onlySymbols.size };
+      else
+        exchangeFilter = { quote: "BTC", label: venue ? venue.label : "Bitcoin markets", listed: 0 };
+    } else if (venue) {
       const conn = {
         exchange: venue.exchange,
         testnet: venue.testnet,
@@ -57,22 +79,24 @@ export default async function (req) {
       scope,
       count,
       dailyTargetPct,
-      extraSymbols,
-      ...(onlySymbols ? { onlySymbols } : {}),
+      // a watched symbol that is not a BTC pair must never widen the BTC board
+      extraSymbols: quote === "BTC" ? [] : extraSymbols,
+      ...(onlySymbols && onlySymbols.size ? { onlySymbols } : {}),
       feed: venue,
       db: base44.asServiceRole,
+      quote,
+      btcUsd,
     });
 
-    // when the connected exchange's listing filter ran, every row is a coin
-    // that exchange actually lists — tag it so the scanner only offers the
-    // manual buy (a real order) on tradeable coins
-    if (exchangeFilter) {
+    // in BTC mode a pair is deliberately shown even when the manual buy is
+    // unavailable; other modes tag rows whose venue can settle a real order
+    if (exchangeFilter && quote !== "BTC") {
       for (const row of board.rows || []) row.listed_on = exchangeFilter.exchange;
     }
 
     let persisted = { created: 0, updated: 0 };
     let alerts = 0;
-    if (body.persist) {
+    if (body.persist && quote !== "BTC") {
       // Saving the board is a side effect: never let it break the scan itself.
       try {
         persisted = await persistSignals(base44, board.rows, timeframe);
@@ -82,7 +106,7 @@ export default async function (req) {
       }
     }
 
-    return Response.json({ ...board, persisted, alerts, exchangeFilter });
+    return Response.json({ ...board, quote, persisted, alerts, exchangeFilter });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

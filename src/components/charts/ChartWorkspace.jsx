@@ -34,21 +34,28 @@ export default function ChartWorkspace({ detail, timeframe, onTimeframeChange, l
           <span className="mx-1 opacity-40">·</span>
           <Dot color="hsl(var(--accent))" /> Bollinger
         </Legend>
-        <div className="flex items-center gap-1 rounded-xl border border-border/70 bg-secondary/40 p-0.5">
-          {TIMEFRAMES.map((tf) => (
-            <button
-              key={tf.value}
-              type="button"
-              onClick={() => onTimeframeChange(tf.value)}
-              className={`num rounded-lg px-2.5 py-1 text-[11px] transition-colors ${
-                timeframe === tf.value
-                  ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {tf.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          {detail?.quote === 'BTC' ? (
+            <span className="rounded-lg bg-amber-400/15 px-2.5 py-1 text-[11px] font-medium text-amber-300 ring-1 ring-amber-400/30">
+              Priced in BTC
+            </span>
+          ) : null}
+          <div className="flex items-center gap-1 rounded-xl border border-border/70 bg-secondary/40 p-0.5">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf.value}
+                type="button"
+                onClick={() => onTimeframeChange(tf.value)}
+                className={`num rounded-lg px-2.5 py-1 text-[11px] transition-colors ${
+                  timeframe === tf.value
+                    ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

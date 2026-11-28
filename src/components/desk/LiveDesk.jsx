@@ -330,8 +330,8 @@ export default function LiveDesk({
             rows={view.top}
             positions={bookPositions}
             targetPct={liveDayPct}
-            onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
-            onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
+            onOpenChart={(symbol) => navigate(`/coin/${symbol}${btcMode ? '?quote=BTC' : ''}`)}
+            onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1${btcMode ? '&quote=BTC' : ''}`)}
           />
 
           {btcMode ? (

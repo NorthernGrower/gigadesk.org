@@ -289,6 +289,11 @@ export default function Dashboard() {
         openCount: btcBook.open_paper || 0,
         exposure: bookPositions.reduce((a, p) => a + (Number(p.size_usd) || 0), 0),
         startingBalance: btcBook.starting_balance || 0,
+        startingBtc: Number(btcBook.starting_btc) > 0
+          ? Number(btcBook.starting_btc)
+          : Number(bot?.btc_markets?.btc_usd) > 0
+            ? (Number(btcBook.starting_balance) || 0) / Number(bot.btc_markets.btc_usd)
+            : null,
         dailyGoal: btcDailyGoal,
         goalHit: btcDailyGoal > 0 && (btcBook.realized_today || 0) >= btcDailyGoal,
         scanned: btcBoard.scanned || 0,
@@ -416,8 +421,8 @@ export default function Dashboard() {
                 rows={view.top}
                 positions={bookPositions}
                 targetPct={dailyTargetPct}
-                onOpenChart={(symbol) => navigate(`/coin/${symbol}`)}
-                onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1`)}
+                onOpenChart={(symbol) => navigate(`/coin/${symbol}${btcMode ? '?quote=BTC' : ''}`)}
+                onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1${btcMode ? '&quote=BTC' : ''}`)}
               />
 
               {btcMode ? (
@@ -431,7 +436,12 @@ export default function Dashboard() {
                   <div className="mt-2 grid grid-cols-2 gap-3">
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bankroll</p>
-                      <p className="num mt-1 text-base font-semibold">{fmtUsd(view.startingBalance)}</p>
+                      <p className="num mt-1 text-base font-semibold">
+                        {view.startingBtc != null ? `${Number(view.startingBtc).toFixed(6).replace(/\.?0+$/, '')} BTC` : fmtUsd(view.startingBalance)}
+                      </p>
+                      {view.startingBtc != null ? (
+                        <p className="num mt-0.5 text-[11px] font-normal text-muted-foreground">{fmtUsd(view.startingBalance)} at the live rate</p>
+                      ) : null}
                     </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Free cash</p>

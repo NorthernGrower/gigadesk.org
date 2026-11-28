@@ -133,9 +133,9 @@ export function scanMarket(payload = {}) {
   return promise;
 }
 
-export async function getCoinDetail(symbol, timeframe = '1h', withAi = false) {
+export async function getCoinDetail(symbol, timeframe = '1h', withAi = false, quote = 'USD') {
   try {
-    return unwrap(await base44.functions.invoke('coinDetail', { symbol, timeframe, withAi }));
+    return unwrap(await base44.functions.invoke('coinDetail', { symbol, timeframe, withAi, quote }));
   } catch (err) {
     // the SDK's own HTTP message ("Request failed with status code 404")
     // hides the function's reason — surface the body's error when it travels

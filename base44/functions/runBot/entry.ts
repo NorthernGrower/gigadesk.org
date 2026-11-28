@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { fetchMarkets, fetchCandles, fetchLivePrices, chunk, asArray, round } from "../../shared/market.ts";
 import { analyzeCoin } from "../../shared/strategy.ts";
-import { scanBoard, resolveDeskVenue, resolveBtcVenue } from "../../shared/scan.ts";
+import { scanBoard, resolveDeskVenue, resolveBtcVenue, resolveBtcSymbols } from "../../shared/scan.ts";
 import { QUOTE_ASSET, placeMarketOrder, resolveLiveConnection } from "../../shared/orders.ts";
 import { readAccount, fetchListedSymbols, fetchMarketConstraints, accountValueUsd, pickFundingQuote, pickBtcBalance, keepBalances, isBackedOff, backoffUntil, balanceJustRead, SHORT_VENUES } from "../../shared/exchanges.ts";
 import { entryContext, excursionOf, loadLessons, outcomeFields, recordLesson, riskPctAt, rulesSnapshot } from "../../shared/learn.ts";
@@ -380,8 +380,14 @@ export default async function (req) {
       : Infinity;
     let cash = Number(config.cash_balance) || 0;
     // the paper Bitcoin book's own bankroll: sized, spent and re-anchored
-    // against itself, so the two currencies can never fund one another
-    const btcStart = Number(config.btc_starting_balance) || 10000;
+    // against itself, so the two currencies can never fund one another. It is
+    // set in BTC in the rules; the desk's maths stays in dollars, so the entry
+    // is translated at this cycle's rate. A cycle without a rate keeps the
+    // legacy dollar rule rather than sizing off a zero bankroll.
+    const btcBankrollBtc = Number(config.btc_starting_btc) > 0 ? Number(config.btc_starting_btc) : 0;
+    const btcStart = btcBankrollBtc > 0 && btcUsdNow > 0
+      ? btcBankrollBtc * btcUsdNow
+      : Number(config.btc_starting_balance) || 10000;
     let btcCash = Number(config.btc_cash_balance) || btcStart;
     const closed = [];
     const positions = [];
@@ -1235,18 +1241,19 @@ export default async function (req) {
       // the desk's own and the bars ignore the desk.
       const btcBoardWanted =
         btcFeed != null && btcUsdNow > 0 && (btcMarketsOn(paperView) || btcMarketsOn(liveView));
+      // every connected venue's BTC pairs answer the BTC books, not just the
+      // one chosen for live orders: the paper book has nothing to settle and
+      // must not be narrowed by a live account's listing feed
+      const btcListed = btcBoardWanted ? await resolveBtcSymbols(base44, config) : null;
       if (btcBoardWanted) {
         try {
-          // the Bitcoin venue lists the pairs this book can hold: reading them
-          // from the live account instead would filter a Kraken market by a
-          // listing Kraken never published
-          const btcListed = btcVenue ? await fetchListedSymbols(btcVenue, ["BTC"]) : null;
           btcBoard = await scanBoard({
             timeframe: paperBtcView.timeframe || "1h",
             scope: paperBtcView.market_cap_scope || "all",
             count: 60,
             dailyTargetPct: Number(paperBtcView.daily_target_pct) || 2,
-            extraSymbols: watch.map((w) => w.symbol),
+            // a watchlist coin without a BTC pair must never widen this board
+            extraSymbols: [],
             // an empty set means the listing read found nothing, not that
             // nothing is listed: honouring it would blank the whole book
             ...(btcListed && btcListed.size ? { onlySymbols: btcListed } : {}),
@@ -1272,14 +1279,13 @@ export default async function (req) {
       liveBtcBoard = btcBoard;
       if (btcBoard && liveBtcVenue && liveVerified && btcMarketsOn(liveView) && !btcSameScan(paperBtcView, liveBtcView)) {
         try {
-          const liveBtcListed = await fetchListedSymbols(btcVenue, ["BTC"]);
           liveBtcBoard = await scanBoard({
             timeframe: liveBtcView.timeframe || "1h",
             scope: liveBtcView.market_cap_scope || "all",
             count: 60,
             dailyTargetPct: Number(liveBtcView.daily_target_pct) || 2,
-            extraSymbols: watch.map((w) => w.symbol),
-            ...(liveBtcListed && liveBtcListed.size ? { onlySymbols: liveBtcListed } : {}),
+            extraSymbols: [],
+            ...(btcListed && btcListed.size ? { onlySymbols: btcListed } : {}),
             confluenceV2: liveBtcView.confluence_v2 !== false,
             feed: btcFeed,
             quote: "BTC",
@@ -3135,6 +3141,7 @@ export default async function (req) {
         // dollar figures above.
         book: {
           starting_balance: round(btcStart),
+          starting_btc: btcBankrollBtc > 0 ? round(btcBankrollBtc, 8) : null,
           cash: round(btcAnchoredCash),
           equity: round(btcEquity),
           realized_today: round(btcRealizedToday),

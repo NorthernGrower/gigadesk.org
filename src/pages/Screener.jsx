@@ -5,6 +5,7 @@ import FiltersBar from '@/components/screener/FiltersBar';
 import ScreenerTable from '@/components/screener/ScreenerTable';
 import ManualBuyDialog from '@/components/screener/ManualBuyDialog';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
+import { BookSwitch } from '@/components/desk/BookSwitch';
 import { useToast } from '@/components/ui/use-toast';
 import { ensureBotConfig, getLastBot, pageItems, scanMarket } from '@/lib/market';
 
@@ -24,8 +25,11 @@ export default function Screener() {
   const [targetPct, setTargetPct] = useState(2);
   const [buyRow, setBuyRow] = useState(null);
   const [defaultBuyUsd, setDefaultBuyUsd] = useState(100);
+  const [book, setBook] = useState('USD');
+  const isBtc = book === 'BTC';
 
   const scan = async (options = {}) => {
+    const quote = options.quote || (isBtc ? 'BTC' : 'USD');
     // quiet = the board already shows the last scan, so this is a background refresh
     if (options.quiet !== true) setLoading(true);
     setError(null);
@@ -35,8 +39,9 @@ export default function Screener() {
         scope: options.tier || tier,
         count: Number(options.depth || depth),
         dailyTargetPct: options.targetPct || targetPct,
-        persist: options.persist !== false,
-        symbols: options.symbols || watchSymbols,
+        persist: options.persist !== false && quote !== 'BTC',
+        quote,
+        symbols: quote === 'BTC' ? [] : options.symbols || watchSymbols,
       });
       setBoard(data);
     } catch (err) {
@@ -61,14 +66,19 @@ export default function Screener() {
         setTargetPct(target);
         // the manual-buy dialog pre-fills the live desk's fixed order size
         setDefaultBuyUsd(Number(config.live_rules?.fixed_order_usd ?? config.fixed_order_usd) || 100);
+        // the desk's book decides the scanner's book too; the two pages always
+        // read the same market, never a dollar board labelled as BTC
+        setBook(config?.active_book === 'BTC' ? 'BTC' : 'USD');
         // revisits render the bot's last scan immediately, then the fresh
         // scan below quietly replaces it with the requested depth
         const cached = getLastBot();
-        if (cached?.top?.length) {
+        const btcView = config?.active_book === 'BTC';
+        if (!btcView && cached?.top?.length) {
           setBoard({ rows: cached.top, scannedCount: cached.scanned, universeCount: cached.universe, summary: cached.summary });
           setLoading(false);
         }
-        await scan({ timeframe: '1h', tier: 'all', depth: '70', targetPct: target, symbols, quiet: Boolean(cached?.top?.length) });
+        const initialBook = config?.active_book === 'BTC' ? 'BTC' : 'USD';
+        await scan({ timeframe: '1h', tier: 'all', depth: '70', targetPct: target, symbols, quiet: Boolean(!btcView && cached?.top?.length), quote: initialBook === 'BTC' ? 'BTC' : 'USD' });
       } catch (err) {
         if (alive) {
           setError(err.message);
@@ -80,6 +90,21 @@ export default function Screener() {
       alive = false;
     };
   }, []);
+
+  // the Bot page's book switch saves the same choice: follow it so the scanner
+  // can never show a dollar board while the desk is on the Bitcoin book
+  useEffect(() => {
+    const onDeskTick = (event) => {
+      const next = event.detail?.config?.active_book === 'BTC' ? 'BTC' : 'USD';
+      setBook((current) => {
+        if (current === next) return current;
+        scan({ timeframe: '1h', tier: 'all', depth: '70', quote: next, symbols: watchSymbols });
+        return next;
+      });
+    };
+    window.addEventListener('bot:tick', onDeskTick);
+    return () => window.removeEventListener('bot:tick', onDeskTick);
+  }, [watchSymbols]);
 
   const toggleWatch = async (row) => {
     try {
@@ -100,6 +125,13 @@ export default function Screener() {
     }
   };
 
+  const changeBook = (next) => {
+    setBook(next);
+    setBoard(null);
+    if (config?.id) base44.entities.BotConfig.update(config.id, { active_book: next }).catch(() => {});
+    scan({ timeframe: '1h', tier: 'all', depth: '70', quote: next, symbols: watchSymbols });
+  };
+
   const rows = (board?.rows || []).filter(
     (row) =>
       row.score >= minScore &&
@@ -109,6 +141,15 @@ export default function Screener() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">
+          {isBtc
+            ? 'Bitcoin-paired markets on your connected exchanges — the same universe the Bitcoin books trade.'
+            : 'Dollar markets on the exchange your desk trades.'}
+        </p>
+        <BookSwitch value={book} onChange={changeBook} />
+      </div>
+
       <FiltersBar
         timeframe={timeframe}
         onTimeframe={(value) => {
@@ -147,8 +188,10 @@ export default function Screener() {
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <p className="text-[11px] text-muted-foreground">
               {board?.exchangeFilter
-                ? `${rows.length} of ${board?.scannedCount || 0} analysed setups shown · candidates drawn from the ${board.exchangeFilter.listed} pairs listed on ${board.exchangeFilter.label} (of ${board?.universeCount || 0} tradable markets)`
-                : `${rows.length} of ${board?.scannedCount || 0} analysed setups shown · ${board?.universeCount || 0} tradable markets scanned for candidates`}
+                ? `${rows.length} of ${board?.scannedCount || 0} analysed setups shown · candidates drawn from the ${board.exchangeFilter.listed} ${isBtc ? 'BTC pairs' : 'pairs'} listed on ${board.exchangeFilter.label} (of ${board?.universeCount || 0} tradable markets)`
+                : isBtc && board && !board.source?.exchange
+                  ? `${rows.length} BTC-paired setups · connect an exchange that lists BTC markets to scan them`
+                  : `${rows.length} of ${board?.scannedCount || 0} analysed setups shown · ${board?.universeCount || 0} tradable markets scanned for candidates`}
             </p>
             {board?.medianChange24h !== undefined ? (
               <p className="num text-[11px] text-muted-foreground">
@@ -159,13 +202,13 @@ export default function Screener() {
           </div>
           <ScreenerTable
             rows={rows}
-            onSelect={(row) => navigate(`/coin/${row.symbol}`)}
+            onSelect={(row) => navigate(`/coin/${row.symbol}${isBtc ? '?quote=BTC' : ''}`)}
             onWatch={toggleWatch}
-            onBuy={(row) => setBuyRow(row)}
+            onBuy={isBtc ? null : (row) => setBuyRow(row)}
             watchSymbols={watchSymbols}
             targetPct={targetPct}
           />
-          <ManualBuyDialog row={buyRow} defaultUsd={defaultBuyUsd} onClose={() => setBuyRow(null)} />
+          {!isBtc ? <ManualBuyDialog row={buyRow} defaultUsd={defaultBuyUsd} onClose={() => setBuyRow(null)} /> : null}
         </>
       )}
     </div>

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { roundTo } from '@/lib/market';
+import { fmtUsd } from '@/lib/format';
 import { bookRuleKeys, bookRuleSet } from '@/lib/bookRules';
 import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields, BtcBalanceNote } from '@/components/bot/ruleFields';
 // The margin engine is live-desk only — the paper panel never shows or saves it.
@@ -21,6 +22,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
   const fromConfig = (c) => {
     const view = bookRuleSet(c, 'paper', book);
     return {
+      starting_btc: isBtc ? c?.btc_starting_btc ?? 0 : 0,
       starting_balance: isBtc ? c?.btc_starting_balance ?? 10000 : c?.starting_balance ?? 10000,
       profit_mode: view.profit_mode || 'compound',
       score_bar: view.score_bar ?? 70,
@@ -116,6 +118,7 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
         await base44.entities.BotConfig.update(config.id, {
           btc_rules: { ...(config.btc_rules || {}), ...saved },
           // the book's bankroll and the desk-level switches both live on the config
+          btc_starting_btc: roundTo(paper.starting_btc, 8),
           btc_starting_balance: roundTo(paper.starting_balance, 2),
           btc_markets: paper.btc_markets === true,
           analyst_on: paper.analyst_on === true,
@@ -184,7 +187,17 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
       ) : null}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Starting balance" hint="Your paper bankroll in USD.">
+        {isBtc ? (
+          <Field label="Starting bankroll (BTC)" hint="Your paper Bitcoin book's bankroll in bitcoin. The desk translates it at the live BTC rate to size its trades; the dollar value below moves with BTC.">
+            <Input className="num" inputMode="decimal" value={paper.starting_btc} onChange={setPaperNum('starting_btc')} />
+            <p className="num text-[11px] text-muted-foreground">
+              {Number(paper.starting_btc) > 0 && btcRate > 0
+                ? `${fmtUsd(Number(paper.starting_btc) * btcRate)} at ${fmtUsd(btcRate)}/BTC`
+                : 'Enter an amount to see its dollar value.'}
+            </p>
+          </Field>
+        ) : null}
+        <Field label={isBtc ? 'Fallback bankroll (USD)' : 'Starting balance'} hint={isBtc ? 'Used only when no BTC amount is set above.' : 'Your paper bankroll in USD.'}>
           <Input className="num" inputMode="decimal" value={paper.starting_balance} onChange={setPaperNum('starting_balance')} />
         </Field>
         <Field

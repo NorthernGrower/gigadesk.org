@@ -1,4 +1,5 @@
 import { fetchMarkets, fetchBtcMarkets, fetchCandles, chunk, asArray, round, btcQuoteVenue } from "./market.ts";
+import { fetchListedSymbols } from "./exchanges.ts";
 import { analyzeCoin } from "./strategy.ts";
 
 const SCOPES = new Set(["all", "large", "mid", "small"]);
@@ -82,6 +83,42 @@ export async function resolveBtcVenue(base44, config) {
     console.log(`BTC venue resolution failed: ${err && err.message}`);
     return null;
   }
+}
+
+/**
+ * Every BTC-paired symbol the user's connected exchanges actually list. All
+ * connected venues count, not just the one chosen for orders: a paper BTC desk
+ * has nothing to settle, so a view-only Kraken account is just as good a source
+ * of the pair list as a trading-enabled one. Null means no connected venue can
+ * serve BTC pairs, which is different from an empty list and must never be
+ * passed to a scanner as "nothing is listed".
+ */
+export async function resolveBtcSymbols(base44, config) {
+  const owner = (config && config.created_by_id) || "";
+  const rows = asArray(
+    await base44.asServiceRole.entities.ExchangeConnection.filter(
+      { created_by_id: owner, status: "connected" },
+      { sort: "-updated_date", limit: 12 },
+    ).catch(() => []),
+  ).filter(
+    (c) => c && btcQuoteVenue(c.exchange) && !(c.backoff_until && Date.parse(c.backoff_until) > Date.now()),
+  );
+  if (!rows.length) return null;
+  const listed = new Set();
+  for (const conn of rows) {
+    const symbols = await fetchListedSymbols(
+      {
+        exchange: conn.exchange,
+        testnet: Boolean(conn.testnet),
+        api_key: "",
+        api_secret: "",
+        passphrase: "",
+      },
+      ["BTC"],
+    );
+    if (symbols) for (const s of symbols) listed.add(String(s).toUpperCase());
+  }
+  return listed.size ? listed : null;
 }
 
 /** Whole-market snapshot plus the market-wide median move used for relative strength. */

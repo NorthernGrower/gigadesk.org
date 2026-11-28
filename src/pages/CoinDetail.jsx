@@ -19,6 +19,8 @@ export default function CoinDetail() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const btcMode = searchParams.get('quote') === 'BTC';
+  const quote = btcMode ? 'BTC' : 'USD';
 
   const [timeframe, setTimeframe] = useState('1h');
   const [detail, setDetail] = useState(null);
@@ -51,7 +53,7 @@ export default function CoinDetail() {
       setError(null);
       setAnalysis(null);
       try {
-        const data = await getCoinDetail(symbol, timeframe, false);
+        const data = await getCoinDetail(symbol, timeframe, false, quote);
         if (!alive) return;
         setDetail(data);
         if (searchParams.get('ai') === '1') {
@@ -71,12 +73,12 @@ export default function CoinDetail() {
     return () => {
       alive = false;
     };
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, quote]);
 
   const generateAnalysis = async () => {
     setAiLoading(true);
     try {
-      const data = await getCoinDetail(symbol, timeframe, true);
+      const data = await getCoinDetail(symbol, timeframe, true, quote);
       setDetail(data);
       setAnalysis(data.analysis);
       if (!data.analysis) {
@@ -124,7 +126,7 @@ export default function CoinDetail() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-heading text-xl font-semibold">{coin?.name || symbol}</h1>
               <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                {TIER_LABEL[coin?.market_cap_bucket] || 'tier'}
+                {btcMode ? 'BTC pair' : TIER_LABEL[coin?.market_cap_bucket] || 'tier'}
               </span>
             </div>
             {coin ? (
@@ -176,7 +178,11 @@ export default function CoinDetail() {
               onGenerate={generateAnalysis}
             />
             <BotRuleCheck snapshot={snapshot} config={config} />
-            <TradeTicket snapshot={snapshot} />
+            {!btcMode ? <TradeTicket snapshot={snapshot} /> : (
+              <p className="surface p-4 text-[11px] leading-snug text-muted-foreground">
+                This is the BTC-quoted pair. The desk trades it through the Bitcoin books on the Bot page, in BTC — the dollar ticket is not available here.
+              </p>
+            )}
           </div>
         </div>
       )}

@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
-import { asArray } from '../../shared/market.ts';
+import { asArray, fetchLivePrices } from '../../shared/market.ts';
 
 // Full paper-desk reset: wipes every paper trade, the equity chart history,
 // the bot's lessons and the alerts those trades raised, then sets the paper
@@ -36,6 +36,15 @@ export default async function (req) {
 
     const starting = Number(config.starting_balance) || 10000;
     const counts = { paper_trades: tradeIds.length, alerts: 0, equity_candles: 0, lessons: 0 };
+    const btcStartingBtc = Number(config.btc_starting_btc) || 0;
+    let btcStartingUsd = Number(config.btc_starting_balance) || 10000;
+    if (btcStartingBtc > 0) {
+      // the BTC bankroll is the rule: price it at the live rate once here, so
+      // the reset cash agrees with the next cycle's translated bankroll
+      const prices = await fetchLivePrices(["BTC"]).catch(() => new Map());
+      const rate = Number(prices.get("BTC")) || 0;
+      if (rate > 0) btcStartingUsd = btcStartingBtc * rate;
+    }
 
     if (!dryRun) {
       for (const batch of chunkIds(tradeIds)) {
@@ -61,7 +70,7 @@ export default async function (req) {
       // book has its own bankroll and is reset with it.
       await base44.asServiceRole.entities.BotConfig.update(config.id, {
         cash_balance: starting,
-        btc_cash_balance: Number(config.btc_starting_balance) || 10000,
+        btc_cash_balance: btcStartingUsd,
       });
     }
 

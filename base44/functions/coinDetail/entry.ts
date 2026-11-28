@@ -5,7 +5,7 @@ import { ema, rsi, macd, bollinger } from "../../shared/indicators.ts";
 import { asArray } from "../../shared/market.ts";
 import { entryRulesFor, gateReason } from "../../shared/entryRules.ts";
 import { liveRulesView } from "../../shared/deskRules.ts";
-import { resolveDeskVenue } from "../../shared/scan.ts";
+import { resolveDeskVenue, resolveBtcVenue, resolveBtcSymbols } from "../../shared/scan.ts";
 
 const CACHE = new Map();
 const AI_TTL = 10 * 60 * 1000;
@@ -54,7 +54,7 @@ Rules: judge whether the setup is worth taking and in which direction, refine th
 }
 
 async function aiAnalysis(base44, coin, timeframe, snapshot) {
-  const key = `${snapshot.symbol}:${timeframe}:${Math.round(snapshot.score / 5)}`;
+  const key = `${snapshot.symbol}:${timeframe}:${Math.round(snapshot.score / 5)}:${snapshot.entry_check?.book || "USD"}`;
   const hit = CACHE.get(key);
   if (hit && Date.now() - hit.at < AI_TTL) return hit.value;
 
@@ -73,6 +73,7 @@ export default async function (req) {
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
+    const quote = body.quote === "BTC" ? "BTC" : "USD";
     const symbol = String(body.symbol || "").toUpperCase();
     if (!symbol) return Response.json({ error: "A coin symbol is required" }, { status: 400 });
     const timeframe = ["15m", "1h", "4h", "12h", "1d", "1w", "1M"].includes(body.timeframe)
@@ -88,15 +89,20 @@ export default async function (req) {
         { sort: "-updated_date", limit: 1 },
       ),
     )[0];
-    const venue = await resolveDeskVenue(base44, deskConfig || {});
-    const { coins } = await fetchMarkets(base44.asServiceRole, venue);
-    const coin = coins.find((c) => c.symbol === symbol);
-    if (!coin) {
-      return Response.json({ error: `${symbol} is not in the tracked market` }, { status: 404 });
+    const venue = quote === "BTC" ? await resolveBtcVenue(base44, deskConfig || {}) : await resolveDeskVenue(base44, deskConfig || {});
+    const btcSymbols = quote === "BTC" ? await resolveBtcSymbols(base44, deskConfig || {}) : null;
+    if (quote === "BTC" && (!venue || !btcSymbols || !btcSymbols.has(symbol))) {
+      return Response.json({ error: `${symbol} is not a BTC pair on your connected exchanges right now` }, { status: 404 });
     }
+    const { coins } = quote === "BTC"
+      ? { coins: [...(btcSymbols || [])].map((s) => ({ symbol: s, name: s })) }
+      : await fetchMarkets(base44.asServiceRole, venue);
+    const coin = quote === "BTC"
+      ? { symbol, name: symbol, price: 0, change24h: 0, volume24h: 0, market_cap_bucket: "unknown" }
+      : coins.find((c) => c.symbol === symbol);
 
     const minBars = MIN_BARS[timeframe] || 80;
-    const candles = await fetchCandles(symbol, timeframe, 300, venue);
+    const candles = await fetchCandles(symbol, timeframe, 300, venue, quote);
     if (!candles || candles.length < minBars) {
       return Response.json(
         { error: `Not enough chart history for ${symbol} on this timeframe (${candles ? candles.length : 0} candles, ${minBars} needed)` },
@@ -116,8 +122,12 @@ export default async function (req) {
     const btcChange = (coins.find((c) => c.symbol === "BTC") || {}).change24h ?? null;
     // the live desk gates by its own saved rules, never the paper config's
     const rules = entryRulesFor(desk === "live" ? liveRulesView(config) : config, desk, btcChange);
-    snapshot.entry_check = { desk, min_score: rules.min_score,
-      reason: gateReason(snapshot, desk, rules) };
+    snapshot.entry_check = {
+      desk,
+      book: quote,
+      min_score: quote === "BTC" ? 70 : rules.min_score,
+      reason: quote === "BTC" ? null : gateReason(snapshot, desk, rules),
+    };
 
     const closes = candles.map((c) => c.c);
     const e20 = ema(closes, 20);
@@ -168,6 +178,7 @@ export default async function (req) {
         volume24h: snapshot.volume24h,
       },
       timeframe,
+      quote,
       candles: chart,
       snapshot,
       analysis,

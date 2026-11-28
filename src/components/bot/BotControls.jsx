@@ -9,12 +9,13 @@ import BookSwitch from '@/components/desk/BookSwitch';
 
 const MODES = ['off', 'approve', 'auto'];
 
-function Metric({ label, value, tone = 'neutral', hint }) {
+function Metric({ label, value, tone = 'neutral', hint, sub }) {
   const tones = { up: 'text-primary', down: 'text-destructive', neutral: 'text-foreground', accent: 'text-accent' };
   return (
     <div className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2.5">
       <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
       <p className={`num mt-1 text-base font-semibold ${tones[tone]}`}>{value}</p>
+      {sub ? <p className="num mt-0.5 text-[11px] font-normal text-muted-foreground">{sub}</p> : null}
       {hint ? <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p> : null}
     </div>
   );
@@ -101,8 +102,13 @@ export default function BotControls({ config, stats, desk = 'live', book = 'USD'
         {paper ? (
           <>
             <Metric
-              label="Paper balance"
-              value={stats?.balance == null ? '—' : fmtUsd(stats.balance)}
+              label={paper && book === 'BTC' ? 'Bitcoin paper balance' : 'Paper balance'}
+              value={stats?.balance == null ? '—' : paper && book === 'BTC' && stats?.balanceBtc != null
+                ? `${stats.balanceBtc} BTC`
+                : fmtUsd(stats.balance)}
+              sub={paper && book === 'BTC' && stats?.balanceBtc != null && stats.balance != null
+                ? `${fmtUsd(stats.balance)} at the live rate`
+                : null}
               hint="Cash the paper bot can trade with"
             />
             <Metric
