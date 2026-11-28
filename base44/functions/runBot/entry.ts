@@ -303,6 +303,10 @@ export default async function (req) {
     const btcUsdNow =
       Number((priceMap.get("BTC") || {}).price) ||
       Number((coins.find((c) => c.symbol === "BTC") || {}).price) ||
+      // a light cycle scans no board, so it carries no BTC row: read the rate
+      // anyway, or the paper Bitcoin balance has no dollar value between full
+      // scans and the desk shows a dollar figure under a BTC label
+      Number((await fetchLivePrices(["BTC"]).catch(() => new Map())).get("BTC")) ||
       0;
     // the venue the BTC leg reads its charts from, and the only one it may be
     // traded on: the connected exchange resolved above. A desk with no connected
