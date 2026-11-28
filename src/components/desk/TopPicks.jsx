@@ -8,13 +8,15 @@ import BestWorstPositions from '@/components/dashboard/BestWorstPositions';
  * the desk falls back to the last stored setup so the top pick always stays on
  * the desk; with no stored setup either, open positions stay in focus instead.
  */
-export default function TopPicks({ rows = [], positions = [], targetPct = 2, onOpenChart, onAnalyze }) {
+export default function TopPicks({ rows = [], positions = [], targetPct = 2, onOpenChart, onAnalyze, allowStored = true }) {
   const [stored, setStored] = useState(null);
   const fresh = (rows || []).slice(0, 1);
-  const pick = fresh.length ? fresh[0] : (stored || [])[0];
+  const pick = fresh.length ? fresh[0] : allowStored ? (stored || [])[0] : null;
 
   useEffect(() => {
-    if (fresh.length) return undefined;
+    // the stored fallback is a dollar-priced Signal row: on the Bitcoin book it
+    // would put a dollar setup on a BTC desk, so that book never falls back
+    if (fresh.length || !allowStored) return undefined;
     let alive = true;
     base44.entities.Signal
       .filter({ status: 'new' }, { sort: '-score', limit: 1 })
@@ -27,7 +29,7 @@ export default function TopPicks({ rows = [], positions = [], targetPct = 2, onO
     return () => {
       alive = false;
     };
-  }, [fresh.length]);
+  }, [fresh.length, allowStored]);
 
   if (!pick) return <BestWorstPositions positions={positions} />;
 

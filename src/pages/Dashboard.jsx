@@ -329,6 +329,13 @@ export default function Dashboard() {
         realizedTotal: null,
       };
   const goalPct = view.dailyGoal ? (view.realizedToday / view.dailyGoal) * 100 : 0;
+  // every dollar figure on the Bitcoin book is also shown in the currency that
+  // book actually holds: the BTC amount leads, the dollar value sits under it
+  const btcAmount = (usd) => {
+    const amount = Number(usd) || 0;
+    if (!(btcRate > 0)) return null;
+    return `${(amount / btcRate).toFixed(6).replace(/\.?0+$/, '')} BTC`;
+  };
 
   return (
     <div className="space-y-4">
@@ -385,27 +392,35 @@ export default function Dashboard() {
               Bitcoin book, never a mixture of the two */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
-              label="Equity"
-              value={fmtUsd(view.equity)}
-              sub={`${fmtUsd(view.cash)} free cash`}
+              label={btcMode ? 'Equity (BTC)' : 'Equity'}
+              value={btcMode ? btcAmount(view.equity) || fmtUsd(view.equity) : fmtUsd(view.equity)}
+              sub={btcMode
+                ? `${fmtUsd(view.equity)} · ${btcAmount(view.cash) || fmtUsd(view.cash)} free`
+                : `${fmtUsd(view.cash)} free cash`}
               icon={Wallet}
             />
             <StatCard
-              label="Today realised"
-              value={fmtUsd(view.realizedToday)}
-              sub={`${fmtPct(goalPct)} of your ${fmtUsd(view.dailyGoal)} target`}
+              label={btcMode ? 'Today realised (BTC)' : 'Today realised'}
+              value={btcMode ? btcAmount(view.realizedToday) || fmtUsd(view.realizedToday) : fmtUsd(view.realizedToday)}
+              sub={btcMode
+                ? `${fmtUsd(view.realizedToday)} · ${fmtPct(goalPct)} of ${btcAmount(view.dailyGoal) || fmtUsd(view.dailyGoal)} target`
+                : `${fmtPct(goalPct)} of your ${fmtUsd(view.dailyGoal)} target`}
               tone={view.realizedToday >= 0 ? 'up' : 'down'}
             />
             <StatCard
               label="Open positions"
               value={view.openCount}
-              sub={`${fmtUsd(view.exposure)} deployed`}
+              sub={btcMode
+                ? `${btcAmount(view.exposure) || fmtUsd(view.exposure)} deployed`
+                : `${fmtUsd(view.exposure)} deployed`}
               icon={Layers}
             />
             <StatCard
-              label="Unrealised"
-              value={fmtUsd(view.unrealized)}
-              sub={`${view.scanned || 0} coins scanned`}
+              label={btcMode ? 'Unrealised (BTC)' : 'Unrealised'}
+              value={btcMode ? btcAmount(view.unrealized) || fmtUsd(view.unrealized) : fmtUsd(view.unrealized)}
+              sub={btcMode
+                ? `${fmtUsd(view.unrealized)} · ${view.scanned || 0} coins scanned`
+                : `${view.scanned || 0} coins scanned`}
               tone={view.unrealized >= 0 ? 'up' : 'down'}
             />
           </div>
@@ -417,6 +432,7 @@ export default function Dashboard() {
             openCount={view.openCount}
             scanned={view.scanned}
             startingBalance={view.startingBalance}
+            btcRate={btcMode ? btcRate : 0}
           />
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
@@ -425,6 +441,7 @@ export default function Dashboard() {
                 rows={view.top}
                 positions={bookPositions}
                 targetPct={dailyTargetPct}
+                allowStored={!btcMode}
                 onOpenChart={(symbol) => navigate(`/coin/${symbol}${btcMode ? '?quote=BTC' : ''}`)}
                 onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1${btcMode ? '&quote=BTC' : ''}`)}
               />
@@ -439,7 +456,7 @@ export default function Dashboard() {
                   </p>
                   <div className="mt-2 grid grid-cols-2 gap-3">
                     <div>
-                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bankroll</p>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Paper bankroll</p>
                       <p className="num mt-1 text-base font-semibold">
                         {view.startingBtc != null ? `${Number(view.startingBtc).toFixed(6).replace(/\.?0+$/, '')} BTC` : fmtUsd(view.startingBalance)}
                       </p>
@@ -448,7 +465,7 @@ export default function Dashboard() {
                       ) : null}
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Free cash</p>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Paper free cash</p>
                       <p className="num mt-1 text-base font-semibold">
                         {btcCashBtc != null
                           ? `${Number(btcCashBtc).toFixed(6).replace(/\.?0+$/, '')} BTC`

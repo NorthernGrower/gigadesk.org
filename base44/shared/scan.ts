@@ -83,13 +83,28 @@ export async function resolveBtcVenue(base44, config, preferExchange = "") {
       if (listed && listed.size) withPairs.push(c);
     }
     const pool = withPairs.length ? withPairs : rows;
+    // a listed pair is not a working ticker: one connected venue can answer its
+    // pair list and still return no BTC market (a blocked public endpoint, a
+    // region restriction). Probe each candidate and keep the ones that actually
+    // answer rows, so the desk never reads an empty board from a dead venue
+    // while another connected venue lists pairs fine.
+    const withRows = [];
+    for (const c of pool) {
+      const probe = await fetchBtcMarkets(
+        null,
+        { exchange: c.exchange, testnet: Boolean(c.testnet) },
+        1,
+      ).catch(() => []);
+      if (probe && probe.length) withRows.push(c);
+    }
+    const live = withRows.length ? withRows : pool;
     // the live connection must be the venue the book trades on, or a live BTC
     // order would have no market to fill on: its exchange wins whenever it
     // lists BTC pairs, and any connected venue stands in for the paper book
     const preferred = preferExchange
-      ? pool.filter((c) => String(c.exchange || "") === String(preferExchange))
+      ? live.filter((c) => String(c.exchange || "") === String(preferExchange))
       : [];
-    const chosen = preferred.find((c) => c.id === id) || preferred[0] || pool.find((c) => c.id === id) || pool[0];
+    const chosen = preferred.find((c) => c.id === id) || preferred[0] || live.find((c) => c.id === id) || live[0];
     return {
       id: chosen.id,
       exchange: chosen.exchange,

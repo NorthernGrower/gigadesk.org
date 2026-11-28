@@ -1,8 +1,12 @@
 import React from 'react';
 import { fmtPct, fmtUsd } from '@/lib/format';
 
-export default function TodayProgress({ realizedToday, dailyGoal, goalHit, openCount, scanned, startingBalance }) {
+export default function TodayProgress({ realizedToday, dailyGoal, goalHit, openCount, scanned, startingBalance, btcRate = 0 }) {
   const goalPct = dailyGoal ? Math.max(0, Math.min(100, (realizedToday / dailyGoal) * 100)) : 0;
+  const amount = (usd) => {
+    const n = Number(usd) || 0;
+    return btcRate > 0 ? `${(n / btcRate).toFixed(6).replace(/\.?0+$/, '')} BTC` : fmtUsd(n);
+  };
 
   return (
     <div className="surface p-4">
@@ -26,7 +30,7 @@ export default function TodayProgress({ realizedToday, dailyGoal, goalHit, openC
         </p>
       ) : (
         <p className="mt-1.5 text-[11px] text-muted-foreground">
-          {fmtUsd(realizedToday || 0)} of {fmtUsd(dailyGoal || 0)} target · {openCount || 0} positions open ·{' '}
+          {amount(realizedToday || 0)} of {amount(dailyGoal || 0)} target · {openCount || 0} positions open ·{' '}
           {scanned || 0} coins scanned
         </p>
       )}

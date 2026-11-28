@@ -403,7 +403,9 @@ export async function fetchBtcMarkets(db = null, feed = null, btcUsd = 0) {
   // pair names and its ticker are the ones the order path uses, and a market
   // the desk cannot trade is noise
   if (!btcQuoteVenue(ex) || !base || !(fx > 0)) return [];
-  const cacheKey = `btcmarkets:${ex}`;
+  // the rate is part of the key: the same venue's turnover is priced in
+  // dollars, so a probe at one rate must never answer a scan at another
+  const cacheKey = `btcmarkets:${ex}:${Math.round(fx / 100)}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
 

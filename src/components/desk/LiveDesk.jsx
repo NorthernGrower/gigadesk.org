@@ -322,6 +322,7 @@ export default function LiveDesk({
         openCount={view.openCount}
         scanned={view.scanned}
         startingBalance={view.startingBalance || 0}
+        btcRate={btcMode ? btcRate : 0}
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
@@ -330,6 +331,7 @@ export default function LiveDesk({
             rows={view.top}
             positions={bookPositions}
             targetPct={liveDayPct}
+            allowStored={!btcMode}
             onOpenChart={(symbol) => navigate(`/coin/${symbol}${btcMode ? '?quote=BTC' : ''}`)}
             onAnalyze={(symbol) => navigate(`/coin/${symbol}?ai=1${btcMode ? '&quote=BTC' : ''}`)}
           />
