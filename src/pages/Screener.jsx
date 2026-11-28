@@ -5,7 +5,7 @@ import FiltersBar from '@/components/screener/FiltersBar';
 import ScreenerTable from '@/components/screener/ScreenerTable';
 import ManualBuyDialog from '@/components/screener/ManualBuyDialog';
 import { ErrorNotice, LoadingBlock } from '@/components/common/States';
-import { BookSwitch } from '@/components/desk/BookSwitch';
+import BookSwitch from '@/components/desk/BookSwitch';
 import { useToast } from '@/components/ui/use-toast';
 import { ensureBotConfig, getLastBot, pageItems, scanMarket } from '@/lib/market';
 
