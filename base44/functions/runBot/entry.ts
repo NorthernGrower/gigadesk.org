@@ -294,12 +294,13 @@ export default async function (req) {
     let quoteLeft = spendableQuote;
     if (managed.conn && funding) managed.conn.quoteAsset = funding.asset;
 
-    // ---- BTC-quoted markets, opt-in per desk. The desk keeps its USD book
-    // exactly as it is; a desk with this on may also take a symbol on Kraken's
-    // Bitcoin market, which is a different chart in a different currency. Those
-    // trades store their prices in BTC and carry the BTC rate recorded when they
-    // opened, so every dollar figure is the pair's own move translated once.
-    const btcMarketsOn = (view) => view.btc_markets === true;
+    // ---- BTC-quoted markets are part of the desk whenever the user's own
+    // connected exchange lists them: there is no switch to find and no gate to
+    // open. The book is read from that API connection, never from a public
+    // venue they have no account on. Those trades store their prices in BTC and
+    // carry the BTC rate recorded when they opened, so every dollar figure is
+    // the pair's own move translated once.
+    const btcMarketsOn = () => true;
     const btcUsdNow =
       Number((priceMap.get("BTC") || {}).price) ||
       Number((coins.find((c) => c.symbol === "BTC") || {}).price) ||

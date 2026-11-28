@@ -340,20 +340,7 @@ export function scanEngineFields(form, setNum, setV, market = null) {
           checked={form.analyst_on === true}
           onChange={setV('analyst_on')}
         />
-        <Toggle
-          label="BTC markets"
-          hint="A second, fully separate book: the BTC-quoted markets of your connected exchange (Kraken XBT pairs, or Binance, Bybit and KuCoin BTC pairs), scanned by the same engine and traded by the same rules, with their own bankroll, cash, slots, cooldowns, risk brakes and lessons. A live entry needs the live connection to list those pairs, with Bitcoin in its spot wallet, and takes longs only. Nothing crosses over: a dollar position never takes a Bitcoin slot, and a dollar drawdown never stops a Bitcoin entry."
-          checked={form.btc_markets === true}
-          onChange={setV('btc_markets')}
-        />
       </div>
-      {form.btc_markets === true ? (
-        <p className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] leading-snug text-muted-foreground">
-          The Bitcoin book keeps its own ledger: its own starting balance, its own cash, and up to its own
-          {` ${Number(form.max_open_positions) || 8} `}open positions. With both books on, this desk can therefore hold
-          twice the positions — the dollar book is not reduced to make room.
-        </p>
-      ) : null}
       {form.v3_algo === true ? (
         <p className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-300">
           V3 is on for this desk: entries come from its daily gates, and its positions exit on their own

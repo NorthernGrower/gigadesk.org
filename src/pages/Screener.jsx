@@ -132,9 +132,6 @@ export default function Screener() {
     setBoard(null);
     if (config?.id) {
       const patch = { active_book: next };
-      // choosing the BTC book on the paper desk turns its scan and entries on:
-      // the live desk keeps its own explicit switch for real BTC orders
-      if (next === 'BTC' && config.active_desk !== 'live' && config.btc_markets !== true) patch.btc_markets = true;
       base44.entities.BotConfig.update(config.id, patch)
         .then(() => setConfig((prev) => (prev ? { ...prev, ...patch } : prev)))
         .catch(() => {});

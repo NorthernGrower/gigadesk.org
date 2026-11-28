@@ -256,9 +256,6 @@ export default function Dashboard() {
     setBookMode(next);
     if (bot?.config?.id) {
       const patch = { active_book: next };
-      // the paper desk's BTC book is switched on by choosing it: the live desk
-      // keeps its explicit switch for real BTC orders
-      if (next === 'BTC' && deskMode === 'paper' && bot.config.btc_markets !== true) patch.btc_markets = true;
       base44.entities.BotConfig.update(bot.config.id, patch).catch(() => {});
     }
   };

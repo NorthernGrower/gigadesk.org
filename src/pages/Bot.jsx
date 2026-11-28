@@ -187,9 +187,6 @@ export default function Bot() {
     try {
       if (config?.id) {
         const patch = { active_book: next };
-        // choosing the BTC book on the paper desk enables its scan and entries;
-        // the live desk keeps its own explicit switch for real BTC orders
-        if (next === 'BTC' && desk === 'paper' && config.btc_markets !== true) patch.btc_markets = true;
         await base44.entities.BotConfig.update(config.id, patch);
         setConfig((prev) => (prev ? { ...prev, ...patch } : prev));
       }
