@@ -199,12 +199,7 @@ export default async function (req) {
     const scanVenue = light ? null : await resolveDeskVenue(base44, config);
     // the connected exchange that can serve the Bitcoin book: its own spot market
     // lists the pairs quoted in bitcoin, so it is the only venue the book may be
-    // scanned, charted and traded on. A desk with no such connection gets no
-    // Bitcoin scan at all — rather than a market it has no account on — and the
-    // reason travels back to the desk with the cycle. It is resolved on light
-    // passes too: those carry no scan, and the desk would otherwise read that
-    // it has no connected exchange on every quiet refresh
-    const btcVenue = await resolveBtcVenue(base44, config);
+    // scanned, charted and traded on.
     const { coins } = light ? { coins: [] } : await fetchMarkets(base44.asServiceRole, scanVenue);
     const priceMap = new Map(coins.map((c) => [c.symbol, c]));
 
@@ -266,6 +261,15 @@ export default async function (req) {
     const live = config.real_orders_enabled === true
       ? managed
       : { conn: null, reason: "Live trading is paused", info: managed.info };
+    // resolve the BTC venue once the live connection is known: its exchange wins
+    // whenever it lists BTC pairs, so a live BTC order always has a market
+    // there to fill on. Resolved on light passes too, so the desk keeps its
+    // venue between full scans.
+    const btcVenue = await resolveBtcVenue(
+      base44,
+      config,
+      (live.conn || managed.conn || {}).exchange || "",
+    );
     // a live Bitcoin entry is placed on the venue that lists the pair, so the
     // live connection itself must be the Bitcoin venue: a KuCoin account never
     // buys a Kraken-only pair, and this book then runs paper only

@@ -57,7 +57,7 @@ export async function resolveDeskVenue(base44, config) {
  * `null` means no connected exchange can serve this book: its scan must then
  * read nothing, rather than a venue the desk has no account on.
  */
-export async function resolveBtcVenue(base44, config) {
+export async function resolveBtcVenue(base44, config, preferExchange = "") {
   try {
     const owner = (config && config.created_by_id) || "";
     const LR = (config && config.live_rules) || {};
@@ -83,7 +83,13 @@ export async function resolveBtcVenue(base44, config) {
       if (listed && listed.size) withPairs.push(c);
     }
     const pool = withPairs.length ? withPairs : rows;
-    const chosen = pool.find((c) => c.id === id) || pool[0];
+    // the live connection must be the venue the book trades on, or a live BTC
+    // order would have no market to fill on: its exchange wins whenever it
+    // lists BTC pairs, and any connected venue stands in for the paper book
+    const preferred = preferExchange
+      ? pool.filter((c) => String(c.exchange || "") === String(preferExchange))
+      : [];
+    const chosen = preferred.find((c) => c.id === id) || preferred[0] || pool.find((c) => c.id === id) || pool[0];
     return {
       id: chosen.id,
       exchange: chosen.exchange,
