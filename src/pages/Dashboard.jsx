@@ -275,6 +275,9 @@ export default function Dashboard() {
   const btc = bot?.btc_markets || {};
   const btcBook = btc.book || {};
   const btcBoard = btc.board || {};
+  const btcRate = Number(btc.btc_usd) || 0;
+  // the Bitcoin book's free cash, in the currency it trades and in dollars
+  const btcCashBtc = btcRate > 0 ? (Number(btcBook.cash) || 0) / btcRate : null;
   // one book on the page at a time: the dollar book or the Bitcoin book, never
   // a mixture. A position belongs to the book its own quote names.
   const bookPositions = (bot?.positions || []).filter((p) =>
@@ -449,7 +452,16 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Free cash</p>
-                      <p className="num mt-1 text-base font-semibold">{fmtUsd(view.cash)}</p>
+                      <p className="num mt-1 text-base font-semibold">
+                        {btcCashBtc != null
+                          ? `${Number(btcCashBtc).toFixed(6).replace(/\.?0+$/, '')} BTC`
+                          : fmtUsd(view.cash)}
+                      </p>
+                      {btcCashBtc != null ? (
+                        <p className="num mt-0.5 text-[11px] font-normal text-muted-foreground">
+                          {fmtUsd(view.cash)} at {fmtUsd(btcRate)}/BTC
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Realised (all)</p>

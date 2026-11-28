@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, RotateCcw, Save } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
@@ -57,9 +57,16 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
   };
   const [paper, setPaper] = useState(() => fromConfig(config));
 
-  // re-sync the form whenever a fresh config lands or the book changes
+  // the form is loaded once per desk and book, never on every background poll:
+  // a cycle that lands while the user is editing must not put the old values
+  // back. A different config row or the other book still reloads it.
+  const syncedFor = useRef('');
   useEffect(() => {
-    if (config) setPaper(fromConfig(config));
+    if (!config) return;
+    const key = `${config.id || ''}:${isBtc ? 'BTC' : 'USD'}`;
+    if (syncedFor.current === key) return;
+    syncedFor.current = key;
+    setPaper(fromConfig(config));
   }, [config, isBtc]);
 
   const setPaperV = (key) => (value) => setPaper((prev) => ({ ...prev, [key]: value }));

@@ -104,7 +104,7 @@ export default function BotControls({ config, stats, desk = 'live', book = 'USD'
             <Metric
               label={paper && book === 'BTC' ? 'Bitcoin paper balance' : 'Paper balance'}
               value={stats?.balance == null ? '—' : paper && book === 'BTC' && stats?.balanceBtc != null
-                ? `${stats.balanceBtc} BTC`
+                ? `${Number(stats.balanceBtc).toFixed(6).replace(/\.?0+$/, '')} BTC`
                 : fmtUsd(stats.balance)}
               sub={paper && book === 'BTC' && stats?.balanceBtc != null && stats.balance != null
                 ? `${fmtUsd(stats.balance)} at the live rate`

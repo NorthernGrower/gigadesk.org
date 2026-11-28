@@ -134,14 +134,9 @@ export default async function (req) {
       const seedPatch = {};
       if (!config.btc_rules) seedPatch.btc_rules = seedBookRules(paperView);
       if (!LR.live_btc_rules) seedPatch.live_rules = { ...LR, live_btc_rules: seedBookRules(liveView) };
-      // showing the BTC book is a request to trade it on the paper desk: save
-      // that as the desk's own switch, so choosing BTC no longer leaves a book
-      // whose scan and entries sit behind a rules toggle the page never showed.
-      // The live desk is deliberately not auto-enabled: a real BTC order is the
-      // user's explicit switch, never a side effect of browsing the book.
-      if (!light && config.active_book === "BTC" && config.active_desk !== "live" && config.btc_markets !== true) {
-        seedPatch.btc_markets = true;
-      }
+      // showing the BTC book is a request to trade it on the paper desk. The
+      // page saves that switch itself when the book is chosen; the cycle never
+      // writes a rule back, so a setting the user turns off stays off.
       if (Object.keys(seedPatch).length) {
         await base44.entities.BotConfig.update(config.id, seedPatch);
         Object.assign(config, seedPatch);
