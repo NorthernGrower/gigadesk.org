@@ -131,8 +131,19 @@ export default function BotControls({ config, stats, desk = 'live', book = 'USD'
         ) : (
           <>
             <Metric
-              label="Exchange balance"
-              value={stats?.balance == null ? '—' : fmtUsd(stats.balance)}
+              label={book === 'BTC' ? 'Bitcoin balance' : 'Exchange balance'}
+              value={
+                book === 'BTC' && stats?.balanceBtc != null
+                  ? `${Number(stats.balanceBtc).toFixed(6).replace(/\.?0+$/, '')} BTC`
+                  : stats?.balance == null
+                    ? '—'
+                    : fmtUsd(stats.balance)
+              }
+              sub={
+                book === 'BTC' && stats?.balanceBtc != null
+                  ? `${fmtUsd(stats.balance || 0)} at the live rate`
+                  : null
+              }
               hint={stats?.balanceStale ? stats?.balanceError || 'Unavailable — verify the connection' : 'Live funds on the exchange'}
             />
             <Metric

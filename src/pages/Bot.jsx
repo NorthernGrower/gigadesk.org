@@ -181,6 +181,15 @@ export default function Bot() {
   // dollars: it is shown at the live rate, so "no cap" only ever means none
   const btcCapUsd =
     (Number(bot?.btc_markets?.book?.cap_btc) || 0) * (Number(bot?.btc_markets?.btc_usd) || 0);
+  // the live Bitcoin book's exchange holding: the cycle's own read first, then
+  // the one-minute saved read, so the box never falls to $0 between cycles
+  const btcRateNow = Number(bot?.btc_markets?.btc_usd) || 0;
+  const btcBookBalanceBtc =
+    Number(bot?.btc_markets?.book?.balance_btc) || Number(savedBalance?.btc) || 0;
+  const btcBookBalanceUsd =
+    Number(bot?.btc_markets?.book?.balance_usd) > 0
+      ? Number(bot.btc_markets.book.balance_usd)
+      : btcBookBalanceBtc * btcRateNow;
 
   const changeBook = async (next) => {
     setBookMode(next);
@@ -234,7 +243,8 @@ export default function Bot() {
                 v3: isBtc ? bot?.btc_markets?.v3 : bot?.v3,
               }
             : {
-                balance: isBtc ? bot?.btc_markets?.book?.balance_usd : savedBalance?.usd != null ? savedBalance.usd : bot?.live?.balance_usd,
+                balance: isBtc ? btcBookBalanceUsd : savedBalance?.usd != null ? savedBalance.usd : bot?.live?.balance_usd,
+                balanceBtc: isBtc ? btcBookBalanceBtc : null,
                 balanceStale: !isBtc && bot?.live?.balance_stale && savedBalance?.usd == null,
                 balanceError: isBtc ? null : bot?.live?.balance_error,
                 exposure: isBtc ? bot?.btc_markets?.book?.live_exposure : bot?.live?.exposure,
