@@ -14,8 +14,14 @@ export default async function (req) {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
+    // the config is the requesting user's own: reading the newest row in the
+    // whole app let one user's sync sign with another user's exchange key and
+    // import or close positions on their desk
     const config = asArray(
-      await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
+      await base44.entities.BotConfig.filter(
+        { created_by_id: user.id },
+        { sort: "-updated_date", limit: 1 },
+      ),
     )[0];
     if (!config) return Response.json({ error: "Save bot rules first" }, { status: 400 });
 

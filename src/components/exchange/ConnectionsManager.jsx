@@ -100,9 +100,9 @@ export default function ConnectionsManager({ showSafety = false }) {
             </div>
             <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
               <li>• Create keys with withdrawals disabled and, where offered, an IP allowlist.</li>
-              <li>• Credentials are scoped to your account and are never shown again after saving.</li>
+              <li>• Connection details are scoped to your account and the keys are never shown again after saving.</li>
               <li>• Live trading stays off until you switch it on for a connection.</li>
-              <li>• Execution is not wired yet — nothing places orders from this page today.</li>
+              <li>• A withdraw-only key is enough: the bot places orders, never withdrawals.</li>
             </ul>
           </div>
         )}

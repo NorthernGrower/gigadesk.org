@@ -82,7 +82,12 @@ export default async function (req) {
 
     // the desk's own venue supplies the market and the chart, so a coin listed
     // only on the exchange the user connected still opens here
-    const deskConfig = asArray(await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }))[0];
+    const deskConfig = asArray(
+      await base44.entities.BotConfig.filter(
+        { created_by_id: user.id },
+        { sort: "-updated_date", limit: 1 },
+      ),
+    )[0];
     const venue = await resolveDeskVenue(base44, deskConfig || {});
     const { coins } = await fetchMarkets(base44.asServiceRole, venue);
     const coin = coins.find((c) => c.symbol === symbol);

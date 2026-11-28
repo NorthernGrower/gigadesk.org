@@ -26,8 +26,13 @@ export default async function (req) {
     // scanned instead of silently missing from the US feed
     let onlySymbols = null;
     let exchangeFilter = null;
+    // this user's rules decide which exchange board is scanned; a global read
+    // here picked another user's connection and filtered this desk by it
     const configs = asArray(
-      await base44.entities.BotConfig.filter({}, { sort: "-updated_date", limit: 1 }),
+      await base44.entities.BotConfig.filter(
+        { created_by_id: user.id },
+        { sort: "-updated_date", limit: 1 },
+      ),
     );
     const cfg = configs[0];
     const venue = await resolveDeskVenue(base44, cfg || {});
