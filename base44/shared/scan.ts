@@ -71,7 +71,19 @@ export async function resolveBtcVenue(base44, config) {
       (c) => c && btcQuoteVenue(c.exchange) && !(c.backoff_until && Date.parse(c.backoff_until) > Date.now()),
     );
     if (!rows.length) return null;
-    const chosen = rows.find((c) => c.id === id) || rows[0];
+    // prefer a venue whose BTC listing actually answers: a connected account on
+    // a venue with no BTC pairs must not become the feed while another
+    // connected venue can serve the book
+    const withPairs = [];
+    for (const c of rows) {
+      const listed = await fetchListedSymbols(
+        { exchange: c.exchange, testnet: Boolean(c.testnet) },
+        ["BTC"],
+      );
+      if (listed && listed.size) withPairs.push(c);
+    }
+    const pool = withPairs.length ? withPairs : rows;
+    const chosen = pool.find((c) => c.id === id) || pool[0];
     return {
       id: chosen.id,
       exchange: chosen.exchange,
@@ -197,8 +209,9 @@ export async function scanBoard({
   const safeScope = SCOPES.has(scope) ? scope : "all";
   const { coins, source, medianChange24h } = await loadUniverse(db, feed, quote, btcUsd);
   // coins with no market-cap data (0) are out of consideration whenever the
-  // feed carries caps at all
-  const hasCaps = coins.some((c) => (c.market_cap || 0) > 0);
+  // feed carries caps at all. The BTC book is ranked by turnover, not by a
+  // market cap: dropping its pairs for a missing cap would blank the book.
+  const hasCaps = String(quote || "USD").toUpperCase() !== "BTC" && coins.some((c) => (c.market_cap || 0) > 0);
   const scoped = coins.filter(
     (c) =>
       inScope(c, safeScope) &&

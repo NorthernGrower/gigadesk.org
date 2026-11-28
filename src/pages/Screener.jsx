@@ -26,6 +26,7 @@ export default function Screener() {
   const [buyRow, setBuyRow] = useState(null);
   const [defaultBuyUsd, setDefaultBuyUsd] = useState(100);
   const [book, setBook] = useState('USD');
+  const [config, setConfig] = useState(null);
   const isBtc = book === 'BTC';
 
   const scan = async (options = {}) => {
@@ -62,6 +63,7 @@ export default function Screener() {
         const symbols = pageItems(watch).map((row) => row.symbol);
         const target = Number(config.daily_target_pct) || 2;
         if (!alive) return;
+        setConfig(config);
         setWatchSymbols(symbols);
         setTargetPct(target);
         // the manual-buy dialog pre-fills the live desk's fixed order size
@@ -128,7 +130,15 @@ export default function Screener() {
   const changeBook = (next) => {
     setBook(next);
     setBoard(null);
-    if (config?.id) base44.entities.BotConfig.update(config.id, { active_book: next }).catch(() => {});
+    if (config?.id) {
+      const patch = { active_book: next };
+      // choosing the BTC book on the paper desk turns its scan and entries on:
+      // the live desk keeps its own explicit switch for real BTC orders
+      if (next === 'BTC' && config.active_desk !== 'live' && config.btc_markets !== true) patch.btc_markets = true;
+      base44.entities.BotConfig.update(config.id, patch)
+        .then(() => setConfig((prev) => (prev ? { ...prev, ...patch } : prev)))
+        .catch(() => {});
+    }
     scan({ timeframe: '1h', tier: 'all', depth: '70', quote: next, symbols: watchSymbols });
   };
 
@@ -180,6 +190,7 @@ export default function Screener() {
       />
 
       {error ? <ErrorNotice message={error} onRetry={() => scan()} /> : null}
+      {!error && board?.error ? <ErrorNotice message={board.error} onRetry={() => scan()} /> : null}
 
       {loading && !board ? (
         <LoadingBlock label="Pulling candles for the strongest movers in the market" />

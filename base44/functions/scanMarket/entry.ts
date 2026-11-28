@@ -54,10 +54,20 @@ export default async function (req) {
           error: "No live Bitcoin price right now — try the scan again in a moment.",
         });
       onlySymbols = await resolveBtcSymbols(base44, cfg || {});
-      if (onlySymbols && onlySymbols.size && venue)
-        exchangeFilter = { quote: "BTC", exchange: venue.exchange, label: venue.label, listed: onlySymbols.size };
-      else
-        exchangeFilter = { quote: "BTC", label: venue ? venue.label : "Bitcoin markets", listed: 0 };
+      // an empty result has two different causes and the page must say which:
+      // no connected venue lists BTC pairs at all, or one does but the read of
+      // its listings came back empty
+      if (!venue || !onlySymbols || !onlySymbols.size) {
+        return Response.json({
+          rows: [], scannedCount: 0, universeCount: 0, summary: null,
+          medianChange24h: 0, source: { exchange: venue?.exchange || null, quote: "BTC" },
+          exchangeFilter: { quote: "BTC", label: venue?.label || "Bitcoin markets", listed: 0 },
+          error: venue
+            ? `${venue.label} returned no BTC pairs — check the connection on Settings, or try again in a minute.`
+            : "No connected exchange lists BTC pairs. Connect an exchange that trades BTC markets (Kraken, Binance, Bybit or KuCoin) to scan them.",
+        });
+      }
+      exchangeFilter = { quote: "BTC", exchange: venue.exchange, label: venue.label, listed: onlySymbols.size };
     } else if (venue) {
       const conn = {
         exchange: venue.exchange,

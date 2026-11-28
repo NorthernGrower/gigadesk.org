@@ -124,6 +124,11 @@ export async function placeMarketOrder(cfg, paramsIn) {
     : "";
   const pair = `${String(params.symbol || "").toUpperCase()}${namedQuote || cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`;
   const idem = idemKey(params.symbol);
+  if (cfg.exchange === "kucoin" && params.margin !== true && (namedQuote === "BTC" || namedQuote === "XBT")) {
+    // KuCoin's spot symbol is BASE-BTC, not the concatenated pair the general
+    // route builds; the rest of its order signing is the same
+    return kucoinOrder({ ...cfg, quoteAsset: namedQuote }, params, side, pair, idem);
+  }
   if (cfg.exchange === "bybit") return bybitOrder(cfg, params, side, pair, idem);
   // a KuCoin short is a margin order: it sells an asset the account does not
   // own (auto-borrowed) and buys it back with the debt repaid
@@ -304,7 +309,7 @@ async function binanceOrder(cfg, { usd, quantity, price }, side, pair, idem) {
     `timestamp=${Date.now()}`,
     `recvWindow=10000`,
   ];
-  if (side === "buy") parts.push(`quoteOrderQty=${round(guard.usd != null ? guard.usd : usd, 2)}`);
+  if (side === "buy") parts.push(`quoteOrderQty=${round(guard.usd != null ? guard.usd : usd, pair.endsWith("BTC") ? 8 : 2)}`);
   else parts.push(`quantity=${trunc(guard.quantity != null ? guard.quantity : quantity, 6)}`);
   const qs = parts.join("&");
   const signature = await hmacHex(cfg.api_secret, qs);
@@ -393,13 +398,15 @@ async function kucoinPost(cfg, endpoint, payload) {
 
 async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
   const endpoint = "/api/v1/orders";
+  const quote = cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT";
   const payload = {
     clientOid: idem,
     side: side.toUpperCase(),
-    symbol: `${String(symbol || "").toUpperCase()}-${cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT"}`,
+    // KuCoin names a market BASE-QUOTE; the BTC book's quote is BTC
+    symbol: `${String(symbol || "").toUpperCase()}-${quote}`,
     type: "market",
   };
-  if (side === "buy") payload.funds = String(round(usd, 2));
+  if (side === "buy") payload.funds = String(round(usd, quote === "BTC" ? 8 : 2));
   else payload.size = String(trunc(quantity, 8));
   const res = await kucoinPost(cfg, endpoint, payload);
   const data = res.data || {};
@@ -418,7 +425,7 @@ async function kucoinOrder(cfg, { symbol, usd, quantity }, side, pair, idem) {
 async function kucoinMarginOrder(cfg, { symbol, usd, quantity, price, leverage }, side, pair, idem) {
   const endpoint = "/api/v1/margin/order";
   const asset = String(symbol || "").toUpperCase();
-  const quote = cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT";
+  const quote = String(cfg.quoteAsset || "").toUpperCase() === "BTC" ? "BTC" : cfg.quoteAsset || QUOTE_ASSET[cfg.exchange] || "USDT";
   const guard = await guardConstraints(cfg, { usd, quantity, price, side, pair });
   if (!guard.ok) return { ok: false, message: guard.message };
   const px =

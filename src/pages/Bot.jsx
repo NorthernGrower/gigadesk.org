@@ -185,10 +185,20 @@ export default function Bot() {
   const changeBook = async (next) => {
     setBookMode(next);
     try {
-      if (config?.id) await base44.entities.BotConfig.update(config.id, { active_book: next });
+      if (config?.id) {
+        const patch = { active_book: next };
+        // choosing the BTC book on the paper desk enables its scan and entries;
+        // the live desk keeps its own explicit switch for real BTC orders
+        if (next === 'BTC' && desk === 'paper' && config.btc_markets !== true) patch.btc_markets = true;
+        await base44.entities.BotConfig.update(config.id, patch);
+        setConfig((prev) => (prev ? { ...prev, ...patch } : prev));
+      }
     } catch {
       // the page still shows the chosen book for this session
     }
+    // a full cycle is the one that scans the BTC board: run it now, so the
+    // book the user just chose fills with its pairs instead of waiting
+    if (next === 'BTC') cycle(false);
   };
 
   return (
@@ -248,6 +258,17 @@ export default function Bot() {
               }
         }
       />
+
+      {isBtc && bot?.btc_markets?.venue_reason ? (
+        <p className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] leading-snug text-amber-300">
+          {bot.btc_markets.venue_reason}
+        </p>
+      ) : null}
+      {isBtc && !bot?.btc_markets?.on ? (
+        <p className="rounded-xl border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+          The BTC book is not enabled for this desk yet. Turn on “BTC markets” under the rules below, or run a full cycle — the paper desk enables it when you select the BTC book.
+        </p>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="space-y-4">

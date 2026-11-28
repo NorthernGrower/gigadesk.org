@@ -134,9 +134,23 @@ export default async function (req) {
       const seedPatch = {};
       if (!config.btc_rules) seedPatch.btc_rules = seedBookRules(paperView);
       if (!LR.live_btc_rules) seedPatch.live_rules = { ...LR, live_btc_rules: seedBookRules(liveView) };
+      // showing the BTC book is a request to trade it on the paper desk: save
+      // that as the desk's own switch, so choosing BTC no longer leaves a book
+      // whose scan and entries sit behind a rules toggle the page never showed.
+      // The live desk is deliberately not auto-enabled: a real BTC order is the
+      // user's explicit switch, never a side effect of browsing the book.
+      if (!light && config.active_book === "BTC" && config.active_desk !== "live" && config.btc_markets !== true) {
+        seedPatch.btc_markets = true;
+      }
       if (Object.keys(seedPatch).length) {
         await base44.entities.BotConfig.update(config.id, seedPatch);
         Object.assign(config, seedPatch);
+        if (seedPatch.live_rules) {
+          Object.assign(LR, seedPatch.live_rules);
+          // liveView was built from the saved rules before this write: carry
+          // the switch into it, or this cycle still reads the book as off
+          liveView.btc_markets = seedPatch.live_rules.btc_markets === true;
+        }
       }
     }
     const paperBtcView = btcBookView(paperView, (config.btc_rules || {}));
@@ -2551,7 +2565,9 @@ export default async function (req) {
             const order = await placeMarketOrder(live.conn, {
               symbol: btcLiveRow.symbol,
               side: "buy",
-              usd: sizeBtcUsd,
+              // the order spends this market's own quote, which is bitcoin:
+              // passing the dollar value here would buy btcUsd times too much
+              usd: round(sizeBtc, 8),
               quantity: baseQty,
               price: btcLiveRow.entry,
               quote: "BTC",

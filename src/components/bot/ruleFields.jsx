@@ -342,7 +342,7 @@ export function scanEngineFields(form, setNum, setV, market = null) {
         />
         <Toggle
           label="BTC markets"
-          hint="A second, fully separate book: the Bitcoin markets of your connected exchange that lists them (Kraken's XBT pairs), scanned by the same engine and traded by the same rules, with their own bankroll, cash, slots, cooldowns, risk brakes and lessons. Only a connected exchange whose own market quotes in Bitcoin is scanned — an account on a venue without those pairs feeds nothing — and a live entry needs the live connection to be that same exchange, with Bitcoin in its spot wallet, and takes longs only. Nothing crosses over: a dollar position never takes a Bitcoin slot, and a dollar drawdown never stops a Bitcoin entry."
+          hint="A second, fully separate book: the BTC-quoted markets of your connected exchange (Kraken XBT pairs, or Binance, Bybit and KuCoin BTC pairs), scanned by the same engine and traded by the same rules, with their own bankroll, cash, slots, cooldowns, risk brakes and lessons. A live entry needs the live connection to list those pairs, with Bitcoin in its spot wallet, and takes longs only. Nothing crosses over: a dollar position never takes a Bitcoin slot, and a dollar drawdown never stops a Bitcoin entry."
           checked={form.btc_markets === true}
           onChange={setV('btc_markets')}
         />

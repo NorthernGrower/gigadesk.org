@@ -253,13 +253,17 @@ async function saveMarketsToDb(db, coins) {
 // A desk that trades on Kraken, Bybit or KuCoin must scan that venue's own
 // market: coins listed only there would never appear in the US feed. These
 // public endpoints need no keys, so the scan works for any connected exchange.
-const VENUE_BASE = {
+export const VENUE_BASE = {
+  binance: "https://api.binance.com",
+  binance_us: "https://api.binance.us",
   kucoin: "https://api.kucoin.com",
   bybit: "https://api.bybit.com",
   kraken: "https://api.kraken.com",
 };
 
 const VENUE_INTERVAL = {
+  binance: { "15m": "15m", "1h": "1h", "4h": "4h", "12h": "12h", "1d": "1d", "1w": "1w", "1M": "1M" },
+  binance_us: { "15m": "15m", "1h": "1h", "4h": "4h", "12h": "12h", "1d": "1d", "1w": "1w", "1M": "1M" },
   kucoin: { "15m": "15min", "1h": "1hour", "4h": "4hour", "12h": "12hour", "1d": "1day", "1w": "1week", "1M": "1week" },
   bybit: { "15m": "15", "1h": "60", "4h": "240", "12h": "720", "1d": "D", "1w": "W", "1M": "M" },
   kraken: { "15m": 15, "1h": 60, "4h": 240, "12h": 720, "1d": 1440, "1w": 10080, "1M": 21600 },
@@ -372,24 +376,24 @@ export async function fetchVenueMarkets(feed) {
   return out;
 }
 
-// The venues whose spot market lists pairs quoted in bitcoin. The Bitcoin book
-// prices, charts, sizes and settles in BTC, so only a venue that lists those
-// pairs can serve it: a connected exchange without them can never trade this
-// book, whatever its account holds.
-export const BTC_QUOTE_VENUES = new Set(["kraken"]);
+// Every exchange the desk can connect whose own spot market lists pairs quoted
+// in bitcoin. The BTC book prices, charts, sizes and settles in BTC, so a venue
+// with no BTC pairs can never serve it — but any venue that lists them can.
+export const BTC_QUOTE_VENUES = new Set([
+  "binance", "binance_us", "bybit", "kucoin", "kraken",
+]);
 
 export const btcQuoteVenue = (exchange) =>
   BTC_QUOTE_VENUES.has(String(exchange || "").trim().toLowerCase());
 
 /**
- * Kraken's Bitcoin-quoted markets as the desk's own coin rows, priced in BTC.
- *
- * This is a market in its own right, not a view of the dollar one: a SOL/XBT
- * chart moves differently from SOL/USD, and the desk trades it, sizes it and
- * exits it in bitcoin. `btcUsd` turns each pair's turnover into dollars, so the
- * liquidity floor and the volume ranking keep meaning what they mean on the
- * dollar book. Without a rate the volume stays 0, which excludes the row
- * instead of flattering it.
+ * The connected exchange's Bitcoin-quoted markets as the desk's coin rows,
+ * priced in BTC. Kraken's XBT pairs, Binance/Bybit/KuCoin's BTC pairs and
+ * Binance US's BTC pairs are all the same book: a SOL/BTC chart moves in
+ * bitcoin wherever it is quoted, and the desk trades, sizes and exits it in
+ * bitcoin. `btcUsd` turns turnover into dollars so the liquidity floor and the
+ * volume ranking keep meaning what they mean on the dollar book. Without a
+ * rate the volume stays 0, which excludes the row instead of flattering it.
  */
 export async function fetchBtcMarkets(db = null, feed = null, btcUsd = 0) {
   const ex = String((feed && feed.exchange) || "");
@@ -399,45 +403,86 @@ export async function fetchBtcMarkets(db = null, feed = null, btcUsd = 0) {
   // pair names and its ticker are the ones the order path uses, and a market
   // the desk cannot trade is noise
   if (!btcQuoteVenue(ex) || !base || !(fx > 0)) return [];
-  const key = `btcmarkets:${ex}:${Math.round(fx / 100)}`;
-  const cached = cacheGet(key);
+  const cacheKey = `btcmarkets:${ex}`;
+  const cached = cacheGet(cacheKey);
   if (cached) return cached;
 
-  const idx = await krakenPairIndex();
-  const pairs = [...idx.byCanonical.values()].filter(
-    (p) => p.quote === "BTC" && p.base !== "BTC" && !isStable(p.base),
-  );
-  if (!pairs.length) return [];
-
   const out = [];
-  for (const group of chunk(pairs, 80)) {
-    try {
-      const res = await fetchJson(
-        `${base}/0/public/Ticker?pair=${group.map((p) => p.altname).join(",")}`,
-        12000,
-      );
-      for (const [tickKey, t] of Object.entries((res && res.result) || {})) {
-        const p =
-          idx.byCanonical.get(String(tickKey).toUpperCase()) ||
-          idx.byAlt.get(String(tickKey).toUpperCase());
-        if (!p || p.quote !== "BTC" || !t) continue;
-        const last = Number(t.c && t.c[0]) || 0;
-        const open = Number(t.o && t.o[1]) || 0;
-        const vwap = Number(t.p && t.p[1]) || last;
-        if (!(last > 0)) continue;
-        out.push({
-          symbol: p.base,
-          price: last,
-          volume24h: (Number(t.v && t.v[1]) || 0) * vwap * fx,
-          change24h: open > 0 ? (last / open - 1) * 100 : 0,
-        });
+  if (ex === "kraken") {
+    const idx = await krakenPairIndex();
+    const pairs = [...idx.byCanonical.values()].filter(
+      (p) => p.quote === "BTC" && p.base !== "BTC" && !isStable(p.base),
+    );
+    for (const group of chunk(pairs, 80)) {
+      try {
+        const res = await fetchJson(
+          `${base}/0/public/Ticker?pair=${group.map((p) => p.altname).join(",")}`,
+          12000,
+        );
+        for (const [tickKey, t] of Object.entries((res && res.result) || {})) {
+          const p =
+            idx.byCanonical.get(String(tickKey).toUpperCase()) ||
+            idx.byAlt.get(String(tickKey).toUpperCase());
+          if (!p || p.quote !== "BTC" || !t) continue;
+          const last = Number(t.c && t.c[0]) || 0;
+          const open = Number(t.o && t.o[1]) || 0;
+          const vwap = Number(t.p && t.p[1]) || last;
+          if (!(last > 0)) continue;
+          out.push({
+            symbol: p.base,
+            price: last,
+            volume24h: (Number(t.v && t.v[1]) || 0) * vwap * fx,
+            change24h: open > 0 ? (last / open - 1) * 100 : 0,
+          });
+        }
+      } catch (err) {
+        console.log(`kraken BTC ticker batch failed: ${err && err.message}`);
       }
-    } catch (err) {
-      console.log(`kraken BTC ticker batch failed: ${err && err.message}`);
+    }
+  } else if (ex === "kucoin") {
+    const res = await fetchJson(`${base}/api/v1/market/allTickers`, 15000);
+    for (const t of ((res && res.data) || {}).ticker || []) {
+      const [sym, quote] = String(t.symbol || "").split("-");
+      const price = Number(t.last) || 0;
+      if (!sym || quote !== "BTC" || sym === "BTC" || !(price > 0)) continue;
+      out.push({
+        symbol: sym.toUpperCase(),
+        price,
+        volume24h: (Number(t.volValue) || 0) * fx,
+        change24h: (Number(t.changeRate) || 0) * 100,
+      });
+    }
+  } else if (ex === "bybit") {
+    const res = await fetchJson(`${base}/v5/market/tickers?category=spot`, 15000);
+    for (const t of ((res && res.data) || {}).result?.list || []) {
+      const sym = String(t.symbol || "").toUpperCase();
+      const price = Number(t.lastPrice) || 0;
+      if (!sym.endsWith("BTC") || sym === "BTC" || !(price > 0)) continue;
+      out.push({
+        symbol: sym.slice(0, -3),
+        price,
+        volume24h: (Number(t.turnover24h) || 0) * fx,
+        change24h: (Number(t.price24hPcnt) || 0) * 100,
+      });
+    }
+  } else {
+    // Binance and Binance US: one bulk 24h ticker covers every BTC pair
+    const res = await fetchJson(`${base}/api/v3/ticker/24hr`, 20000);
+    for (const t of Array.isArray(res) ? res : []) {
+      const sym = String(t.symbol || "").toUpperCase();
+      const price = Number(t.lastPrice) || 0;
+      if (!sym.endsWith("BTC") || sym === "BTC" || !(price > 0)) continue;
+      out.push({
+        symbol: sym.slice(0, -3),
+        price,
+        volume24h: (Number(t.quoteVolume) || 0) * fx,
+        change24h: Number(t.priceChangePercent) || 0,
+      });
     }
   }
+  if (!out.length) return [];
   const coins = await finalizeCoins(db, out);
-  return cacheSet(key, coins, 60000);
+  return cacheSet(cacheKey, coins, 60000);
 }
 
 /** The venue's OHLCV for one coin, oldest bar first. Null when it has no pair.
@@ -453,6 +498,23 @@ export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 3
   // a BTC-quoted read must never be answered with a dollar chart: only a venue
   // that lists those pairs can answer it, and anything else returns null
   if (wantBtc && !btcQuoteVenue(ex)) return null;
+  // Binance and Binance US only answer a BTC chart in this branch: their US
+  // feed below quotes USD/USDT pairs and must never stand in for one
+  if (wantBtc && (ex === "binance" || ex === "binance_us")) {
+    try {
+      const res = await fetchJson(
+        `${base}/api/v3/klines?symbol=${sym}BTC&interval=${iv}&limit=${limit}`,
+        12000,
+      );
+      if (Array.isArray(res) && res.length)
+        return res.map((r) => ({
+          t: r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5],
+        }));
+    } catch (err) {
+      console.log(`${ex} BTC candles for ${sym} failed: ${err && err.message}`);
+    }
+    return null;
+  }
   try {
     if (ex === "kucoin") {
       // KuCoin's candle endpoint answers with the last 100 bars unless the
@@ -462,7 +524,7 @@ export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 3
       const now = Math.floor(Date.now() / 1000);
       const startAt = Math.floor((Date.now() - spanMs) / 1000);
       const res = await fetchJson(
-        `${base}/api/v1/market/candles?type=${iv}&symbol=${sym}-USDT&startAt=${startAt}&endAt=${now}`,
+        `${base}/api/v1/market/candles?type=${iv}&symbol=${sym}-${wantBtc ? "BTC" : "USDT"}&startAt=${startAt}&endAt=${now}`,
         12000,
       );
       // KuCoin rows are [time, open, close, high, low, volume, turnover],
@@ -475,7 +537,7 @@ export async function fetchVenueCandles(feed, symbol, interval = "1h", limit = 3
     }
     if (ex === "bybit") {
       const res = await fetchJson(
-        `${base}/v5/market/kline?category=spot&symbol=${sym}USDT&interval=${iv}&limit=${limit}`,
+        `${base}/v5/market/kline?category=spot&symbol=${sym}${wantBtc ? "BTC" : "USDT"}&interval=${iv}&limit=${limit}`,
         12000,
       );
       const rows = ((res && res.data) || {}).result?.list || [];
@@ -699,7 +761,7 @@ export async function fetchCandles(symbol, interval = "1h", limit = 300, feed = 
   const cached = cacheGet(key);
   if (cached) return cached;
 
-  if (tag !== "us") {
+  if (tag !== "us" || quoteTag) {
     const venueCandles = await fetchVenueCandles(feed, symbol, interval, limit, quote);
     if (venueCandles && venueCandles.length) return cacheSet(key, venueCandles, 45000);
   }

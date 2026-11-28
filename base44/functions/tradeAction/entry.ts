@@ -306,7 +306,9 @@ export default async function (req) {
             ? await placeMarketOrder(live.conn, {
                 symbol: trade.symbol,
                 side: "buy",
-                usd: round(sizeUsd, 2),
+                // the order spends this market's own quote: bitcoin here, so
+                // the dollar value would buy btcUsd times too much
+                usd: isBtcQuote ? round(sizeQuote, 8) : round(sizeUsd, 2),
                 price: entry,
                 quantity: round(sizeQuote / entry, 8),
                 ...(isBtcQuote ? { quote: "BTC" } : {}),
