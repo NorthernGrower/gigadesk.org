@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
-import { roundTo } from '@/lib/market';
+import { pageItems, roundTo } from '@/lib/market';
 import { fmtUsd } from '@/lib/format';
 import { bookRuleKeys, bookRuleSet } from '@/lib/bookRules';
 import { Field, ScoreBarField, Toggle, WarningsBox, deskRuleWarnings, riskFields, scanEngineFields, pyramidFields, BtcBalanceNote } from '@/components/bot/ruleFields';
@@ -122,11 +122,31 @@ export default function PaperRules({ config, onSaved, book = 'USD', btcBook = nu
         const saved = pick(bookRuleKeys('paper', 'BTC'), all);
         saved.starting_balance = roundTo(paper.starting_balance, 2);
         saved.profit_mode = paper.profit_mode;
+        // the BTC bankroll is the rule: price it once here so the cash the book
+        // spends and the cash the desk shows agree with the number just entered.
+        // With positions still open the cash is left alone — a reset is the
+        // explicit way to re-anchor a book that is mid-trade.
+        const startBtc = Number(paper.starting_btc) > 0 ? Number(paper.starting_btc) : 0;
+        const startUsd =
+          startBtc > 0 && Number(btcRate) > 0 ? startBtc * Number(btcRate) : roundTo(paper.starting_balance, 2);
+        let noOpenBtc = false;
+        try {
+          const open = await base44.entities.Trade.filter(
+            { mode: 'paper', status: 'open', quote_asset: 'BTC' },
+            { limit: 1 },
+          );
+          noOpenBtc = pageItems(open).length === 0;
+        } catch {
+          // unknown: leave the cash untouched rather than re-anchor blind
+        }
         await base44.entities.BotConfig.update(config.id, {
           btc_rules: { ...(config.btc_rules || {}), ...saved },
           // the book's bankroll and the desk-level switches both live on the config
-          btc_starting_btc: roundTo(paper.starting_btc, 8),
-          btc_starting_balance: roundTo(paper.starting_balance, 2),
+          btc_starting_btc: roundTo(startBtc, 8),
+          btc_starting_balance: roundTo(startUsd, 2),
+          ...(noOpenBtc && startBtc > 0 && Number(btcRate) > 0
+            ? { btc_cash_balance: roundTo(startUsd, 2) }
+            : {}),
           btc_markets: paper.btc_markets === true,
           analyst_on: paper.analyst_on === true,
         });
